@@ -1,0 +1,31 @@
+{
+  "name": "tensor-extractor",
+  "version": "1.0.0",
+  "description": "Herramienta CLI de análisis estático de código TypeScript con grafos en SQLite",
+  "type": "module",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "tensor-extractor": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli/index.ts",
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/cli/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["typescript", "ast", "static-analysis", "cli", "graph"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "chokidar": "^5.0.0",
+    "commander": "^14.0.3",
+    "ts-morph": "^27.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}
