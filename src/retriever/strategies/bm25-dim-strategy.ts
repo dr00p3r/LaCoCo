@@ -1,0 +1,57 @@
+/**
+ * BM25DimFilterStrategy (2.2) — BM25 dirigido por dimensión detectada.
+ *
+ * Aplica DimensionalFilter antes de la búsqueda BM25 para limitar
+ * el espacio de búsqueda a nodos de la dimensión relevante.
+ */
+
+import {
+  type RecoveryStrategy,
+  type SanitizerOutput,
+  type ContextChunk,
+} from "./base.js";
+import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
+import { DimensionalFilter } from "../dimensional-filter.js";
+
+export class BM25DimFilterStrategy implements RecoveryStrategy {
+  private readonly dimFilter: DimensionalFilter;
+
+  constructor(
+    private readonly db: SqliteManager,
+    confidenceThreshold = 0.65
+  ) {
+    this.dimFilter = new DimensionalFilter(confidenceThreshold);
+  }
+
+  /**
+   * Recupera nodos filtrando primero por dimensión, luego aplicando BM25.
+   *
+   * @param query Salida sanitizada del intermediario
+   * @returns Chunks de nodos que coinciden en dimensión y relevancia BM25
+   */
+  async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
+    const dimensions = await this.dimFilter.filter(query);
+
+    // Obtener todos los nodos de las dimensiones detectadas
+    const candidateIds = new Set<string>();
+    for (const dim of dimensions) {
+      const nodes = this.db.getNodesByDimension(dim, 200);
+      for (const n of nodes) {
+        candidateIds.add(n.id);
+      }
+    }
+
+    // Ejecutar BM25 global
+    const bm25Results = this.db.searchBM25(query.clean_query, 100);
+
+    // Intersecar con candidatos dimensionales
+    const filtered = bm25Results.filter((r) => candidateIds.has(r.node_id));
+
+    return filtered.map((r) => ({
+      nodeId: r.node_id,
+      score: Math.max(0, 1 - Math.abs(r.score)),
+      text: r.node_id,
+      source: "BM25+DimFilter",
+    }));
+  }
+}

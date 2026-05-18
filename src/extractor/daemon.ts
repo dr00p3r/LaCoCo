@@ -11,15 +11,17 @@
  *
  *   CLI (commander)
  *     └─▶ DaemonManager.start()
- *           ├─▶ TensorParser.processFile()   ← núcleo AST (sin lado)
+ *           ├─▶ GraphExtractor.processFile()   ← núcleo AST (sin lado)
  *           └─▶ SqliteManager.*              ← persistencia
  */
 
 import path from "node:path";
 import { Project, type SourceFile } from "ts-morph";
 import chokidar, { type FSWatcher } from "chokidar";
-import type { SqliteManager } from "../db/sqlite-manager.js";
-import { TensorParser } from "./tensor-parser.js";
+import type { SqliteManager } from "../shared/db/sqlite-manager.js";
+import { GraphExtractor } from "./graph-extractor.js";
+import { EmbeddingIndexer } from "../retriever/embedding-indexer.js";
+import { LanceDbClient } from "../retriever/infra/lancedb-client.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos auxiliares
@@ -37,6 +39,10 @@ export interface DaemonOptions {
   watchGlob?: string;
   /** Si es true, imprime información de depuración adicional. */
   verbose?: boolean;
+  /** Si es true, genera embeddings en LanceDB tras el cold-start. Default: true. */
+  indexEmbeddings?: boolean;
+  /** Ruta al directorio de LanceDB. Default: ./lancedb */
+  lanceDbPath?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,18 +51,22 @@ export interface DaemonOptions {
 
 export class DaemonManager {
   private readonly project: Project;
-  private readonly parser: TensorParser;
+  private readonly parser: GraphExtractor;
   private watcher: FSWatcher | null = null;
 
   private readonly tsConfigFilePath: string;
   private readonly db: SqliteManager;
   private readonly watchGlob: string;
   private readonly verbose: boolean;
+  private readonly indexEmbeddings: boolean;
+  private readonly lanceDbPath: string;
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
     this.db = opts.db;
     this.verbose = opts.verbose ?? false;
+    this.indexEmbeddings = opts.indexEmbeddings ?? true;
+    this.lanceDbPath = opts.lanceDbPath ?? "./lancedb";
 
     // Directorio que contiene el tsconfig → raíz del proyecto a observar
     const projectRoot = path.dirname(this.tsConfigFilePath);
@@ -66,11 +76,10 @@ export class DaemonManager {
     // ts-morph Project: carga el grafo de tipos completo del proyecto
     this.project = new Project({
       tsConfigFilePath: this.tsConfigFilePath,
-      // skipAddingFilesFromTsConfig: false  ← valor por defecto, carga todos los archivos
     });
 
-    // TensorParser recibe la conexión raw de SQLite para sus prepared statements
-    this.parser = new TensorParser(this.db.getRawDb());
+    // GraphExtractor recibe la conexión raw de SQLite para sus prepared statements
+    this.parser = new GraphExtractor(this.db.getRawDb());
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -113,7 +122,7 @@ export class DaemonManager {
    *   - Rendimiento: SQLite hace un único fsync al final en lugar de uno por archivo.
    *
    * En proyectos con ~500 archivos TypeScript el cold start suele completarse
-   * en < 5 segundos gracias a los prepared statements del TensorParser.
+     * en < 5 segundos gracias a los prepared statements del GraphExtractor.
    */
   #coldStart(): void {
     console.log("\n[Daemon] 🚀 Cold start — analizando proyecto completo...");
@@ -140,6 +149,52 @@ export class DaemonManager {
     console.log(
       `[Daemon] ✅ Grafo construido — ${nodesWritten} nodos, ${edgesWritten} aristas.`
     );
+
+    // Post-cold-start: generar embeddings en LanceDB
+    if (this.indexEmbeddings && nodesWritten > 0) {
+      void this.#generateEmbeddings();
+    }
+  }
+
+  /**
+   * Genera embeddings para todos los nodos y los persiste en LanceDB.
+   * Se ejecuta de forma async para no bloquear el cold-start sincrónico.
+   */
+  async #generateEmbeddings(): Promise<void> {
+    console.log("[Daemon] 🧠 Generando embeddings semánticos...");
+    console.time("[Daemon] Embeddings");
+
+    const lanceDb = new LanceDbClient(this.lanceDbPath);
+    try {
+      await lanceDb.connect();
+      const indexer = new EmbeddingIndexer(this.db, lanceDb);
+      await indexer.indexAll((current, total) => {
+        if (this.verbose) {
+          console.log(`[Daemon]    ${current}/${total} embeddings...`);
+        }
+      });
+      console.timeEnd("[Daemon] Embeddings");
+    } catch (err) {
+      console.error("[Daemon] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
+    } finally {
+      await lanceDb.close();
+    }
+  }
+
+  /**
+   * Re-indexa embeddings para un archivo específico tras hot-reload.
+   */
+  async #reindexEmbeddings(filePath: string): Promise<void> {
+    const lanceDb = new LanceDbClient(this.lanceDbPath);
+    try {
+      await lanceDb.connect();
+      const indexer = new EmbeddingIndexer(this.db, lanceDb);
+      await indexer.indexFile(filePath);
+    } catch (err) {
+      console.error(`[Daemon] ❌ Error re-indexando embeddings de ${filePath}:`, err instanceof Error ? err.message : err);
+    } finally {
+      await lanceDb.close();
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -197,7 +252,7 @@ export class DaemonManager {
    *   2. Obtener / añadir el SourceFile en el Project de ts-morph.
    *   3. Refrescar desde el sistema de archivos (recarga el AST).
    *   4. Borrar los datos anteriores del archivo en SQLite.
-   *   5. Re-procesar con TensorParser en una transacción nueva.
+     *   5. Re-procesar con GraphExtractor en una transacción nueva.
    *   6. Mostrar métricas del hot reload.
    */
   async #handleFileChange(
@@ -274,6 +329,14 @@ export class DaemonManager {
             ? ` (+ ${filesToPropagate.length} archivo(s) propagados).`
             : ".")
       );
+
+      // Hot-reload de embeddings para archivos modificados
+      if (this.indexEmbeddings && nodesWritten > 0) {
+        void this.#reindexEmbeddings(filePath);
+        for (const dep of filesToPropagate) {
+          void this.#reindexEmbeddings(dep.getFilePath());
+        }
+      }
     } catch (err) {
       console.error(
         `[Daemon] ❌ Error procesando ${filePath}:`,

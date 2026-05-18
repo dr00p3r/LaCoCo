@@ -1,5 +1,5 @@
 /**
- * TensorParser — Núcleo de análisis estático del Grafo Multirrelacional (Tensor)
+ * GraphExtractor — Núcleo de análisis estático del Grafo Multirrelacional
  *
  * Recibe una instancia de better-sqlite3 y produce un grafo semántico de 3 capas:
  *
@@ -119,7 +119,7 @@ const MUTABLE_METHODS = new Set([
 const KNOWN_WRAPPERS = new Set(["Promise", "Observable", "Result", "Either", "Option"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TensorParser
+// GraphExtractor
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -128,17 +128,17 @@ const KNOWN_WRAPPERS = new Set(["Promise", "Observable", "Result", "Either", "Op
  *
  * @example
  * ```ts
- * const db      = new Database("tensor.sqlite");
- * const parser  = new TensorParser(db);
+ * const db         = new Database("tensor.sqlite");
+ * const extractor  = new GraphExtractor(db);
  *
  * db.transaction(() => {
  *   for (const file of project.getSourceFiles()) {
- *     parser.processFile(file);
+ *     extractor.processFile(file);
  *   }
  * })();
  * ```
  */
-export class TensorParser {
+export class GraphExtractor {
   // ── Prepared statements (compilados una sola vez al construir la instancia) ──
   private readonly stmtInsertNode: Statement;
   private readonly stmtInsertEdge: Statement;

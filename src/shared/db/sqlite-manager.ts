@@ -1,5 +1,7 @@
 import Database from "better-sqlite3";
 import path from "node:path";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,10 @@ export class SqliteManager {
   private stmtDeleteNodesByFile!: Database.Statement;
   private stmtGetNodeIdsByFile!: Database.Statement;
 
+  // Prepared statements para retrieval (FTS5 + metadata)
+  private stmtSearchBM25!: Database.Statement;
+  private stmtGetNodesByDimension!: Database.Statement;
+
   /**
    * @param dbPath Ruta absoluta o relativa al archivo tensor.sqlite.
    *               Si no se proporciona, se creará junto al directorio de ejecución.
@@ -56,6 +62,7 @@ export class SqliteManager {
     this.db.pragma("foreign_keys = ON");
 
     this.#initSchema();
+    this.#runMigrations();
     this.#prepareStatements();
 
     console.log(`[SqliteManager] Base de datos conectada → ${resolvedPath}`);
@@ -138,6 +145,33 @@ export class SqliteManager {
     console.log(`[SqliteManager] Migración completada \u2192 v${targetVersion}.`);
   }
 
+  /**
+   * Ejecuta todos los archivos `.sql` numerados en `db/migrations/`.
+   * Idempotente: las migraciones usan CREATE TABLE IF NOT EXISTS.
+   */
+  #runMigrations(): void {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const migrationsDir = path.join(__dirname, "migrations");
+    if (!fs.existsSync(migrationsDir)) {
+      console.warn("[SqliteManager] Directorio migrations/ no encontrado; omitiendo migraciones FTS5.");
+      return;
+    }
+
+    const files = fs
+      .readdirSync(migrationsDir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
+      try {
+        this.db.exec(sql);
+      } catch (err) {
+        console.error(`[SqliteManager] Error ejecutando migración ${file}:`, err);
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Inicialización de prepared statements
   // -------------------------------------------------------------------------
@@ -170,6 +204,25 @@ export class SqliteManager {
     this.stmtGetNodeIdsByFile = this.db.prepare(
       `SELECT id FROM nodes WHERE filepath = ?`
     );
+
+    // FTS5: BM25 ranking sobre name + signature
+    // Usamos rank (pseudo-función FTS5) en vez de bm25() directo para mayor compatibilidad.
+    // rank es negativo en FTS5: menor (más negativo) = más relevante.
+    this.stmtSearchBM25 = this.db.prepare(`
+      SELECT node_id, rank as score
+      FROM nodes_fts
+      WHERE nodes_fts MATCH ?
+      ORDER BY rank ASC
+      LIMIT ?
+    `);
+
+    // Metadata dimensional para filtrado rápido
+    this.stmtGetNodesByDimension = this.db.prepare(`
+      SELECT n.* FROM nodes n
+      INNER JOIN node_metadata m ON n.id = m.node_id
+      WHERE m.dimension = ?
+      LIMIT ?
+    `);
   }
 
   // -------------------------------------------------------------------------
@@ -267,6 +320,35 @@ export class SqliteManager {
     return { nodes, edges };
   }
 
+  /**
+   * Búsqueda BM25 sobre FTS5 (Full-Text Search).
+   *
+   * @param query Texto de consulta para FTS5 (ej. "OrderService create")
+   * @param limit Máximo de resultados a retornar
+   * @returns Lista de { node_id, score } ordenados por relevancia (menor score = más relevante)
+   */
+  searchBM25(query: string, limit = 50): { node_id: string; score: number }[] {
+    // better-sqlite3 devuelve objetos planos; el score es float
+    return this.stmtSearchBM25.all(query, limit) as {
+      node_id: string;
+      score: number;
+    }[];
+  }
+
+  /**
+   * Recupera nodos filtrados por dimensión semántica (SYS, CPG, DTG).
+   *
+   * @param dimension Una de las tres dimensiones del grafo
+   * @param limit Máximo de resultados
+   * @returns Nodos completos con metadata
+   */
+  getNodesByDimension(
+    dimension: "SYS" | "CPG" | "DTG",
+    limit = 100
+  ): GraphNode[] {
+    return this.stmtGetNodesByDimension.all(dimension, limit) as GraphNode[];
+  }
+
   // -------------------------------------------------------------------------
   // Cierre
   // -------------------------------------------------------------------------
@@ -279,7 +361,7 @@ export class SqliteManager {
 
   /**
    * Expone la instancia raw de better-sqlite3 para componentes que gestionan
-   * sus propios prepared statements (como TensorParser).
+   * sus propios prepared statements (como GraphExtractor).
    *
    * Uso acotado: úsalo solo para inyección en constructores de bajo nivel.
    * No ejecutes DDL directamente sobre la conexión raw.
