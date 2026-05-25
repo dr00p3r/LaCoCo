@@ -42,13 +42,13 @@ describe("AgentIntermediary1", () => {
 
     it("normaliza la query para BM25", () => {
       const result = intermediary.sanitize("Refactoriza OrderService!!!");
-      expect(result.clean_query).toBe("refactoriza orderservice");
+      expect(result.clean_query).toBe("refactoriza OR orderservice");
     });
 
-    it("conserva el texto original para embeddings", () => {
+    it("usa keywords filtrados para embeddings", () => {
       const prompt = "Crea un DTO para crear pedidos";
       const result = intermediary.sanitize(prompt);
-      expect(result.embedding_input).toBe(prompt);
+      expect(result.embedding_input).toBe("dto pedidos");
     });
 
     it("sugiere dimensiones basadas en keywords", () => {

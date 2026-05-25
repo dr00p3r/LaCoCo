@@ -11,10 +11,11 @@
  * y el retriever (búsqueda semántica).
  */
 
-import { SqliteManager, type GraphNode } from "../shared/db/sqlite-manager.js";
+import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import type { GraphNode } from "../persistence/lacoco-graph-manager/model/types.js";
 import { EmbeddingGenerator } from "./embedding/embedding-generator.js";
-import { LanceDbClient } from "./infra/lancedb-client.js";
-import { type NodeEmbeddingRecord } from "./infra/types.js";
+import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import type { NodeEmbeddingRecord } from "../persistence/lacoco-vectors-manager/model/types.js";
 
 /** Batch size para generación de embeddings (evita OOM) */
 const BATCH_SIZE = 32;
@@ -23,8 +24,8 @@ export class EmbeddingIndexer {
   private readonly embedGen: EmbeddingGenerator;
 
   constructor(
-    private readonly db: SqliteManager,
-    private readonly lanceDb: LanceDbClient
+    private readonly db: LaCoCoDatabase,
+    private readonly lanceDb: LaCoCoLanceDb
   ) {
     this.embedGen = new EmbeddingGenerator();
   }

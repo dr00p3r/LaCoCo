@@ -7,10 +7,10 @@
  */
 
 import { type RecoveryStrategy, type SanitizerOutput, type ContextChunk } from "./base.js";
-import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
+import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 
 export class BM25Strategy implements RecoveryStrategy {
-  constructor(private readonly db: SqliteManager) {}
+  constructor(private readonly db: LaCoCoDatabase) {}
 
   /**
    * Recupera nodos mediante BM25 sobre la tabla FTS5 `nodes_fts`.
@@ -20,12 +20,12 @@ export class BM25Strategy implements RecoveryStrategy {
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
     const results = this.db.searchBM25(query.clean_query, 50);
+    const signatures = this.db.getNodeSignatures(results.map((r) => r.node_id));
 
     return results.map((r) => ({
       nodeId: r.node_id,
-      // Invertimos el score BM25 (menor es mejor) a un score descendiente 0-1
       score: Math.max(0, 1 - Math.abs(r.score)),
-      text: r.node_id, // El caller puede hacer JOIN para obtener signature
+      text: signatures.get(r.node_id) ?? r.node_id,
       source: "BM25",
     }));
   }

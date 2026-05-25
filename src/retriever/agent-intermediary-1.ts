@@ -22,6 +22,53 @@ const RAG_BLOCKLIST = new Set([
   "explica", "qué es", "cómo funciona", "tutorial",
 ]);
 
+/** Stop words en español/inglés que no aportan a la búsqueda BM25 en código */
+const STOP_WORDS = new Set([
+  // Español
+  "el", "la", "los", "las", "un", "una", "unos", "unas",
+  "de", "en", "para", "por", "con", "sin", "sobre", "tras",
+  "ante", "bajo", "hasta", "desde", "entre", "mediante",
+  "y", "e", "o", "a", "que", "ni", "pero", "aunque", "sino",
+  "lo", "se", "le", "me", "te", "nos", "os", "sus",
+  "este", "esta", "estos", "estas", "ese", "esa", "esos", "esas",
+  "explica", "dime", "dame", "haz", "hace", "hacer", "di",
+  "datos", "dato", "flujo", "clase", "tipo", "forma", "parte", "linea",
+  "valor", "lista", "orden", "nuevo", "primer", "segundo", "siguiente",
+  "anterior", "actual", "simple", "comun", "normal", "basico", "medio",
+  "rapido", "lento", "nuevo", "antiguo", "simple", "unico", "publico",
+  "privado", "libre", "ocupado", "activo", "local", "global", "interno",
+  "externo", "propio", "general", "especifico", "logico", "fisico",
+  "importante", "necesario", "posible", "seguro", "cierto", "falso",
+  "verdadero", "correcto", "exacto", "vacio", "lleno", "completo",
+  "distinto", "diferente", "igual", "parecido", "similar", "contrario",
+  "positivo", "negativo", "claro", "oscuro", "suave", "duro",
+  "nombre", "palabra", "texto", "numero", "entero", "decimal",
+  "funcion", "ejemplo", "codigo", "archivo", "salida", "entrada",
+  "parametro", "metodo", "objeto", "proceso", "sistema", "estructura",
+  "programa", "proyecto", "problema", "solucion", "resultado", "producto",
+  "motivo", "razon", "causa", "efecto", "proposito", "objetivo", "meta",
+  "manera", "modo", "medio", "forma", "paso", "etapa", "fase",
+  "trabajo", "tarea", "accion", "evento", "caso", "ejemplo", "prueba",
+  "detalle", "resumen", "total", "parcial", "final", "inicial",
+  "nuestro", "propio", "ajeno", "personal", "publico", "privado",
+  "crear", "crea", "anade", "agrega", "incluye", "define", "muestra",
+  "qué", "cómo", "cuándo", "dónde", "cuál", "cuales", "quien", "quienes",
+  "más", "menos", "muy", "mucho", "bien", "mal", "tan", "como",
+  "que", "como", "donde", "cuando", "cual", "mas",
+  "todo", "nada", "algo", "cada", "si", "no",
+  "del", "al", "porque", "sino", "sea", "era",
+  // Inglés
+  "the", "a", "an", "and", "or", "in", "on", "at", "to",
+  "for", "of", "with", "by", "is", "are", "was", "were",
+  "be", "been", "has", "have", "had", "do", "does", "did",
+  "will", "would", "can", "could", "should", "may", "might",
+  "this", "that", "these", "those", "it", "its",
+  "you", "your", "we", "our", "they", "them", "their",
+  "what", "when", "where", "how", "why", "which", "who", "whom",
+  "tell", "show", "give", "find", "need", "want", "use",
+  "about", "into", "than", "then", "also", "just", "not",
+]);
+
 /** Heurísticas rápidas para detectar intención sin embeddings */
 const INTENT_KEYWORDS: Record<IntentTag, string[]> = {
   understand: ["qué hace", "cómo funciona", "para qué sirve", "explica", "entender"],
@@ -56,10 +103,11 @@ export class AgentIntermediary1 {
     }
 
     // ── 2. Sanitizar query para BM25 ─────────────────────────────────
-    const cleanQuery = this.#normalizeForBM25(trimmed);
+    const keywords = this.#extractKeywords(trimmed);
+    const cleanQuery = this.#toFts5Query(keywords);
 
-    // ── 3. Generar embedding_input (semántico, sin normalizar) ──────
-    const embeddingInput = trimmed;
+    // ── 3. Generar embedding_input (términos de código, sin OR) ─────
+    const embeddingInput = keywords.join(" ") || trimmed;
 
     // ── 4. Detectar intent por heurísticas ───────────────────────────
     const { intent, confidence } = this.#detectIntent(trimmed);
@@ -98,13 +146,20 @@ export class AgentIntermediary1 {
     return hasCodeSymbols || hasTaskKeywords;
   }
 
-  /** Normaliza texto para BM25: minúsculas, quita puntuación irrelevante, espacios extra. */
-  #normalizeForBM25(text: string): string {
+  /** Extrae palabras clave relevantes para código: quita puntuación, minúsculas, filtra stop words. */
+  #extractKeywords(text: string): string[] {
     return text
       .toLowerCase()
       .replace(/[^a-z0-9áéíóúüñ\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+      .split(/\s+/)
+      .filter((token) => token.length > 2 || /^[a-z]{2}$/.test(token))
+      .filter((token) => !STOP_WORDS.has(token));
+  }
+
+  /** Convierte keywords en query FTS5 con OR entre tokens. */
+  #toFts5Query(keywords: string[]): string {
+    if (keywords.length === 0) return "";
+    return keywords.join(" OR ");
   }
 
   /** Heurística rápida O(1) para clasificar intención del usuario. */

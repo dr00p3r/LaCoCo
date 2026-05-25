@@ -10,7 +10,7 @@
  */
 
 import { type SanitizerOutput } from "./strategies/base.js";
-import { OllamaClient } from "./infra/ollama-client.js";
+import { OllamaService } from "../slms/ollama-service.js";
 
 /** Keywords hardcoded para clasificación O(1) */
 const DIMENSION_KEYWORDS = {
@@ -34,14 +34,14 @@ const DIMENSION_KEYWORDS = {
 
 export class DimensionalFilter {
   private readonly confidenceThreshold: number;
-  private readonly ollama: OllamaClient | null;
+  private readonly ollama: OllamaService | null;
 
   /**
    * @param confidenceThreshold Umbral mínimo de confianza para aceptar
    *        el resultado de los niveles 1/2 sin recurrir al SLM (0.0–1.0)
    * @param ollama Cliente Ollama opcional para fallback SLM
    */
-  constructor(confidenceThreshold = 0.65, ollama?: OllamaClient) {
+  constructor(confidenceThreshold = 0.65, ollama?: OllamaService) {
     this.confidenceThreshold = confidenceThreshold;
     this.ollama = ollama ?? null;
   }

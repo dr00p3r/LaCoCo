@@ -13,13 +13,13 @@ import {
   type SanitizerOutput,
   type ContextChunk,
 } from "./base.js";
-import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
+import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 
 export class AgenticStandaloneStrategy implements RecoveryStrategy {
   private readonly maxIterations = 3;
 
   constructor(
-    private readonly db: SqliteManager,
+    private readonly db: LaCoCoDatabase,
     private readonly slmEndpoint = "http://localhost:11434/api/generate"
   ) {}
 
@@ -27,12 +27,13 @@ export class AgenticStandaloneStrategy implements RecoveryStrategy {
     // Sin filtro dimensional: semilla pura BM25
     const seedResults = this.db.searchBM25(query.clean_query, 20);
     const collected = new Map<string, ContextChunk>();
+    const seedSigs = this.db.getNodeSignatures(seedResults.map((r) => r.node_id));
 
     for (const r of seedResults) {
       collected.set(r.node_id, {
         nodeId: r.node_id,
         score: Math.max(0, 1 - Math.abs(r.score)),
-        text: r.node_id,
+        text: seedSigs.get(r.node_id) ?? r.node_id,
         source: "AGENTIC-STANDALONE",
       });
     }

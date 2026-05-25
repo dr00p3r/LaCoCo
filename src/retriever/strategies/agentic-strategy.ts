@@ -11,9 +11,9 @@ import {
   type SanitizerOutput,
   type ContextChunk,
 } from "./base.js";
-import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
+import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DimensionalFilter } from "../dimensional-filter.js";
-import { OllamaClient } from "../infra/ollama-client.js";
+import { OllamaService } from "../../slms/ollama-service.js";
 
 /** Herramientas disponibles para el agente */
 interface Tool {
@@ -23,15 +23,15 @@ interface Tool {
 
 export class AgenticStrategy implements RecoveryStrategy {
   private readonly dimFilter: DimensionalFilter;
-  private readonly ollama: OllamaClient;
+  private readonly ollama: OllamaService;
   private readonly maxIterations = 3;
 
   constructor(
-    private readonly db: SqliteManager,
+    private readonly db: LaCoCoDatabase,
     ollamaEndpoint = "http://localhost:11434",
     confidenceThreshold = 0.65
   ) {
-    this.ollama = new OllamaClient(ollamaEndpoint);
+    this.ollama = new OllamaService(ollamaEndpoint);
     this.dimFilter = new DimensionalFilter(confidenceThreshold, this.ollama);
   }
 
@@ -48,12 +48,13 @@ export class AgenticStrategy implements RecoveryStrategy {
     // Fase 1: recuperar símbolos semilla por BM25
     const seedResults = this.db.searchBM25(query.clean_query, 20);
     const collected = new Map<string, ContextChunk>();
+    const seedSigs = this.db.getNodeSignatures(seedResults.map((r) => r.node_id));
 
     for (const r of seedResults) {
       collected.set(r.node_id, {
         nodeId: r.node_id,
         score: Math.max(0, 1 - Math.abs(r.score)),
-        text: r.node_id,
+        text: seedSigs.get(r.node_id) ?? r.node_id,
         source: "AGENTIC",
       });
     }
@@ -159,10 +160,11 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
     const rows = rawDb
       .prepare("SELECT id FROM nodes WHERE name = ? LIMIT 10")
       .all(name) as { id: string }[];
+    const sigs = this.db.getNodeSignatures(rows.map((r) => r.id));
     return rows.map((r) => ({
       nodeId: r.id,
       score: 0.7,
-      text: r.id,
+      text: sigs.get(r.id) ?? r.id,
       source: "AGENTIC",
     }));
   }
@@ -174,10 +176,11 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
       : "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? LIMIT 10";
     const params = version ? [`%${pkg}%`, `%${version}%`] : [`%${pkg}%`];
     const rows = rawDb.prepare(sql).all(...params) as { id: string }[];
+    const sigs = this.db.getNodeSignatures(rows.map((r) => r.id));
     return rows.map((r) => ({
       nodeId: r.id,
       score: 0.6,
-      text: r.id,
+      text: sigs.get(r.id) ?? r.id,
       source: "AGENTIC",
     }));
   }

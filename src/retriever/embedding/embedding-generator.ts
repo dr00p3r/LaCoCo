@@ -3,15 +3,10 @@
  *
  * Carga lazy el modelo `all-MiniLM-L6-v2` (~80MB) de Xenova.
  * Genera vectores de 384 dimensiones para indexación en LanceDB.
- *
- * Restricciones:
- *   - 100% offline. Sin llamadas a APIs externas.
- *   - Node.js >= 20 requerido.
  */
 
 import { pipeline } from "@xenova/transformers";
 
-/** Dimensión fija del modelo all-MiniLM-L6-v2 */
 export const EMBEDDING_DIM = 384;
 
 /** Tipo opaco del pipeline de feature-extraction */

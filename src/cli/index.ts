@@ -9,7 +9,7 @@
  */
 
 import { Command } from "commander";
-import { SqliteManager } from "../shared/db/sqlite-manager.js";
+import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
 import { AgentIntermediary1 } from "../retriever/agent-intermediary-1.js";
 import { ContextAggregator } from "../retriever/context-aggregator.js";
@@ -19,8 +19,8 @@ import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
 import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
 import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-standalone-strategy.js";
-import { LanceDbClient } from "../retriever/infra/lancedb-client.js";
-import { OllamaClient } from "../retriever/infra/ollama-client.js";
+import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/strategies/base.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ program
     printBanner(rutaTsconfig, options.db);
 
     // ── 1. Inicializar la base de datos ──────────────────────────────────
-    const db = new SqliteManager(options.db);
+    const db = new LaCoCoDatabase(options.db);
 
     // ── 2. Construir el DaemonManager ────────────────────────────────────
     const daemon = new DaemonManager({
@@ -117,7 +117,7 @@ program
     console.log(`  tsconfig : ${rutaTsconfig}`);
     console.log(`  sqlite   : ${options.db}\n`);
 
-    const db = new SqliteManager(options.db);
+    const db = new LaCoCoDatabase(options.db);
     const daemon = new DaemonManager({
       tsConfigFilePath: rutaTsconfig,
       db,
@@ -129,9 +129,9 @@ program
     // Cold start sincrónico (sin watcher, con embeddings)
     try {
       daemon.start();
-      // El daemon ya genera embeddings de forma async tras cold-start
+      // Esperar a que los embeddings terminen antes de cerrar la BD
       console.log("\n[CLI] ⏳ Esperando generación de embeddings...");
-      await new Promise((resolve) => setTimeout(resolve, 2000)); // Breve espera para que async termine
+      await daemon.awaitEmbeddings();
       await daemon.stop();
       console.log("\n[CLI] ✅ Indexación completada (grafo + embeddings).");
     } catch (err) {
@@ -157,8 +157,8 @@ program
     console.log(`  strategy : ${options.strategy}`);
     console.log(`  sqlite   : ${options.db}\n`);
 
-    const db = new SqliteManager(options.db);
-    const ollama = new OllamaClient(options.ollama);
+    const db = new LaCoCoDatabase(options.db);
+    const ollama = new OllamaService(options.ollama);
 
     try {
       // 1. Agente Intermediario 1
@@ -188,7 +188,7 @@ program
       const needsLanceDb = ["hybrid", "agentic", "agentic-standalone"].includes(options.strategy);
 
       if (needsLanceDb) {
-        const lanceDb = new LanceDbClient("./lancedb");
+        const lanceDb = new LaCoCoLanceDb("./lancedb");
         await lanceDb.connect();
 
         switch (options.strategy) {
@@ -232,8 +232,10 @@ program
         if (await ollama.isAvailable()) {
           console.log("\n[CLI] 🧠 Enviando prompt enriquecido al LLM...\n");
           const injector = new PromptInjector();
+          console.log("[CLI] 📝 Prompt original:\n" + query + "\n");
           const enrichedPrompt = injector.inject(query, aggregated);
-
+          console.log("[CLI] 📚 Contexto agregado:\n", enrichedPrompt);
+0
           const answer = await ollama.generate(enrichedPrompt);
           console.log("🤖 Respuesta del LLM:\n" + answer);
         } else {

@@ -10,14 +10,14 @@ import {
   type SanitizerOutput,
   type ContextChunk,
 } from "./base.js";
-import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
+import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DimensionalFilter } from "../dimensional-filter.js";
 
 export class BM25DimFilterStrategy implements RecoveryStrategy {
   private readonly dimFilter: DimensionalFilter;
 
   constructor(
-    private readonly db: SqliteManager,
+    private readonly db: LaCoCoDatabase,
     confidenceThreshold = 0.65
   ) {
     this.dimFilter = new DimensionalFilter(confidenceThreshold);
@@ -47,10 +47,12 @@ export class BM25DimFilterStrategy implements RecoveryStrategy {
     // Intersecar con candidatos dimensionales
     const filtered = bm25Results.filter((r) => candidateIds.has(r.node_id));
 
+    const signatures = this.db.getNodeSignatures(filtered.map((r) => r.node_id));
+
     return filtered.map((r) => ({
       nodeId: r.node_id,
       score: Math.max(0, 1 - Math.abs(r.score)),
-      text: r.node_id,
+      text: signatures.get(r.node_id) ?? r.node_id,
       source: "BM25+DimFilter",
     }));
   }

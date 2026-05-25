@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { SqliteManager } from "../../src/shared/db/sqlite-manager.js";
+import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { BM25Strategy } from "../../src/retriever/strategies/bm25-strategy.js";
 import type { SanitizerOutput } from "../../src/retriever/strategies/base.js";
 
 describe("BM25Strategy", () => {
-  let db: SqliteManager;
+  let db: LaCoCoDatabase;
   let strategy: BM25Strategy;
 
   beforeAll(() => {
     // Base de datos en memoria para tests aislados
-    db = new SqliteManager(":memory:");
+    db = new LaCoCoDatabase(":memory:");
 
     // Poblar nodos de prueba (los triggers FTS5 sincronizan automáticamente)
     db.insertNode({

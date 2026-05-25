@@ -16,21 +16,24 @@ import {
   type SanitizerOutput,
   type ContextChunk,
 } from "./base.js";
-import { type SqliteManager } from "../../shared/db/sqlite-manager.js";
-import { type LanceDbClient } from "../infra/lancedb-client.js";
+import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { EmbeddingGenerator } from "../embedding/embedding-generator.js";
 import { DimensionalFilter } from "../dimensional-filter.js";
 
 /** Constante estándar de RRF */
 const RRF_K = 60;
 
+/** Boost multiplicativo para chunks que coinciden con símbolos mencionados en la query */
+const SYMBOL_BOOST = 1.5;
+
 export class HybridStrategy implements RecoveryStrategy {
   private readonly dimFilter: DimensionalFilter;
   private readonly embeddingGen: EmbeddingGenerator;
 
   constructor(
-    private readonly db: SqliteManager,
-    private readonly lanceDb: LanceDbClient,
+    private readonly db: LaCoCoDatabase,
+    private readonly lanceDb: LaCoCoLanceDb,
     confidenceThreshold = 0.65
   ) {
     this.dimFilter = new DimensionalFilter(confidenceThreshold);
@@ -86,14 +89,25 @@ export class HybridStrategy implements RecoveryStrategy {
     }
 
     // ── 4. Convertir a ContextChunks ───────────────────────────────
-    const chunks: ContextChunk[] = Array.from(rrfScores.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([nodeId, score]) => ({
-        nodeId,
-        score,
-        text: nodeId,
-        source: "RRF",
-      }));
+    const sorted = Array.from(rrfScores.entries()).sort((a, b) => b[1] - a[1]);
+    const signatures = this.db.getNodeSignatures(sorted.map(([id]) => id));
+
+    const chunks: ContextChunk[] = sorted.map(([nodeId, score]) => ({
+      nodeId,
+      score,
+      text: signatures.get(nodeId) ?? nodeId,
+      source: "RRF",
+    }));
+
+    // ── 5. Boost por coincidencia de símbolos en la query ──────────
+    const queryTokens = query.embedding_input.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+    for (const chunk of chunks) {
+      const lowerId = chunk.nodeId.toLowerCase();
+      if (queryTokens.some((t) => lowerId.includes(t))) {
+        chunk.score *= SYMBOL_BOOST;
+      }
+    }
+    chunks.sort((a, b) => b.score - a.score);
 
     return chunks;
   }

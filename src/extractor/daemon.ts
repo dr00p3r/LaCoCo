@@ -12,16 +12,16 @@
  *   CLI (commander)
  *     └─▶ DaemonManager.start()
  *           ├─▶ GraphExtractor.processFile()   ← núcleo AST (sin lado)
- *           └─▶ SqliteManager.*              ← persistencia
+ *           └─▶ LaCoCoDatabase.*              ← persistencia
  */
 
 import path from "node:path";
 import { Project, type SourceFile } from "ts-morph";
 import chokidar, { type FSWatcher } from "chokidar";
-import type { SqliteManager } from "../shared/db/sqlite-manager.js";
+import type { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { GraphExtractor } from "./graph-extractor.js";
 import { EmbeddingIndexer } from "../retriever/embedding-indexer.js";
-import { LanceDbClient } from "../retriever/infra/lancedb-client.js";
+import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos auxiliares
@@ -31,7 +31,7 @@ export interface DaemonOptions {
   /** Ruta absoluta o relativa al tsconfig.json del proyecto a analizar. */
   tsConfigFilePath: string;
   /** Instancia del gestor de base de datos ya inicializada. */
-  db: SqliteManager;
+  db: LaCoCoDatabase;
   /**
    * Glob pattern de los archivos a observar.
    * Defaults a todos los .ts del directorio del tsconfig, excluyendo node_modules.
@@ -55,11 +55,12 @@ export class DaemonManager {
   private watcher: FSWatcher | null = null;
 
   private readonly tsConfigFilePath: string;
-  private readonly db: SqliteManager;
+  private readonly db: LaCoCoDatabase;
   private readonly watchGlob: string;
   private readonly verbose: boolean;
   private readonly indexEmbeddings: boolean;
   private readonly lanceDbPath: string;
+  private embeddingsPromise: Promise<void> | null = null;
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
@@ -110,6 +111,16 @@ export class DaemonManager {
     console.log("\n[Daemon] 🛑 Apagado limpio completado.");
   }
 
+  /**
+   * Espera a que los embeddings terminen (si están en progreso).
+   * Útil en modo index (one-shot) para no cerrar la BD antes de tiempo.
+   */
+  async awaitEmbeddings(): Promise<void> {
+    if (this.embeddingsPromise) {
+      await this.embeddingsPromise;
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // §1 — Cold Start
   // ─────────────────────────────────────────────────────────────────────────
@@ -152,7 +163,7 @@ export class DaemonManager {
 
     // Post-cold-start: generar embeddings en LanceDB
     if (this.indexEmbeddings && nodesWritten > 0) {
-      void this.#generateEmbeddings();
+      this.embeddingsPromise = this.#generateEmbeddings();
     }
   }
 
@@ -164,7 +175,7 @@ export class DaemonManager {
     console.log("[Daemon] 🧠 Generando embeddings semánticos...");
     console.time("[Daemon] Embeddings");
 
-    const lanceDb = new LanceDbClient(this.lanceDbPath);
+    const lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
     try {
       await lanceDb.connect();
       const indexer = new EmbeddingIndexer(this.db, lanceDb);
@@ -185,7 +196,7 @@ export class DaemonManager {
    * Re-indexa embeddings para un archivo específico tras hot-reload.
    */
   async #reindexEmbeddings(filePath: string): Promise<void> {
-    const lanceDb = new LanceDbClient(this.lanceDbPath);
+    const lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
     try {
       await lanceDb.connect();
       const indexer = new EmbeddingIndexer(this.db, lanceDb);
