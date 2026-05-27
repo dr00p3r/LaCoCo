@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { ContextAggregator } from "../../src/retriever/context-aggregator.js";
-import type { ContextChunk } from "../../src/retriever/strategies/base.js";
+import { ContextAggregator } from "../../src/retriever/utilities/filters/context-aggregator.js";
+import type { ContextChunk } from "../../src/retriever/models/strategies/types.js";
 
 describe("ContextAggregator", () => {
   const aggregator = new ContextAggregator();

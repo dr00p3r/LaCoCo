@@ -20,7 +20,7 @@ import { Project, type SourceFile } from "ts-morph";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { GraphExtractor } from "./graph-extractor.js";
-import { EmbeddingIndexer } from "../retriever/embedding-indexer.js";
+import { EmbeddingIndexer } from "../retriever/utilities/embeddings/embedding-indexer.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 
 // ─────────────────────────────────────────────────────────────────────────────

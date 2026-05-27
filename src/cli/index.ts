@@ -11,9 +11,9 @@
 import { Command } from "commander";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
-import { AgentIntermediary1 } from "../retriever/agent-intermediary-1.js";
-import { ContextAggregator } from "../retriever/context-aggregator.js";
-import { PromptInjector } from "../retriever/prompt/prompt-injector.js";
+import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary-1.js";
+import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
+import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
 import { BM25Strategy } from "../retriever/strategies/bm25-strategy.js";
 import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
@@ -21,7 +21,7 @@ import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
 import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-standalone-strategy.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { OllamaService } from "../slms/ollama-service.js";
-import type { RecoveryStrategy } from "../retriever/strategies/base.js";
+import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Programa

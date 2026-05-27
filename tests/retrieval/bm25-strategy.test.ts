@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { BM25Strategy } from "../../src/retriever/strategies/bm25-strategy.js";
-import type { SanitizerOutput } from "../../src/retriever/strategies/base.js";
+import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
 
 describe("BM25Strategy", () => {
   let db: LaCoCoDatabase;

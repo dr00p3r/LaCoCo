@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { DimensionalFilter } from "../../src/retriever/dimensional-filter.js";
-import type { SanitizerOutput } from "../../src/retriever/strategies/base.js";
+import { DimensionalFilter } from "../../src/retriever/utilities/filters/dimensional-filter.js";
+import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
 
 describe("DimensionalFilter", () => {
   const filter = new DimensionalFilter(0.65);

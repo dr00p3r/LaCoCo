@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AgentIntermediary1 } from "../../src/retriever/agent-intermediary-1.js";
+import { AgentIntermediary1 } from "../../src/retriever/utilities/mini-agents/agent-intermediary-1.js";
 
 describe("AgentIntermediary1", () => {
   const intermediary = new AgentIntermediary1();

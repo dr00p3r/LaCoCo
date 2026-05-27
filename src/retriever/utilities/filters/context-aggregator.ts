@@ -7,7 +7,7 @@
  *   3. Truncar cuando la suma aproximada de tokens supere maxTokens
  */
 
-import { type ContextChunk } from "./strategies/base.js";
+import { type ContextChunk } from "../../models/strategies/types.js";
 
 /** Estimación conservadora: 1 token ≈ 0.75 palabras en inglés/espanol técnico */
 const WORDS_PER_TOKEN = 0.75;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { PromptInjector } from "../../src/retriever/prompt/prompt-injector.js";
-import type { ContextChunk } from "../../src/retriever/strategies/base.js";
+import { PromptInjector } from "../../src/retriever/utilities/filters/prompt-injector.js";
+import type { ContextChunk } from "../../src/retriever/models/strategies/types.js";
 
 describe("PromptInjector", () => {
   const injector = new PromptInjector();

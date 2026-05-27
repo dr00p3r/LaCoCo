@@ -1,5 +1,5 @@
 /**
- * HybridStrategy (2.4) — Fusión híbrida BM25 + Embeddings + RRF + DimFilter.
+ * HybridStrategy — Fusión híbrida BM25 + Embeddings + RRF + DimFilter.
  *
  * Pipeline:
  *   1. Aplicar DimensionalFilter como hint.
@@ -13,13 +13,13 @@
 
 import {
   type RecoveryStrategy,
-  type SanitizerOutput,
   type ContextChunk,
-} from "./base.js";
+} from "../models/strategies/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { EmbeddingGenerator } from "../embedding/embedding-generator.js";
-import { DimensionalFilter } from "../dimensional-filter.js";
+import { EmbeddingGenerator } from "../utilities/embeddings/embedding-generator.js";
+import { DimensionalFilter } from "../utilities/filters/dimensional-filter.js";
 
 /** Constante estándar de RRF */
 const RRF_K = 60;

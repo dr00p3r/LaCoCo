@@ -14,7 +14,7 @@
 import {
   type SanitizerOutput,
   type IntentTag,
-} from "./strategies/base.js";
+} from "../../models/utilities/types.js";
 
 /** Prompts que claramente NO necesitan RAG (genéricos, sin referencia al proyecto) */
 const RAG_BLOCKLIST = new Set([

@@ -6,7 +6,8 @@
  * vs estrategias más sofisticadas.
  */
 
-import { type RecoveryStrategy, type SanitizerOutput, type ContextChunk } from "./base.js";
+import { type RecoveryStrategy, type ContextChunk } from "../models/strategies/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 
 export class BM25Strategy implements RecoveryStrategy {

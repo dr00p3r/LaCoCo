@@ -8,11 +8,11 @@
 
 import {
   type RecoveryStrategy,
-  type SanitizerOutput,
   type ContextChunk,
-} from "./base.js";
+} from "../models/strategies/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { DimensionalFilter } from "../dimensional-filter.js";
+import { DimensionalFilter } from "../utilities/filters/dimensional-filter.js";
 import { OllamaService } from "../../slms/ollama-service.js";
 
 /** Herramientas disponibles para el agente */

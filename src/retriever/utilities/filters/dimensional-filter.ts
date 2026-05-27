@@ -9,8 +9,8 @@
  * Salida: array de dimensiones ordenadas por probabilidad descendente.
  */
 
-import { type SanitizerOutput } from "./strategies/base.js";
-import { OllamaService } from "../slms/ollama-service.js";
+import { type SanitizerOutput } from "../../models/utilities/types.js";
+import { OllamaService } from "../../../slms/ollama-service.js";
 
 /** Keywords hardcoded para clasificación O(1) */
 const DIMENSION_KEYWORDS = {

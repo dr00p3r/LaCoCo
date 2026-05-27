@@ -10,9 +10,9 @@
 
 import {
   type RecoveryStrategy,
-  type SanitizerOutput,
   type ContextChunk,
-} from "./base.js";
+} from "../models/strategies/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 
 export class AgenticStandaloneStrategy implements RecoveryStrategy {

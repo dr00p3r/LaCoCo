@@ -6,7 +6,7 @@
  * compatible con el ecosistema local.
  */
 
-import { type ContextChunk } from "../strategies/base.js";
+import { type ContextChunk } from "../../models/strategies/types.js";
 
 /** Templates de inyección versionados */
 const TEMPLATES: Record<string, (chunks: ContextChunk[]) => string> = {

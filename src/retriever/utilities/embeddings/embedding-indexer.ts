@@ -11,11 +11,11 @@
  * y el retriever (búsqueda semántica).
  */
 
-import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import type { GraphNode } from "../persistence/lacoco-graph-manager/model/types.js";
-import { EmbeddingGenerator } from "./embedding/embedding-generator.js";
-import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import type { NodeEmbeddingRecord } from "../persistence/lacoco-vectors-manager/model/types.js";
+import { LaCoCoDatabase } from "../../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import type { GraphNode } from "../../../persistence/lacoco-graph-manager/model/types.js";
+import { EmbeddingGenerator } from "./embedding-generator.js";
+import { LaCoCoLanceDb } from "../../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import type { NodeEmbeddingRecord } from "../../../persistence/lacoco-vectors-manager/model/types.js";
 
 /** Batch size para generación de embeddings (evita OOM) */
 const BATCH_SIZE = 32;
