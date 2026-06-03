@@ -28,7 +28,7 @@ import type { ContextChunk } from "../retriever/models/strategies/types.js";
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
 type Focus = "SYS" | "CPG" | "DTG" | "ALL";
-type InspectMode = "default" | "cross-layer" | "scores";
+type InspectMode = "default" | "scores" | "tensor";
 
 export interface InspectOptions {
   rootNode: string;
@@ -83,6 +83,7 @@ const DIM_COLORS: Record<string, string> = {
 };
 
 const DIM_GRAY = "#95a5a6";
+const NODE_GRAY = "#aaaaaa";
 
 const KIND_SHAPES: Record<string, string> = {
   CLASS: "rectangle",
@@ -102,6 +103,13 @@ const KIND_SHAPES: Record<string, string> = {
 const SYS_RELS = new Set(["EXTENDS", "IMPLEMENTS", "IMPORTS_EXTERNAL"]);
 const CPG_RELS = new Set(["INJECTS", "CALLS", "INSTANTIATES"]);
 const DTG_RELS = new Set(["CONSUMES_DATA", "PRODUCES", "MUTATES_STATE"]);
+
+function getEdgeDim(relation: string): string {
+  if (SYS_RELS.has(relation)) return "SYS";
+  if (CPG_RELS.has(relation)) return "CPG";
+  if (DTG_RELS.has(relation)) return "DTG";
+  return "unknown";
+}
 
 const CYTOSCAPE_VERSION = "3.33.1";
 const CYTOSCAPE_CDN = `https://unpkg.com/cytoscape@${CYTOSCAPE_VERSION}/dist/cytoscape.min.js`;
@@ -270,7 +278,7 @@ function expandBFS(
 
   // Inicializar frontera con vecinos de las raíces
   for (const rootId of rootIds) {
-    const neighbors = stmtNeighbors.all(rootId) as { neighbor: string }[];
+    const neighbors = stmtNeighbors.all(rootId, rootId) as { neighbor: string }[];
     for (const { neighbor } of neighbors) {
       if (!visited.has(neighbor)) addToFrontier(neighbor);
     }
@@ -292,7 +300,7 @@ function expandBFS(
     frontier.delete(bestId);
     visited.add(bestId);
 
-    const neighbors = stmtNeighbors.all(bestId) as { neighbor: string }[];
+    const neighbors = stmtNeighbors.all(bestId, bestId) as { neighbor: string }[];
     for (const { neighbor } of neighbors) {
       if (!visited.has(neighbor)) addToFrontier(neighbor);
     }
@@ -392,8 +400,8 @@ interface HtmlParams {
 function generateHtml(params: HtmlParams): string {
   const { nodes, edges, anchors, stats, mode, title, cytoscapeTag } = params;
 
-  const nodeElements = buildNodeElements(nodes, anchors);
-  const edgeElements = buildEdgeElements(edges, buildEdgeDimMap(nodes));
+  const nodeElements = buildNodeElements(nodes, anchors, params.mode);
+  const edgeElements = buildEdgeElements(edges);
 
   const graphData = JSON.stringify([...nodeElements, ...edgeElements]);
   const statsHtml = buildStatsHtml(stats);
@@ -431,16 +439,24 @@ ${cytoscapeTag}
   }
   #stats .stitle { font-weight: 700; color: #333; margin-top: 6px; }
   #stats .stitle:first-child { margin-top: 0; }
-  #stats .dim-SYS { color: #e74c3c; }
-  #stats .dim-CPG { color: #2ecc71; }
-  #stats .dim-DTG { color: #3498db; }
-  #stats .dim-unknown { color: #95a5a6; }
   .legend-row { display: flex; align-items: center; margin: 1px 0; }
   .legend-swatch { width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; flex-shrink: 0; }
   .legend-swatch.SYS { background: #e74c3c; }
   .legend-swatch.CPG { background: #2ecc71; }
   .legend-swatch.DTG { background: #3498db; }
   .legend-swatch.unknown { background: #95a5a6; }
+  .legend-shape { display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; margin-right: 4px; flex-shrink: 0;
+    font-size: 11px; line-height: 1; background: #d5d5d5; border: 1px solid #999; }
+  .legend-shape.rect { border-radius: 2px; }
+  .legend-shape.hex { clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+  .legend-shape.ellip { border-radius: 50%; }
+  .legend-shape.diam { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+  .legend-shape.star { clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
+  .legend-shape.rrect { border-radius: 6px; }
+  .legend-shape.tria { clip-path: polygon(50% 0%, 100% 100%, 0% 100%); }
+  .legend-shape.rhom { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+  .legend-shape.tag { clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 50% 85%, 0% 100%); }
   #tooltip {
     position: fixed; bottom: 12px; left: 12px; z-index: 20;
     background: rgba(0,0,0,0.78); color: #eee; padding: 6px 10px;
@@ -461,7 +477,7 @@ ${cytoscapeTag}
   <label>Mode:</label>
   <select id="modeSelect">
     <option value="default"${mode === "default" ? " selected" : ""}>default</option>
-    <option value="cross-layer"${mode === "cross-layer" ? " selected" : ""}>cross-layer</option>
+    <option value="tensor"${mode === "tensor" ? " selected" : ""}>tensor</option>
     <option value="scores"${mode === "scores" ? " selected" : ""}>scores</option>
   </select>
   <span class="spacer"></span>
@@ -492,14 +508,14 @@ const STYLE_BASE = [
     "border-color": "data(borderColor)",
   }},
   { selector: "edge", style: {
-    "width": 1,
-    "line-color": "#999",
-    "target-arrow-color": "#999",
+    "width": 1.5,
+    "line-color": "data(color)",
+    "target-arrow-color": "data(color)",
     "target-arrow-shape": "triangle",
     "curve-style": "bezier",
     "label": "data(label)",
     "font-size": "8px",
-    "color": "#666",
+    "color": "#444",
     "text-rotation": "autorotate",
   }},
   { selector: "node[anchor = 1]", style: {
@@ -509,24 +525,25 @@ const STYLE_BASE = [
   }},
 ];
 
-const STYLE_CROSS_LAYER = [
+const STYLE_TENSOR = [
+  { selector: "node", style: {
+    "background-color": "data(color)",
+  }},
   { selector: "edge", style: {
-    "width": 1.2,
-    "line-color": "#ccc",
-    "target-arrow-color": "#ccc",
+    "width": 1.5,
+    "line-color": "data(color)",
+    "target-arrow-color": "data(color)",
     "target-arrow-shape": "triangle",
     "curve-style": "bezier",
     "label": "data(label)",
     "font-size": "8px",
-    "color": "#aaa",
+    "color": "#444",
     "text-rotation": "autorotate",
   }},
-  { selector: "edge[crossLayer = 1]", style: {
-    "width": 2.5,
-    "line-color": "#e74c3c",
-    "target-arrow-color": "#e74c3c",
-    "font-size": "9px",
-    "color": "#c0392b",
+  { selector: "node[anchor = 1]", style: {
+    "border-width": 3,
+    "border-color": "#000",
+    "font-weight": "bold",
   }},
 ];
 
@@ -612,7 +629,8 @@ cy.on("mouseout", "node", function() {
 });
 cy.on("mouseover", "edge", function(evt) {
   const e = evt.target;
-  tooltip.innerHTML = "<b>" + esc(e.data("label")) + "</b>";
+  const edgeDim = e.data("edgeDim") || "?";
+  tooltip.innerHTML = "<b>" + esc(e.data("label")) + "</b> [" + edgeDim + "]";
   tooltip.style.display = "block";
 });
 cy.on("mouseout", "edge", function() {
@@ -654,7 +672,7 @@ assignDepth();
 
 function buildStyle(mode) {
   var s = STYLE_BASE.slice();
-  if (mode === "cross-layer") s = s.concat(STYLE_CROSS_LAYER);
+  if (mode === "tensor") s = s.concat(STYLE_TENSOR);
   if (mode === "scores") s = s.concat(STYLE_SCORES);
   return s;
 }
@@ -672,14 +690,17 @@ function esc(s) {
 function buildNodeElements(
   nodes: NodeRow[],
   anchors: Map<string, number>,
+  mode: InspectMode,
 ): Record<string, unknown>[] {
   return nodes.map((n) => {
     const score = anchors.get(n.id) ?? 0;
     const isAnchor = anchors.has(n.id);
     const dim = n.dim ?? "unknown";
-    const color = isAnchor
-      ? scoreColor(score)
-      : (DIM_COLORS[dim] ?? DIM_GRAY);
+    const color = mode === "tensor"
+      ? NODE_GRAY
+      : isAnchor
+        ? scoreColor(score)
+        : NODE_GRAY;
     const shape = KIND_SHAPES[n.kind] ?? "ellipse";
 
     return {
@@ -701,22 +722,12 @@ function buildNodeElements(
   });
 }
 
-function buildEdgeDimMap(nodes: NodeRow[]): Map<string, string | null> {
-  const nodeDim = new Map<string, string | null>();
-  for (const n of nodes) {
-    nodeDim.set(n.id, n.dim);
-  }
-  return nodeDim;
-}
-
 function buildEdgeElements(
   edges: EdgeRow[],
-  nodeDim: Map<string, string | null>,
 ): Record<string, unknown>[] {
   return edges.map((e) => {
-    const srcDim = nodeDim.get(e.sourceId) ?? null;
-    const tgtDim = nodeDim.get(e.targetId) ?? null;
-    const crossLayer = srcDim !== null && tgtDim !== null && srcDim !== tgtDim;
+    const edgeDim = getEdgeDim(e.relation);
+    const color = DIM_COLORS[edgeDim] ?? DIM_GRAY;
 
     return {
       data: {
@@ -724,7 +735,8 @@ function buildEdgeElements(
         source: e.sourceId,
         target: e.targetId,
         label: e.relation,
-        crossLayer: crossLayer ? 1 : 0,
+        color,
+        edgeDim,
       },
     };
   });
@@ -742,12 +754,6 @@ function scoreColor(score: number): string {
 // ── Stats HTML ───────────────────────────────────────────────────────────────
 
 function buildStatsHtml(stats: Stats): string {
-  const dims = ["SYS", "CPG", "DTG", "unknown"];
-  const dimLines = dims
-    .filter((d) => (stats.byDim[d] ?? 0) > 0)
-    .map((d) => `<div class="dim-${d}">${d}: ${stats.byDim[d]}</div>`)
-    .join("");
-
   const kindEntries = Object.entries(stats.byKind)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8);
@@ -764,15 +770,13 @@ function buildStatsHtml(stats: Stats): string {
 <div>Nodes: ${stats.totalNodes}</div>
 <div>Edges: ${stats.totalEdges}</div>
 ${anchorLine}
-<div class="stitle">🎨 Dimensiones</div>
-${dimLines}
-<div class="stitle">📐 Tipos (top 8)</div>
+<div class="stitle">📐 Tipos de nodo</div>
 ${kindLines}
-<div class="stitle">🔑 Leyenda</div>
+<div class="stitle">🔗 Relaciones (color)</div>
 <div class="legend-row"><span class="legend-swatch SYS"></span>SYS — ecosistema</div>
 <div class="legend-row"><span class="legend-swatch CPG"></span>CPG — control</div>
 <div class="legend-row"><span class="legend-swatch DTG"></span>DTG — datos</div>
-<div class="legend-row"><span class="legend-swatch unknown"></span>unknown</div>`;
+<div class="legend-row"><span class="legend-swatch unknown"></span>desconocido</div>`;
 }
 
 // ── Cytoscape embebido vs CDN ────────────────────────────────────────────────
