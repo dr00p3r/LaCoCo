@@ -106,15 +106,21 @@ export class EmbeddingIndexer {
 
     let sys = 0, cpg = 0, dtg = 0;
     for (const e of edges) {
-      if (["EXTENDS", "IMPLEMENTS", "IMPORTS_EXTERNAL"].includes(e.relation)) sys++;
+      if (e.relation === "EXTENDS" || e.relation === "IMPLEMENTS") sys++;
       if (["INJECTS", "CALLS", "INSTANTIATES"].includes(e.relation)) cpg++;
       if (["CONSUMES_DATA", "PRODUCES", "MUTATES_STATE"].includes(e.relation)) dtg++;
     }
 
-    // Fallback por kind
-    if (node.kind === "CLASS" || node.kind === "INTERFACE") sys += 2;
-    if (node.kind === "METHOD" || node.kind === "FUNCTION" || node.kind === "ARROW_FUNCTION") cpg += 2;
-    if (node.kind === "PROPERTY" || node.kind === "VARIABLE") dtg += 1;
+    if (sys === 0 && cpg === 0 && dtg === 0) {
+      if (node.kind === "CLASS" || node.kind === "INTERFACE") sys = 1;
+      else if (
+        node.kind === "METHOD" ||
+        node.kind === "FUNCTION" ||
+        node.kind === "ARROW_FUNCTION"
+      )
+        cpg = 1;
+      else if (node.kind === "PROPERTY" || node.kind === "VARIABLE") dtg = 1;
+    }
 
     const max = Math.max(sys, cpg, dtg);
     if (max === sys) return "SYS";

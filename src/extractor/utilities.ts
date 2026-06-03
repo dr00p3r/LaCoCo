@@ -38,6 +38,9 @@ export function resolveTypeToId(type: Type): string | null {
   const symbol = type.getSymbol() ?? type.getAliasSymbol();
   if (!symbol) return null;
 
+  const symbolName = symbol.getName();
+  if (symbolName.startsWith("__")) return null;
+
   const declarations = symbol.getDeclarations();
   if (declarations.length === 0) return null;
 

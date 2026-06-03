@@ -184,6 +184,14 @@ export function traverseAst(
   });
 }
 
+function isTargetableNode(declaration: Node): boolean {
+  if (Node.isImportSpecifier(declaration) || Node.isExportSpecifier(declaration))
+    return false;
+  if (Node.isVariableDeclaration(declaration))
+    return declaration.getVariableStatement()?.isExported() ?? false;
+  return (declaration as any).isExported?.() ?? false;
+}
+
 /**
  * Analiza una llamada a función para determinar si es interna (CALLS)
  * o externa de node_modules (IMPORTS_EXTERNAL).
@@ -218,8 +226,10 @@ function handleCallExpression(
 
     cb.insertEdge(sourceId, libId, "IMPORTS_EXTERNAL");
   } else {
-    const targetId = resolveTypeToId(calleeType);
-    if (targetId) cb.insertEdge(sourceId, targetId, "CALLS");
+    const symbolName = symbol.getName();
+    if (symbolName && !symbolName.startsWith("__") && isTargetableNode(firstDecl)) {
+      cb.insertEdge(sourceId, `${declFilePath}#${symbolName}`, "CALLS");
+    }
   }
 }
 
