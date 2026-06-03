@@ -186,7 +186,10 @@ program
     console.timeEnd("[CLI] Extracción");
 
     const { nodesWritten, edgesWritten } = extractor.getStats();
-    console.log(`[CLI] ✅ Grafo — ${nodesWritten} nodos, ${edgesWritten} aristas.\n`);
+    console.log(`[CLI] ✅ Grafo — ${nodesWritten} nodos, ${edgesWritten} aristas.`);
+
+    console.log(`[CLI] 🏷️  Poblando metadatos dimensionales...`);
+    db.populateMetadata();
 
     db.close();
   });
@@ -355,7 +358,7 @@ program
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
   .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone)", "hybrid")
-  .option("-m, --mode <mode>", "Modo de visualización (default, cross-layer, scores)", "default")
+  .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
   .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
   .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
@@ -373,8 +376,8 @@ program
       console.error("[CLI] ❌ --budget debe ser un número positivo.");
       process.exit(1);
     }
-    const mode = ["default", "cross-layer", "scores"].includes(opts.mode)
-      ? (opts.mode as "default" | "cross-layer" | "scores")
+    const mode = ["default", "tensor", "scores"].includes(opts.mode)
+      ? (opts.mode as "default" | "tensor" | "scores")
       : "default";
     await inspectQuery({
       prompt,
