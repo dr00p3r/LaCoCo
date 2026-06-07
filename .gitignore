@@ -30,3 +30,9 @@ yarn-debug.log*
 # Temporary files
 .temp/
 tmp/
+
+# Ignorar todos los archivos .sqlite exclusivamente en la raíz
+/*.sqlite
+
+# Ignorar el contenido de la carpeta node_embeddings.lance
+lancedb/node_embeddings.lance/
