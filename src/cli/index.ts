@@ -22,6 +22,9 @@ import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
 import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
 import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-standalone-strategy.js";
+import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
+import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
+import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
@@ -202,7 +205,7 @@ program
   .command("retrieve <query>")
   .description("Ejecuta el pipeline RAG completo y muestra la respuesta del LLM.")
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone)", "hybrid")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone, ictd, clcr, rpr)", "hybrid")
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
   .action(async (query: string, options: { db: string; strategy: string; ollama: string; llm: boolean }) => {
@@ -262,6 +265,15 @@ program
         switch (options.strategy) {
           case "bm25-dim":
             strategy = new BM25DimFilterStrategy(db);
+            break;
+          case "ictd":
+            strategy = new IctdStrategy(db);
+            break;
+          case "clcr":
+            strategy = new ClcrStrategy(db);
+            break;
+          case "rpr":
+            strategy = new RprStrategy(db);
             break;
           case "bm25":
           default:
@@ -357,7 +369,7 @@ program
   )
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone)", "hybrid")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone, ictd, clcr, rpr)", "hybrid")
   .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
   .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
   .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
