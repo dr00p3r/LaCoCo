@@ -227,6 +227,9 @@ program
         console.log(`  [${chunk.source}] score=${chunk.score.toFixed(4)} | ${chunk.nodeId}`);
       }
 
+      const injector = new PromptInjector();
+      console.log("[CLI] 📚 Contexto agregado:\n", injector.inject(query, aggregated));
+
       // 4. Inyección de contexto + LLM
       if (options.llm && aggregated.length > 0) {
         if (await ollama.isAvailable()) {
@@ -234,7 +237,6 @@ program
           const injector = new PromptInjector();
           console.log("[CLI] 📝 Prompt original:\n" + query + "\n");
           const enrichedPrompt = injector.inject(query, aggregated);
-          console.log("[CLI] 📚 Contexto agregado:\n", enrichedPrompt);
 0
           const answer = await ollama.generate(enrichedPrompt);
           console.log("🤖 Respuesta del LLM:\n" + answer);
