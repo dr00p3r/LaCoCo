@@ -1,7 +1,7 @@
 /**
  * Análisis de callables (funciones y métodos) — DTG + AST traversal.
  *
- * Extraído de GraphExtractor §4.1 (DTG: Data-flow Graph) y §4.2 (recorrido profundo AST).
+ * Extraído de CodeExtractor §4.1 (DTG: Data-flow Graph) y §4.2 (recorrido profundo AST).
  *
  * Genera aristas de las tres capas:
  *   - **DTG** → CONSUMES_DATA, PRODUCES

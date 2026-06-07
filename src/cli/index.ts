@@ -4,8 +4,8 @@
  *
  * Uso:
  *   lacoco watch <ruta-tsconfig>
- *   lacoco index <ruta-tsconfig>
- *   lacoco extract <ruta-tsconfig>
+ *   lacoco index_graph <ruta-tsconfig>
+ *   lacoco index_vectors
  *   lacoco retrieve "<query>"
  */
 
@@ -13,7 +13,7 @@ import { Command } from "commander";
 import { Project } from "ts-morph";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
-import { GraphExtractor } from "../extractor/graph-extractor.js";
+import { CodeExtractor } from "../extractor/code-extractor.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary-1.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
@@ -26,6 +26,7 @@ import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
 import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
 import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import { EmbeddingIndexer } from "../retriever/utilities/embeddings/embedding-indexer.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import { inspect, inspectQuery } from "./inspect.js";
@@ -109,52 +110,13 @@ function printBanner(tsconfig: string, dbPath: string): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Comando: index <ruta-tsconfig>
+// Comando: index_graph <ruta-tsconfig>
 // ─────────────────────────────────────────────────────────────────────────────
 
 program
-  .command("index <ruta-tsconfig>")
+  .command("index_graph <ruta-tsconfig>")
   .description(
-    "Cold-start del extractor + generación de embeddings en LanceDB."
-  )
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-v, --verbose", "Imprime progreso detallado", false)
-  .action(async (rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
-    console.log("\n[CLI] 📦 Indexando proyecto para RAG...\n");
-    console.log(`  tsconfig : ${rutaTsconfig}`);
-    console.log(`  sqlite   : ${options.db}\n`);
-
-    const db = new LaCoCoDatabase(options.db);
-    const daemon = new DaemonManager({
-      tsConfigFilePath: rutaTsconfig,
-      db,
-      verbose: options.verbose,
-      indexEmbeddings: true,
-      lanceDbPath: "./lancedb",
-    });
-
-    // Cold start sincrónico (sin watcher, con embeddings)
-    try {
-      daemon.start();
-      // Esperar a que los embeddings terminen antes de cerrar la BD
-      console.log("\n[CLI] ⏳ Esperando generación de embeddings...");
-      await daemon.awaitEmbeddings();
-      await daemon.stop();
-      console.log("\n[CLI] ✅ Indexación completada (grafo + embeddings).");
-    } catch (err) {
-      console.error("[CLI] ❌ Error durante indexación:", err instanceof Error ? err.message : err);
-      process.exit(1);
-    }
-  });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Comando: extract <ruta-tsconfig>
-// ─────────────────────────────────────────────────────────────────────────────
-
-program
-  .command("extract <ruta-tsconfig>")
-  .description(
-    "Extrae solo el grafo estructural (sin embeddings ni watcher)."
+    "Extrae solo el grafo estructural en SQLite (sin embeddings ni watcher)."
   )
   .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
   .option("-v, --verbose", "Imprime progreso detallado", false)
@@ -165,7 +127,7 @@ program
 
     const db = new LaCoCoDatabase(options.db);
     const project = new Project({ tsConfigFilePath: rutaTsconfig });
-    const extractor = new GraphExtractor(db.getRawDb());
+    const extractor = new CodeExtractor(db.getRawDb());
 
     const sourceFiles = project.getSourceFiles();
     console.log(`[CLI] Archivos encontrados: ${sourceFiles.length}`);
@@ -195,6 +157,56 @@ program
     db.populateMetadata();
 
     db.close();
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comando: index_vectors
+// ─────────────────────────────────────────────────────────────────────────────
+
+program
+  .command("index_vectors")
+  .description(
+    "Genera embeddings semánticos en LanceDB a partir de un grafo SQLite ya poblado."
+  )
+  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("--lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
+  .option("-v, --verbose", "Imprime progreso detallado", false)
+  .action(async (options: { db: string; lancedb: string; verbose: boolean }) => {
+    console.log("\n[CLI] 🧠 Generando embeddings semánticos...\n");
+    console.log(`  sqlite  : ${options.db}`);
+    console.log(`  lancedb : ${options.lancedb}\n`);
+
+    const db = new LaCoCoDatabase(options.db);
+
+    // Validar que hay nodos en el grafo
+    const stats = db.stats();
+    if (stats.nodes === 0) {
+      console.error("[CLI] ❌ El grafo SQLite está vacío. Ejecuta `index_graph` primero.");
+      db.close();
+      process.exit(1);
+    }
+
+    console.log(`[CLI] ${stats.nodes} nodos encontrados en el grafo.`);
+    console.time("[CLI] Embeddings");
+
+    const lanceDb = new LaCoCoLanceDb(options.lancedb);
+    try {
+      await lanceDb.connect();
+      const indexer = new EmbeddingIndexer(db, lanceDb);
+      await indexer.indexAll((current, total) => {
+        if (options.verbose) {
+          console.log(`[CLI]    ${current}/${total} embeddings...`);
+        }
+      });
+      console.timeEnd("[CLI] Embeddings");
+      console.log(`\n[CLI] ✅ Embeddings generados para ${stats.nodes} nodos.`);
+    } catch (err) {
+      console.error("[CLI] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
+      process.exit(1);
+    } finally {
+      await lanceDb.close();
+      db.close();
+    }
   });
 
 // ─────────────────────────────────────────────────────────────────────────────

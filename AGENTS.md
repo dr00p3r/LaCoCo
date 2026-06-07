@@ -86,11 +86,11 @@ ENUM, ENUM_MEMBER, PROPERTY, ACCESSOR, EXTERNAL_LIB.
 ```
 src/
 ├── cli/
-│   └── index.ts                 ← Punto de entrada: watch, index, retrieve
+│   └── index.ts                 ← Punto de entrada: watch, index_graph, index_vectors, retrieve
 │
 ├── extractor/                   ← Módulo de análisis estático
 │   ├── daemon.ts                ← Orquestador cold-start + watcher + embeddings
-│   └── graph-extractor.ts       ← Núcleo AST (ts-morph → SQLite)
+│   └── code-extractor.ts        ← Núcleo AST (ts-morph → SQLite)
 │
 ├── retriever/                   ← Módulo de recuperación contextual (RAG)
 │   ├── models/
@@ -360,7 +360,7 @@ componentes ya están codificados y pasan tests:
 
 | Componente | Estado | Archivo(s) |
 |------------|--------|------------|
-| Extractor (AST → SQLite) | ✅ Completo | `src/extractor/graph-extractor.ts`, `daemon.ts` |
+| Extractor (AST → SQLite) | ✅ Completo | `src/extractor/code-extractor.ts`, `daemon.ts` |
 | LaCoCoDatabase (grafo + BM25 + metadata) | ✅ Completo | `src/persistence/lacoco-graph-manager/lacoco-sqlite-service.ts` |
 | LaCoCoLanceDb (ANN + filtros) | ✅ Completo | `src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.ts` |
 | EmbeddingGenerator | ✅ Completo | `src/retriever/utilities/embeddings/embedding-generator.ts` |
@@ -464,8 +464,11 @@ src/
 **Comandos disponibles:**
 
 ```bash
-# Indexar proyecto (cold-start + embeddings)
-lacoco index <tsconfig> [--db <path>] [--verbose]
+# Extraer grafo estructural en SQLite
+lacoco index_graph <tsconfig> [--db <path>] [--verbose]
+
+# Generar embeddings semánticos en LanceDB (requiere grafo SQLite previo)
+lacoco index_vectors [--db <path>] [--lancedb <path>] [--verbose]
 
 # Modo daemon (cold-start + watcher + embeddings en vivo)
 lacoco watch <tsconfig> [--db <path>] [--verbose]
@@ -481,8 +484,11 @@ lacoco retrieve "<query>" \
 **Ejemplos de uso:**
 
 ```bash
-# Indexar
-npx tsx src/cli/index.ts index ./tsconfig.json --verbose
+# Extraer grafo
+npx tsx src/cli/index.ts index_graph ./tsconfig.json --verbose
+
+# Generar embeddings
+npx tsx src/cli/index.ts index_vectors --verbose
 
 # Recuperar con estrategia híbrida (default)
 npx tsx src/cli/index.ts retrieve "refactoriza OrderService para async/await"

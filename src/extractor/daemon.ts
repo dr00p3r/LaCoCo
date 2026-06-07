@@ -11,7 +11,7 @@
  *
  *   CLI (commander)
  *     └─▶ DaemonManager.start()
- *           ├─▶ GraphExtractor.processFile()   ← núcleo AST (sin lado)
+ *           ├─▶ CodeExtractor.processFile()   ← núcleo AST (sin lado)
  *           └─▶ LaCoCoDatabase.*              ← persistencia
  */
 
@@ -19,7 +19,7 @@ import path from "node:path";
 import { Project, type SourceFile } from "ts-morph";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { GraphExtractor } from "./graph-extractor.js";
+import { CodeExtractor } from "./code-extractor.js";
 import { EmbeddingIndexer } from "../retriever/utilities/embeddings/embedding-indexer.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 
@@ -51,7 +51,7 @@ export interface DaemonOptions {
 
 export class DaemonManager {
   private readonly project: Project;
-  private readonly parser: GraphExtractor;
+  private readonly parser: CodeExtractor;
   private watcher: FSWatcher | null = null;
 
   private readonly tsConfigFilePath: string;
@@ -79,8 +79,8 @@ export class DaemonManager {
       tsConfigFilePath: this.tsConfigFilePath,
     });
 
-    // GraphExtractor recibe la conexión raw de SQLite para sus prepared statements
-    this.parser = new GraphExtractor(this.db.getRawDb());
+    // CodeExtractor recibe la conexión raw de SQLite para sus prepared statements
+    this.parser = new CodeExtractor(this.db.getRawDb());
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ export class DaemonManager {
    *   - Rendimiento: SQLite hace un único fsync al final en lugar de uno por archivo.
    *
    * En proyectos con ~500 archivos TypeScript el cold start suele completarse
-     * en < 5 segundos gracias a los prepared statements del GraphExtractor.
+     * en < 5 segundos gracias a los prepared statements del CodeExtractor.
    */
   #coldStart(): void {
     console.log("\n[Daemon] 🚀 Cold start — analizando proyecto completo...");
@@ -263,7 +263,7 @@ export class DaemonManager {
    *   2. Obtener / añadir el SourceFile en el Project de ts-morph.
    *   3. Refrescar desde el sistema de archivos (recarga el AST).
    *   4. Borrar los datos anteriores del archivo en SQLite.
-     *   5. Re-procesar con GraphExtractor en una transacción nueva.
+     *   5. Re-procesar con CodeExtractor en una transacción nueva.
    *   6. Mostrar métricas del hot reload.
    */
   async #handleFileChange(

@@ -1,5 +1,5 @@
 /**
- * GraphExtractor — Núcleo de análisis estático del Grafo Multirrelacional
+ * CodeExtractor — Núcleo de análisis estático del Grafo Multirrelacional
  *
  * Recibe una instancia de better-sqlite3 y produce un grafo semántico de 3 capas:
  *
@@ -29,7 +29,7 @@ import type { SourceFile } from "ts-morph";
 import { type NodeRow, type EdgeRelation, type EdgeRow, type ExtractionCallbacks } from "./types.js";
 import { extractNodes } from "./node-extraction.js";
 
-export class GraphExtractor {
+export class CodeExtractor {
   private readonly stmtInsertNode: Statement;
   private readonly stmtInsertEdge: Statement;
 

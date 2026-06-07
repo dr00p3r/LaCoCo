@@ -1,5 +1,5 @@
 /**
- * Extracción de nodos de alto nivel (§1 del GraphExtractor original).
+ * Extracción de nodos de alto nivel (§1 del CodeExtractor original).
  *
  * Entrada: un SourceFile de ts-morph.
  * Salida: nodos persistidos para interfaces, types, enums, funciones, clases, y variables.

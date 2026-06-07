@@ -1,7 +1,7 @@
 /**
  * Utilidades puras del extractor — sin dependencia de estado de base de datos.
  *
- * Funciones extraídas de GraphExtractor §6–§10:
+ * Funciones extraídas de CodeExtractor §6–§10:
  *   §6  — resolveTypeToId
  *   §7  — buildInterfaceSignature, buildClassSignature, getFunctionSignature,
  *          getMethodSignature, buildArrowSignature

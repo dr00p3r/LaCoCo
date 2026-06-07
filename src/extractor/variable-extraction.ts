@@ -1,5 +1,5 @@
 /**
- * Extracción de variables exportadas (§4.3 del GraphExtractor original).
+ * Extracción de variables exportadas (§4.3 del CodeExtractor original).
  *
  * Patrones cubiertos:
  *

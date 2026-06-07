@@ -1,5 +1,5 @@
 /**
- * Extracción de detalles de clases (§2 SYS + §3 CPG del GraphExtractor original).
+ * Extracción de detalles de clases (§2 SYS + §3 CPG del CodeExtractor original).
  *
  *  §2 SYS: EXTENDS, IMPLEMENTS
  *  §3 CPG: INJECTS, propiedades, accessors, métodos
