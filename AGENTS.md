@@ -50,7 +50,7 @@ Flujo de alto nivel:
 └─────────────────────┘
        │
        ▼
-[LLM CON CONTEXT ENRIQUECIDO]
+[LLM CON CONTEXTO ENRIQUECIDO]
 ```
 
 ### 2. Grafo Multirrelacional de 3 Capas
@@ -85,43 +85,55 @@ ENUM, ENUM_MEMBER, PROPERTY, ACCESSOR, EXTERNAL_LIB.
 
 ```
 src/
-├── extractor/               ← Módulo de análisis estático
-│   ├── daemon.ts            ← Orquestador cold-start + watcher + embeddings
-│   └── graph-extractor.ts   ← Núcleo AST (ts-morph → SQLite)
-│
-├── retriever/               ← Módulo de recuperación contextual (RAG)
-│   ├── agent-intermediary-1.ts    ← Clasificador + Sanitizador
-│   ├── context-aggregator.ts      ← Deduplica, ordena, trunca
-│   ├── dimensional-filter.ts      ← Pipeline 3 niveles (heurísticas → SLM)
-│   ├── embedding-indexer.ts     ← Genera embeddings post-extracción
-│   ├── embedding/
-│   │   └── embedding-generator.ts  ← all-MiniLM-L6-v2 vía transformers.js
-│   ├── infra/
-│   │   ├── lancedb-client.ts      ← Wrapper LanceDB (ANN + filtros)
-│   │   ├── ollama-client.ts       ← Cliente HTTP para SLM local
-│   │   └── types.ts               ← NodeEmbeddingRecord
-│   ├── prompt/
-│   │   └── prompt-injector.ts     ← Template versionado de inyección
-│   └── strategies/
-│       ├── base.ts                ← RecoveryStrategy interface
-│       ├── bm25-strategy.ts       ← 2.1 BM25 puro
-│       ├── bm25-dim-strategy.ts   ← 2.2 BM25 + filtro dimensional
-│       ├── agentic-strategy.ts    ← 2.3 LLM planificador + executor
-│       ├── hybrid-strategy.ts     ← 2.4 BM25 + ANN + RRF + agente
-│       └── agentic-standalone-strategy.ts  ← 2.5 Agente sin filtro
-│
-├── shared/                  ← Recursos compartidos entre módulos
-│   └── db/
-│       └── sqlite-manager.ts  ← SQLite + FTS5 + metadata (sin ORM)
-│
 ├── cli/
-│   └── index.ts             ← Punto de entrada: watch, index, retrieve
+│   └── index.ts                 ← Punto de entrada: watch, index, retrieve
 │
-db/migrations/               ← Migraciones SQL versionadas
-├── 001_add_fts5.sql         ← Tabla virtual FTS5 para BM25
-└── 002_add_metadata.sql     ← Tabla node_metadata para filtro dimensional
+├── extractor/                   ← Módulo de análisis estático
+│   ├── daemon.ts                ← Orquestador cold-start + watcher + embeddings
+│   └── graph-extractor.ts       ← Núcleo AST (ts-morph → SQLite)
+│
+├── retriever/                   ← Módulo de recuperación contextual (RAG)
+│   ├── models/
+│   │   ├── strategies/types.ts  ← RecoveryStrategy interface + ContextChunk
+│   │   └── utilities/types.ts   ← SanitizerOutput + IntentTag
+│   ├── strategies/
+│   │   ├── bm25-strategy.ts              ← 2.1 BM25 puro
+│   │   ├── bm25-dim-strategy.ts          ← 2.2 BM25 + filtro dimensional
+│   │   ├── agentic-strategy.ts           ← 2.3 SLM planificador + executor
+│   │   ├── hybrid-strategy.ts            ← 2.4 BM25 + ANN + RRF (default)
+│   │   └── agentic-standalone-strategy.ts ← 2.5 Agente sin filtro (baseline)
+│   └── utilities/
+│       ├── mini-agents/
+│       │   └── agent-intermediary-1.ts   ← Clasificador + Sanitizador
+│       ├── filters/
+│       │   ├── dimensional-filter.ts     ← Pipeline 3 niveles (heurísticas → placeholder → SLM)
+│       │   ├── context-aggregator.ts     ← Deduplica, ordena, trunca
+│       │   └── prompt-injector.ts        ← Template versionado de inyección
+│       └── embeddings/
+│           ├── embedding-generator.ts    ← all-MiniLM-L6-v2 vía transformers.js
+│           └── embedding-indexer.ts      ← Genera embeddings post-extracción
+│
+├── persistence/                 ← Capa de persistencia
+│   ├── lacoco-graph-manager/    ← SQLite layer
+│   │   ├── lacoco-sqlite-service.ts     ← Facade: LaCoCoDatabase
+│   │   ├── model/types.ts               ← GraphNode, GraphEdge
+│   │   ├── dao/
+│   │   │   ├── node-dao.ts, edge-dao.ts, search-dao.ts,
+│   │   │   ├── migration-dao.ts, connection-dao.ts
+│   │   └── migrations/
+│   │       ├── 001_add_fts5.sql         ← FTS5 + triggers
+│   │       └── 002_add_metadata.sql     ← node_metadata para dimensiones
+│   └── lacoco-vectors-manager/  ← LanceDB layer
+│       ├── lacoco-lancedb-service.ts    ← Facade: LaCoCoLanceDb
+│       ├── model/types.ts               ← NodeEmbeddingRecord
+│       └── dao/
+│           ├── connection-dao.ts, embedding-dao.ts, search-dao.ts
+│
+└── slms/                        ← Modelos de lenguaje locales
+    ├── ollama-service.ts        ← Cliente HTTP para Ollama
+    └── model/types.ts           ← Tipos request/response
 
-tests/                       ← Tests Vitest (cobertura >= 70% en retriever)
+tests/                           ← Tests Vitest (cobertura >= 70% en retriever)
 └── retrieval/
     ├── agent-intermediary-1.test.ts
     ├── dimensional-filter.test.ts
@@ -134,10 +146,10 @@ tests/                       ← Tests Vitest (cobertura >= 70% en retriever)
 
 #### 4.1 Almacenamiento Dual
 
-| Rol | Tecnología | Justificación |
-|-----|-----------|---------------|
-| Grafo estructural + BM25 | SQLite (better-sqlite3) + FTS5 | Ya en uso. WAL mode. Índices nativos. FTS5 para BM25 full-text. |
-| Embeddings + ANN | LanceDB | Embebible (sin servidor). Rust-based. ANN aproximado con filtros pre-ANN por metadatos (dimension, sub_type, file_path). Reduce latencia filtrando antes de calcular distancias. |
+| Rol | Tecnología | Clase facade |
+|-----|-----------|-------------|
+| Grafo estructural + BM25 | SQLite (better-sqlite3) + FTS5 | `LaCoCoDatabase` |
+| Embeddings + ANN | LanceDB | `LaCoCoLanceDb` |
 
 **Esquema LanceDB** (`NodeEmbeddingRecord`):
 
@@ -163,11 +175,10 @@ interface NodeEmbeddingRecord {
 
 - **Modelo:** `all-MiniLM-L6-v2` (384 dimensiones, ~80MB)
 - **Motor:** `@xenova/transformers` (transformers.js para Node.js)
-- **Justificación:** 100% offline. Sin dependencia de Python ni Ollama para embeddings.
-  Carga lazy, inferencia en CPU/GPU según disponibilidad.
-- **Indexer:** `EmbeddingIndexer` orquesta la generación batch post-extracción,
-  leyendo nodos de SQLite, generando embeddings, e insertando en LanceDB con
-  metadatos inferidos (dimension, sub_type).
+- **Generador:** `EmbeddingGenerator` (`src/retriever/utilities/embeddings/embedding-generator.ts`)
+- **Indexer:** `EmbeddingIndexer` (`src/retriever/utilities/embeddings/embedding-indexer.ts`)
+  — orquesta la generación batch post-extracción, leyendo nodos de SQLite,
+  generando embeddings, e insertando en LanceDB.
 
 #### 4.3 Filtro Dimensional (DimensionalFilter)
 
@@ -184,8 +195,9 @@ Input: clean_query + embedding_input
        │
        ▼ si ambiguo
 ┌─────────────────────┐
-│ 2. Clasificador     │  ← Embeddings + Regresión Logística entrenada local
-│    Liviano          │     (modelo .json serializado, sin dependencias pesadas)
+│ 2. Clasificador     │  ← PLACEHOLDER: multiplica confianza heurística × 0.85
+│    Liviano          │     y reenvía las mismas dimensiones sin clasificar.
+│  (PENDIENTE)        │     Debe implementarse con embeddings + regresión logística.
 └─────────────────────┘
        │
        ▼ si confianza < 0.65
@@ -195,14 +207,20 @@ Input: clean_query + embedding_input
 └─────────────────────┘
 ```
 
+> **IMPORTANTE:** El nivel 2 (clasificador liviano) es un placeholder. La línea
+> `const lightweightConfidence = heuristicResult.confidence * 0.85` no realiza
+> clasificación real. Implementar embeddings + regresión logística es una
+> mejora pendiente prioritaria.
+
 #### 4.4 Modelo de Lenguaje para Agente Agéntico
 
 - **Modelo:** Qwen2.5-Coder:1.5B vía Ollama (local, sin llamadas de red)
-- **Cliente:** `OllamaClient` (`src/retriever/infra/ollama-client.ts`) — HTTP
+- **Cliente:** `OllamaService` (`src/slms/ollama-service.ts`) — HTTP
   wrapper para `/api/generate`, `/api/chat`, `/api/tags`.
-- **Uso:** Strategy 2.3/2.5 (agentic) emite herramientas (tool-calling).
+- **Uso:** Strategy 2.3 (agentic) emite herramientas (tool-calling).
   Motor determinístico ejecuta sobre SQLite/LanceDB.
-  Máximo 3 iteraciones.
+  Máximo 3 iteraciones. Si Ollama no está disponible, hace fallback a
+  expansión determinística por vecindad.
 
 #### 4.5 Fusión Híbrida (Strategy 2.4)
 
@@ -217,13 +235,16 @@ RRF_score(d) = Σ 1 / (k + rank_i(d))
 donde *k* = 60 (constante estándar), *rank_i* = posición en el ranking del
 método *i* (BM25 o ANN).
 
+Además, aplica un boost multiplicativo de 1.5× a los chunks cuyo `nodeId`
+contenga algún token de la query (coincidencia de símbolos).
+
 ### 5. Patrón Strategy: 5 Estrategias de Recuperación
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    RecoveryStrategy (interface)             │
 ├─────────────────────────────────────────────────────────────┤
-│  + retrieve(query: SanitizedQuery): Promise<ContextChunk[]> │
+│  + retrieve(query: SanitizerOutput): Promise<ContextChunk[]> │
 └─────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
@@ -232,36 +253,40 @@ método *i* (BM25 o ANN).
 ┌───────────────┐    ┌───────────────────┐    ┌─────────────────────┐
 │ BM25Strategy  │    │ BM25DimFilter     │    │ AgenticStrategy     │
 │ (2.1)         │    │ Strategy (2.2)    │    │ (2.3)               │
-│               │    │                   │    │ LLM planificador +  │
-│ BM25 puro     │    │ BM25 dirigido por │    │ ejecutor determinístico│
-│ sin filtros   │    │ dimensión detectada│   │ max 3 iteraciones   │
-└───────────────┘    └───────────────────┘    └─────────────────────┘
-                              │                        │
-                              ▼                        ▼
-                    ┌───────────────────┐    ┌─────────────────────┐
-                    │ HybridStrategy    │    │ AgenticStandalone   │
-                    │ (2.4)             │    │ Strategy (2.5)      │
-                    │ BM25 + Embeddings │    │ Agente sin filtro   │
-                    │ + RRF + DimFilter │    │ dimensional         │
-                    │ + Apoyo agente    │    │ (baseline agentic)    │
-                    └───────────────────┘    └─────────────────────┘
+│               │    │                   │    │                     │
+│ BM25 puro     │    │ BM25 dirigido por │    │ SLM planificador +  │
+│ sin filtros   │    │ dimensión detectada│   │ executor determin.  │
+│               │    │ + intersección    │    │ + fallback sin SLM  │
+└───────────────┘    └───────────────────┘    │ max 3 iteraciones   │
+                              │               └─────────────────────┘
+                              ▼                        │
+                    ┌───────────────────┐              ▼
+                    │ HybridStrategy    │    ┌─────────────────────┐
+                    │ (2.4)             │    │ AgenticStandalone   │
+                    │                   │    │ Strategy (2.5)      │
+                    │ BM25 + Embeddings │    │                     │
+                    │ + RRF (k=60)      │    │ Expansión por       │
+                    │ + symbol boost    │    │ vecindad pura       │
+                    │ (default)         │    │ sin SLM ni filtro   │
+                    └───────────────────┘    │ (baseline)          │
+                                             └─────────────────────┘
 ```
 
-| # | Nombre | Descripción | Cuándo usar |
-|---|--------|-------------|-------------|
-| 2.1 | `BM25Strategy` | Búsqueda full-text BM25 sobre FTS5 SQLite. Sin filtros dimensionales. | Baseline rápido. Queries cortas o cuando no importa la capa. |
-| 2.2 | `BM25DimFilterStrategy` | Aplica DimensionalFilter primero, luego BM25 solo sobre nodos de esa dimensión. | Cuando la intención es claramente estructural o de datos. |
-| 2.3 | `AgenticStrategy` | LLM planificador emite herramientas (get_neighbors, get_node_by_symbol, get_dependencies). Motor determinístico ejecuta. Max 3 iteraciones. | Queries complejas que requieren navegación explícita del grafo. |
-| 2.4 | `HybridStrategy` | BM25 + ANN sobre LanceDB. Fusión RRF. Filtro dimensional pre-ANN. Agente como re-ranker final opcional. | Máxima calidad de recuperación. Recomendado por defecto. |
-| 2.5 | `AgenticStandaloneStrategy` | Variante de 2.3 sin filtro dimensional. Agente puro sobre grafo completo. | Para comparar el valor agregado del filtro dimensional en benchmarks. |
+| # | Clase | Archivo | Líneas | Filtro dim? | BM25? | ANN? | SLM? | source |
+|---|-------|---------|--------|-------------|-------|------|------|--------|
+| 2.1 | `BM25Strategy` | `bm25-strategy.ts` | 33 | No | FTS5 (50) | No | No | `"BM25"` |
+| 2.2 | `BM25DimFilterStrategy` | `bm25-dim-strategy.ts` | 59 | Sí — intersecta candidatos por dimensión con resultados BM25 | FTS5 (100) | No | No | `"BM25+DimFilter"` |
+| 2.3 | `AgenticStrategy` | `agentic-strategy.ts` | 221 | Sí — como hint inicial | FTS5 (20 seeds) | No | Sí — Ollama Qwen2.5-Coder:1.5B, fallback a vecindad si no disponible | `"AGENTIC"` |
+| 2.4 | `HybridStrategy` | `hybrid-strategy.ts` | 114 | Sí — filtro pre-ANN en LanceDB | FTS5 (50) | LanceDB ANN (50) + RRF k=60 + boost 1.5× | No (pendiente re-ranker) | `"RRF"` |
+| 2.5 | `AgenticStandaloneStrategy` | `agentic-standalone-strategy.ts` | 85 | No — explícitamente omitido | FTS5 (20 seeds) | No | No — solo expansión por vecindad determinística | `"AGENTIC-STANDALONE"` |
 
 ### 6. Interfaz SanitizerOutput
 
 ```typescript
 interface SanitizerOutput {
   route: "RAG" | "LLM_DIRECT";
-  clean_query: string;          // normalizado para BM25/FTS5
-  embedding_input: string;        // semántico para LanceDB
+  clean_query: string;          // normalizado para BM25/FTS5 (tokens OR-joined)
+  embedding_input: string;        // semántico para LanceDB (sin OR)
   dimensions: ("SYS" | "CPG" | "DTG")[];  // puede ser múltiple
   intent: IntentTag;
   confidence: number;             // 0.0–1.0, umbral recomendado: 0.65
@@ -281,19 +306,38 @@ type IntentTag =
 > funciones, o tareas de refactor/creación/debug sobre el codebase actual).
 > Prompts genéricos o sin relación con el proyecto van directo al LLM.
 
-### 7. Restricciones Técnicas Obligatorias
+### 7. Interfaz RecoveryStrategy y ContextChunk
+
+```typescript
+export interface RecoveryStrategy {
+  retrieve(query: SanitizerOutput): Promise<ContextChunk[]>;
+}
+
+export interface ContextChunk {
+  nodeId: string;
+  score: number;
+  text: string;       // firma o representación textual del nodo
+  source: string;     // etiqueta de la estrategia que lo generó
+}
+```
+
+> Definidos en `src/retriever/models/strategies/types.ts`.
+
+### 8. Restricciones Técnicas Obligatorias
 
 #### Runtime y Módulos
-- **ESM-first:** todos los módulos usan `import/export`. CommonJS (`require`)
-  solo permitido en configuraciones de herramientas externas.
-- **Node.js >= 20 LTS** requerido (uso de `--experimental-vm-modules`,
-  `crypto.subtle`, y `fs/promises` nativo).
+- **ESM-first:** todos los módulos usan `import/export` con extensiones `.js`
+  explícitas en los imports relativos (requerido por `moduleResolution: "NodeNext"`).
+- **TypeScript >= 5.0** configurado con `module: "NodeNext"`, `target: "ES2022"`,
+  `strict: true`.
+- **Node.js >= 20 LTS** requerido.
 
 #### Base de Datos
 - **No usar ORMs sobre SQLite** (Prisma, Drizzle, TypeORM están prohibidos).
-  Todas las queries se escriben con `better-sqlite3` directo.
-- Las migraciones de esquema se versionan en `/db/migrations/` como
-  archivos `.sql` numerados secuencialmente.
+  Todas las queries se escriben con `better-sqlite3` directo vía DAOs.
+- Las migraciones de esquema se versionan en
+  `src/persistence/lacoco-graph-manager/migrations/` como archivos `.sql`
+  numerados secuencialmente.
 
 #### Procesamiento
 - El analizador estático opera exclusivamente sobre JS/TS.
@@ -317,19 +361,22 @@ componentes ya están codificados y pasan tests:
 | Componente | Estado | Archivo(s) |
 |------------|--------|------------|
 | Extractor (AST → SQLite) | ✅ Completo | `src/extractor/graph-extractor.ts`, `daemon.ts` |
-| Migraciones SQL (FTS5 + metadata) | ✅ Completo | `db/migrations/001_add_fts5.sql`, `002_add_metadata.sql` |
-| SQLiteManager (grafo + BM25 + metadata) | ✅ Completo | `src/shared/db/sqlite-manager.ts` |
-| LanceDB Client | ✅ Completo | `src/retriever/infra/lancedb-client.ts` |
-| EmbeddingGenerator | ✅ Completo | `src/retriever/embedding/embedding-generator.ts` |
-| EmbeddingIndexer | ✅ Completo | `src/retriever/embedding-indexer.ts` |
-| OllamaClient | ✅ Completo | `src/retriever/infra/ollama-client.ts` |
-| Agente Intermediario 1 | ✅ Completo | `src/retriever/agent-intermediary-1.ts` |
-| DimensionalFilter (3 niveles) | ✅ Completo | `src/retriever/dimensional-filter.ts` |
+| LaCoCoDatabase (grafo + BM25 + metadata) | ✅ Completo | `src/persistence/lacoco-graph-manager/lacoco-sqlite-service.ts` |
+| LaCoCoLanceDb (ANN + filtros) | ✅ Completo | `src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.ts` |
+| EmbeddingGenerator | ✅ Completo | `src/retriever/utilities/embeddings/embedding-generator.ts` |
+| EmbeddingIndexer | ✅ Completo | `src/retriever/utilities/embeddings/embedding-indexer.ts` |
+| OllamaService | ✅ Completo | `src/slms/ollama-service.ts` |
+| AgentIntermediary1 | ✅ Completo | `src/retriever/utilities/mini-agents/agent-intermediary-1.ts` |
+| DimensionalFilter (3 niveles) | ⚠️ Nivel 2 placeholder | `src/retriever/utilities/filters/dimensional-filter.ts` |
 | 5 Strategies de recuperación | ✅ Completo | `src/retriever/strategies/*.ts` |
-| ContextAggregator | ✅ Completo | `src/retriever/context-aggregator.ts` |
-| PromptInjector | ✅ Completo | `src/retriever/prompt/prompt-injector.ts` |
+| ContextAggregator | ✅ Completo | `src/retriever/utilities/filters/context-aggregator.ts` |
+| PromptInjector | ✅ Completo | `src/retriever/utilities/filters/prompt-injector.ts` |
 | CLI (watch, index, retrieve) | ✅ Completo | `src/cli/index.ts` |
-| Tests (32 tests, 5 suites) | ✅ Pasando | `tests/retrieval/*.test.ts` |
+| Tests (5 suites, ~31 tests) | ✅ Pasando | `tests/retrieval/*.test.ts` |
+
+> **⚠️ Bug conocido en CLI:** `src/cli/index.ts:238` tiene un `0` solitario en
+> una línea propia (resto de una edición). No impide compilación pero debe
+> eliminarse.
 
 ### Paso 0: Dependencias
 
@@ -340,60 +387,77 @@ npm install
 ```
 
 Dependencias ya configuradas en `package.json`:
-- `@lancedb/lancedb` — Base vectorial embebida
-- `@xenova/transformers` — Embeddings locales
-- `better-sqlite3` — SQLite nativo
-- `commander` — CLI
-- `ts-morph` — Análisis AST
-- `vitest` — Tests (dev)
+
+| Dependencia | Versión | Uso |
+|-------------|---------|-----|
+| `better-sqlite3` | ^12.8.0 | SQLite nativo + FTS5 |
+| `@lancedb/lancedb` | ^0.27.2 | Base vectorial embebida |
+| `@xenova/transformers` | ^2.17.2 | Embeddings locales (all-MiniLM-L6-v2) |
+| `ts-morph` | ^27.0.2 | Análisis AST TypeScript |
+| `commander` | ^14.0.3 | CLI framework |
+| `chokidar` | ^5.0.0 | File watcher (daemon) |
+| `natural` | ^8.1.1 | NLP (declarado pero **no usado** actualmente) |
+
+DevDependencies: `vitest` ^4.1.6, `tsx` ^4.21.0, `typescript` ^6.0.2,
+`@types/better-sqlite3`, `@types/natural`, `@types/node`.
+
+> **Nota:** El `package.json` tiene `"name": "tensor-extractor"` y el bin se
+> registra como `lacoco`. No hay inconsistencia funcional, pero es un detalle
+> de naming a unificar eventualmente.
 
 ### Paso 1: Estructura de directorios (ya implementada)
 
 ```
 src/
-├── extractor/         ← Análisis estático
-├── retriever/         ← Pipeline RAG completo
-│   ├── embedding/
-│   ├── infra/
-│   ├── prompt/
-│   └── strategies/
-├── shared/db/         ← SQLite (usado por extractor y retriever)
-└── cli/
-db/migrations/         ← SQL versionado
-tests/retrieval/       Tests Vitest
+├── cli/                    ← Punto de entrada CLI
+├── extractor/              ← Análisis estático (AST → SQLite)
+├── retriever/              ← Pipeline RAG completo
+│   ├── models/             ← Interfaces y tipos
+│   │   ├── strategies/     ← RecoveryStrategy + ContextChunk
+│   │   └── utilities/      ← SanitizerOutput + IntentTag
+│   ├── strategies/         ← 5 implementaciones concretas
+│   └── utilities/
+│       ├── mini-agents/    ← AgentIntermediary1
+│       ├── filters/        ← DimensionalFilter, ContextAggregator, PromptInjector
+│       └── embeddings/     ← EmbeddingGenerator, EmbeddingIndexer
+├── persistence/
+│   ├── lacoco-graph-manager/    ← SQLite (LaCoCoDatabase + DAOs)
+│   └── lacoco-vectors-manager/  ← LanceDB (LaCoCoLanceDb + DAOs)
+└── slms/                   ← OllamaService (cliente HTTP)
 ```
 
 ### Paso 2: Migraciones SQL (ya implementadas)
 
-- **`db/migrations/001_add_fts5.sql`** — Tabla virtual FTS5 `nodes_fts` para BM25
-  sobre `name` y `signature`, con triggers de sincronización automática.
-- **`db/migrations/002_add_metadata.sql`** — Tabla `node_metadata` para
+- **`001_add_fts5.sql`** en `src/persistence/lacoco-graph-manager/migrations/`
+  — Tabla virtual FTS5 `nodes_fts` sobre `name` y `signature`, con triggers
+  de sincronización automática.
+- **`002_add_metadata.sql`** en la misma carpeta — Tabla `node_metadata` para
   filtrado dimensional rápido por `dimension` (SYS/CPG/DTG).
 
 ### Paso 3: Infraestructura de datos (ya implementada)
 
-| Archivo | Responsabilidad |
-|---------|----------------|
-| `src/retriever/infra/lancedb-client.ts` | Conexión LanceDB, tabla `node_embeddings`, índice ANN HNSW, búsqueda con filtros pre-ANN. |
-| `src/retriever/infra/ollama-client.ts` | Cliente HTTP para Ollama (`/api/generate`, `/api/chat`, `/api/tags`). Verifica disponibilidad. |
-| `src/retriever/embedding/embedding-generator.ts` | Carga lazy de `all-MiniLM-L6-v2`. Generación individual y batch. |
-| `src/retriever/embedding-indexer.ts` | Orquesta: lee nodos SQLite → genera embeddings → infiere metadatos → inserta en LanceDB. |
-| `src/shared/db/sqlite-manager.ts` | SQLite con WAL, FTS5 BM25, metadata dimensional, prepared statements. Sin ORM. |
+| Archivo | Clase | Responsabilidad |
+|---------|-------|----------------|
+| `src/persistence/lacoco-graph-manager/lacoco-sqlite-service.ts` | `LaCoCoDatabase` | SQLite con WAL, FTS5 BM25, metadata dimensional, prepared statements. Sin ORM. |
+| `src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.ts` | `LaCoCoLanceDb` | Conexión LanceDB, tabla `node_embeddings`, índice ANN HNSW, búsqueda con filtros pre-ANN. |
+| `src/slms/ollama-service.ts` | `OllamaService` | Cliente HTTP para Ollama (`/api/generate`, `/api/chat`, `/api/tags`). |
+| `src/retriever/utilities/embeddings/embedding-generator.ts` | `EmbeddingGenerator` | Carga lazy de `all-MiniLM-L6-v2`. Generación individual y batch. |
+| `src/retriever/utilities/embeddings/embedding-indexer.ts` | `EmbeddingIndexer` | Orquesta: lee nodos SQLite → genera embeddings → infiere metadatos → inserta en LanceDB. |
 
 ### Paso 4: Pipeline RAG — Componentes Core (ya implementados)
 
 | Orden | Archivo | Descripción |
 |-------|---------|-------------|
-| 4.1 | `src/retriever/agent-intermediary-1.ts` | Clasifica RAG vs directo. Sanitiza query. Detecta intent por heurísticas. Confidence 0.0–1.0. |
-| 4.2 | `src/retriever/dimensional-filter.ts` | Pipeline 3 niveles: Heurísticas O(1) → Clasificador liviano (placeholder) → SLM Ollama fallback. |
-| 4.3 | `src/retriever/strategies/base.ts` | `RecoveryStrategy` interface + `ContextChunk` type. |
-| 4.4 | `src/retriever/strategies/bm25-strategy.ts` | BM25 puro sobre FTS5. |
-| 4.5 | `src/retriever/strategies/bm25-dim-strategy.ts` | BM25 + DimensionalFilter + JOIN a metadata. |
-| 4.6 | `src/retriever/strategies/agentic-strategy.ts` | LLM planificador (Ollama) emite JSON tools. Executor determinístico sobre SQLite. Max 3 iteraciones. |
-| 4.7 | `src/retriever/strategies/hybrid-strategy.ts` | BM25 + ANN (LanceDB) + RRF (k=60) + DimensionalFilter. |
-| 4.8 | `src/retriever/strategies/agentic-standalone-strategy.ts` | Agente sin filtro dimensional (baseline). |
-| 4.9 | `src/retriever/context-aggregator.ts` | Deduplica por nodeId, ordena por score, trunca por tokens (default 4000). |
-| 4.10 | `src/retriever/prompt/prompt-injector.ts` | Template versionado. Inyecta chunks bajo `### Contexto del Proyecto`. |
+| 4.1 | `src/retriever/utilities/mini-agents/agent-intermediary-1.ts` | `AgentIntermediary1.sanitize()` — Clasifica RAG vs directo. Sanitiza query. Detecta intent por heurísticas. |
+| 4.2 | `src/retriever/utilities/filters/dimensional-filter.ts` | `DimensionalFilter.filter()` — Pipeline 3 niveles: Heurísticas O(1) → Clasificador liviano (placeholder) → SLM Ollama fallback. |
+| 4.3 | `src/retriever/models/strategies/types.ts` | `RecoveryStrategy` interface + `ContextChunk` type. |
+| 4.4 | `src/retriever/strategies/bm25-strategy.ts` | `BM25Strategy` — BM25 puro sobre FTS5. |
+| 4.5 | `src/retriever/strategies/bm25-dim-strategy.ts` | `BM25DimFilterStrategy` — BM25 + DimensionalFilter + JOIN a metadata. |
+| 4.6 | `src/retriever/strategies/agentic-strategy.ts` | `AgenticStrategy` — SLM planificador (Ollama) emite JSON tools. Executor determinístico sobre SQLite. Max 3 iteraciones. |
+| 4.7 | `src/retriever/strategies/hybrid-strategy.ts` | `HybridStrategy` — BM25 + ANN (LanceDB) + RRF (k=60) + DimensionalFilter + symbol boost (1.5×). |
+| 4.8 | `src/retriever/strategies/agentic-standalone-strategy.ts` | `AgenticStandaloneStrategy` — Expansión por vecindad sin filtro dimensional (baseline). No usa SLM. |
+| 4.9 | `src/retriever/utilities/filters/context-aggregator.ts` | `ContextAggregator.aggregate()` — Deduplica por nodeId, ordena por score, trunca por tokens (default 4000). |
+| 4.10 | `src/retriever/utilities/filters/prompt-injector.ts` | `PromptInjector.inject()` — Template versionado. Inyecta chunks bajo `### Contexto del Proyecto`. |
 
 ### Paso 5: Integración CLI y Daemon (ya implementada)
 
@@ -440,15 +504,21 @@ npx tsx src/cli/index.ts retrieve "crea endpoint POST /orders" \
 
 Framework: **Vitest** (ESM nativo).
 
-| Test | Cobertura |
-|------|-----------|
-| `agent-intermediary-1.test.ts` | Clasificación RAG vs directo, detección de intent |
-| `dimensional-filter.test.ts` | Clasificación SYS/CPG/DTG por heurísticas |
-| `bm25-strategy.test.ts` | Recuperación BM25 sobre FTS5 con DB en memoria |
-| `context-aggregator.test.ts` | Deduplicación, ordenamiento, truncado por tokens |
-| `prompt-injector.test.ts` | Inyección de chunks, template versionado |
+| Test | Archivo | Cobertura |
+|------|---------|-----------|
+| AgentIntermediary1 | `agent-intermediary-1.test.ts` | Clasificación RAG vs directo, detección de intent |
+| DimensionalFilter | `dimensional-filter.test.ts` | Clasificación SYS/CPG/DTG por heurísticas (nivel 1) |
+| BM25Strategy | `bm25-strategy.test.ts` | Recuperación BM25 sobre FTS5 con DB en memoria |
+| ContextAggregator | `context-aggregator.test.ts` | Deduplicación, ordenamiento, truncado por tokens |
+| PromptInjector | `prompt-injector.test.ts` | Inyección de chunks, template versionado |
 
 Ejecutar: `npm test` o `npx vitest run`
+
+**Tests pendientes (no implementados):**
+- `HybridStrategy`, `AgenticStrategy`, `BM25DimFilterStrategy`, `AgenticStandaloneStrategy`
+- Componentes de embeddings (`EmbeddingGenerator`, `EmbeddingIndexer`)
+- Integración end-to-end del pipeline completo
+- Benchmarks (mencionados en Paso 8)
 
 ### Paso 7: Prerequisitos de ejecución
 
@@ -473,6 +543,78 @@ Métricas a implementar para comparación de strategies:
 > Implementar en `src/benchmark/` como scripts independientes ejecutables contra
 > repositorios de prueba.
 
+### Paso 9: Cómo desarrollar una nueva estrategia
+
+1. **Crear la clase** en `src/retriever/strategies/` implementando `RecoveryStrategy`:
+   ```typescript
+   import { type RecoveryStrategy, type ContextChunk } from "../models/strategies/types.js";
+   import type { SanitizerOutput } from "../models/utilities/types.js";
+
+   export class MiEstrategia implements RecoveryStrategy {
+     constructor(
+       private readonly db: LaCoCoDatabase,
+       // ... otras dependencias (LanceDB, Ollama, etc.)
+     ) {}
+
+     async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
+       // Acceder a:
+       //   query.clean_query      → versión BM25 (tokens OR-joined)
+       //   query.embedding_input   → versión semántica (texto natural)
+       //   query.dimensions        → SYS/CPG/DTG hint
+       //   query.intent            → understand|refactor|create|debug|integrate
+       //   query.confidence        → 0.0–1.0
+
+       // Usar los servicios disponibles:
+       //   this.db.searchBM25(query, limit)  → FTS5
+       //   this.db.getNodeSignatures(ids)    → firmas
+       //   this.db.getNodesByDimension(dim)  → metadata
+       //   this.lanceDb.search(embedding, filter, topK) → ANN
+
+       return chunks;
+     }
+   }
+   ```
+
+2. **Registrarla en el CLI** — en `src/cli/index.ts`, agregar el case en el
+   switch de selección de estrategia (~líneas 194-216). Si la estrategia
+   necesita LanceDB, incluirla en el array `needsLanceDb`.
+
+3. **Agregar tests** en `tests/retrieval/` siguiendo el patrón de las suites
+   existentes (Vitest, DB en memoria `:memory:` para tests de SQLite).
+
+---
+
+## Parte III — Mejoras Pendientes y Gaps Identificados
+
+### Prioridad alta
+
+| Gap | Descripción | Ubicación |
+|-----|-------------|-----------|
+| **Clasificador liviano (nivel 2)** | El `DimensionalFilter` nivel 2 es un placeholder que multiplica por 0.85 sin clasificar. Implementar embeddings + regresión logística con modelo serializado. | `src/retriever/utilities/filters/dimensional-filter.ts:68` |
+| **Bug CLI** | Línea `0` solitaria en `src/cli/index.ts:238`. | `src/cli/index.ts:238` |
+| **CLI help text** | El `--strategy` del comando `retrieve` no menciona `bm25-dim` en el help text, aunque sí está implementado. | `src/cli/index.ts:151` |
+| **AGENTS.md desactualizado** | Las rutas documentadas no coincidían con las reales. ✅ Corregido en esta versión. | — |
+
+### Prioridad media
+
+| Gap | Descripción |
+|-----|-------------|
+| **Re-ranker agéntico en Hybrid** | El AGENTS.md original mencionaba "Opcional: re-ranker agente sobre top 20" en Hybrid, pero no está implementado. |
+| **AgenticStandalone acepta `slmEndpoint` sin usarlo** | El constructor recibe el parámetro pero nunca llama a Ollama. Es solo expansión por vecindad. |
+| **LIMITs hardcodeados** | `bm25-dim-strategy.ts` usa 200 para candidatos por dimensión. `agentic-standalone-strategy.ts` usa 100 para neighbors. |
+| **`natural` no usado** | La dependencia `natural` está en `package.json` pero ningún archivo la importa. |
+| **Confidence máximo 0.95** | `AgentIntermediary1` tiene `Math.min(bestScore * 0.25 + 0.4, 0.95)` — nunca llega a 1.0. |
+
+### Prioridad baja
+
+| Gap | Descripción |
+|-----|-------------|
+| **EmbeddingIndexer sin paginación** | `getAllNodes()` carga `SELECT * FROM nodes` completo. Para >5000 nodos puede causar presión de memoria. |
+| **Sin logging estructurado** | Todos los componentes usan `console.log`/`console.warn`/`console.error` directo. |
+| **Sin tests de integración** | No hay tests end-to-end del pipeline completo (sanitize → retrieve → aggregate → inject). |
+| **Sin vitest.config.ts** | No hay archivo de configuración explícito para Vitest; usa defaults. |
+| **Naming inconsistente** | `package.json` name es `tensor-extractor`, bin es `lacoco`, banner dice `tensor-extractor`. |
+
 ---
 
 ## Apéndice: Glosario
@@ -489,8 +631,9 @@ Métricas a implementar para comparación de strategies:
 | **DTG** | Data-flow Graph (grafo de flujo de datos) |
 | **CPG** | Control & Program Graph (grafo de control y programa) |
 | **SYS** | System Graph (grafo del ecosistema del sistema) |
+| **DAOs** | Data Access Objects (patrón de acceso a datos sin ORM) |
 
 ---
 
-> Última actualización: 2026-05-18
+> Última actualización: 2026-06-02
 > Mantenedor: Equipo LaCoCo (Benavides Rubén, Cobeña Joan)

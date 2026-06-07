@@ -76,6 +76,73 @@ export class LaCoCoDatabase {
     return this.connectionDao.stats();
   }
 
+  populateMetadata(): void {
+    const rawDb = this.getRawDb();
+
+    const insertStmt = rawDb.prepare(
+      `INSERT OR REPLACE INTO node_metadata (node_id, dimension, sub_type)
+       VALUES (?, ?, ?)`,
+    );
+
+    const edgesStmt = rawDb.prepare(
+      "SELECT relation FROM edges WHERE sourceId = ?",
+    );
+
+    const nodes = rawDb
+      .prepare("SELECT id, kind FROM nodes")
+      .all() as { id: string; kind: string }[];
+
+    const kindToSubType: Record<string, string> = {
+      CLASS: "class",
+      METHOD: "method",
+      FUNCTION: "function",
+      ARROW_FUNCTION: "arrow_function",
+      VARIABLE: "variable",
+      INTERFACE: "interface",
+      TYPE: "type_alias",
+      ENUM: "enum",
+      ENUM_MEMBER: "enum_member",
+      PROPERTY: "property",
+      ACCESSOR: "accessor",
+      EXTERNAL_LIB: "package",
+    };
+
+    const tx = rawDb.transaction(() => {
+      for (const node of nodes) {
+        const edges = edgesStmt.all(node.id) as { relation: string }[];
+        let sys = 0, cpg = 0, dtg = 0;
+        for (const e of edges) {
+          if (e.relation === "EXTENDS" || e.relation === "IMPLEMENTS") sys++;
+          if (["INJECTS", "CALLS", "INSTANTIATES"].includes(e.relation)) cpg++;
+          if (
+            ["CONSUMES_DATA", "PRODUCES", "MUTATES_STATE"].includes(e.relation)
+          )
+            dtg++;
+        }
+        if (sys === 0 && cpg === 0 && dtg === 0) {
+          if (node.kind === "CLASS" || node.kind === "INTERFACE") sys = 1;
+          else if (
+            node.kind === "METHOD" ||
+            node.kind === "FUNCTION" ||
+            node.kind === "ARROW_FUNCTION"
+          )
+            cpg = 1;
+          else if (node.kind === "PROPERTY" || node.kind === "VARIABLE") dtg = 1;
+        }
+
+        const max = Math.max(sys, cpg, dtg);
+        const dim =
+          max === sys ? "SYS" : max === cpg ? "CPG" : "DTG";
+        const subType = kindToSubType[node.kind] ?? "unknown";
+
+        insertStmt.run(node.id, dim, subType);
+      }
+    });
+    tx();
+
+    console.log(`[LaCoCo] ✅ Metadatos poblados para ${nodes.length} nodos.`);
+  }
+
   close(): void {
     this.connectionDao.close();
   }

@@ -5,12 +5,15 @@
  * Uso:
  *   lacoco watch <ruta-tsconfig>
  *   lacoco index <ruta-tsconfig>
+ *   lacoco extract <ruta-tsconfig>
  *   lacoco retrieve "<query>"
  */
 
 import { Command } from "commander";
+import { Project } from "ts-morph";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
+import { GraphExtractor } from "../extractor/graph-extractor.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary-1.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
@@ -22,6 +25,7 @@ import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-stand
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
+import { inspect, inspectQuery } from "./inspect.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Programa
@@ -141,6 +145,56 @@ program
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Comando: extract <ruta-tsconfig>
+// ─────────────────────────────────────────────────────────────────────────────
+
+program
+  .command("extract <ruta-tsconfig>")
+  .description(
+    "Extrae solo el grafo estructural (sin embeddings ni watcher)."
+  )
+  .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
+  .option("-v, --verbose", "Imprime progreso detallado", false)
+  .action((rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
+    console.log("\n[CLI] 🔨 Extrayendo grafo estructural...\n");
+    console.log(`  tsconfig : ${rutaTsconfig}`);
+    console.log(`  sqlite   : ${options.db}\n`);
+
+    const db = new LaCoCoDatabase(options.db);
+    const project = new Project({ tsConfigFilePath: rutaTsconfig });
+    const extractor = new GraphExtractor(db.getRawDb());
+
+    const sourceFiles = project.getSourceFiles();
+    console.log(`[CLI] Archivos encontrados: ${sourceFiles.length}`);
+
+    console.time("[CLI] Extracción");
+    db.transaction(() => {
+      for (const file of sourceFiles) {
+        if (options.verbose) {
+          console.log(`  ✍  ${file.getFilePath()}`);
+        }
+        try {
+          extractor.processFile(file);
+        } catch (err) {
+          console.error(
+            `  ⚠  Error analizando ${file.getFilePath()}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+    });
+    console.timeEnd("[CLI] Extracción");
+
+    const { nodesWritten, edgesWritten } = extractor.getStats();
+    console.log(`[CLI] ✅ Grafo — ${nodesWritten} nodos, ${edgesWritten} aristas.`);
+
+    console.log(`[CLI] 🏷️  Poblando metadatos dimensionales...`);
+    db.populateMetadata();
+
+    db.close();
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Comando: retrieve <query>
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -148,7 +202,7 @@ program
   .command("retrieve <query>")
   .description("Ejecuta el pipeline RAG completo y muestra la respuesta del LLM.")
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, hybrid, agentic, agentic-standalone)", "hybrid")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone)", "hybrid")
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
   .action(async (query: string, options: { db: string; strategy: string; ollama: string; llm: boolean }) => {
@@ -237,7 +291,7 @@ program
           const injector = new PromptInjector();
           console.log("[CLI] 📝 Prompt original:\n" + query + "\n");
           const enrichedPrompt = injector.inject(query, aggregated);
-0
+          console.log("[CLI] 📚 Contexto agregado:\n", enrichedPrompt);
           const answer = await ollama.generate(enrichedPrompt);
           console.log("🤖 Respuesta del LLM:\n" + answer);
         } else {
@@ -254,6 +308,90 @@ program
       db.close();
       process.exit(1);
     }
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comando: inspect <root-node>
+// ─────────────────────────────────────────────────────────────────────────────
+
+program
+  .command("inspect <root-node>")
+  .description(
+    "Visualiza el subgrafo alrededor de un nodo usando expansión BFS con budget."
+  )
+  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
+  .option("-f, --focus <dim>", "Prioridad dimensional: SYS, CPG, DTG, ALL", "ALL")
+  .option("-o, --output <path>", "Archivo HTML de salida", "inspect.html")
+  .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
+  .action(async (rootNode: string, opts: {
+    db: string;
+    budget: string;
+    focus: string;
+    output: string;
+    cdn: boolean;
+  }) => {
+    const budget = parseInt(opts.budget, 10);
+    if (isNaN(budget) || budget < 1) {
+      console.error("[CLI] ❌ --budget debe ser un número positivo.");
+      process.exit(1);
+    }
+    const focus = ["SYS", "CPG", "DTG", "ALL"].includes(opts.focus)
+      ? (opts.focus as "SYS" | "CPG" | "DTG" | "ALL")
+      : "ALL";
+    await inspect({
+      rootNode,
+      db: opts.db,
+      budget,
+      focus,
+      output: opts.output,
+      cdn: opts.cdn,
+    });
+  });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comando: inspect-query <prompt>
+// ─────────────────────────────────────────────────────────────────────────────
+
+program
+  .command("inspect-query <prompt>")
+  .description(
+    "Pipeline RAG completo → visualización del subgrafo recuperado para un prompt."
+  )
+  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone)", "hybrid")
+  .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
+  .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
+  .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
+  .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
+  .action(async (prompt: string, opts: {
+    db: string;
+    budget: string;
+    strategy: string;
+    mode: string;
+    output: string;
+    cdn: boolean;
+    ollama: string;
+  }) => {
+    const budget = parseInt(opts.budget, 10);
+    if (isNaN(budget) || budget < 1) {
+      console.error("[CLI] ❌ --budget debe ser un número positivo.");
+      process.exit(1);
+    }
+    const mode = ["default", "tensor", "scores"].includes(opts.mode)
+      ? (opts.mode as "default" | "tensor" | "scores")
+      : "default";
+    await inspectQuery({
+      prompt,
+      db: opts.db,
+      budget,
+      strategy: opts.strategy,
+      mode,
+      output: opts.output,
+      cdn: opts.cdn,
+      ollama: opts.ollama,
+    });
   });
 
 program.parse(process.argv);
