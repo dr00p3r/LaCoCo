@@ -1,11 +1,10 @@
 /**
- * AgenticStandaloneStrategy (2.5) — Variante del agente agéntico SIN filtro dimensional.
+ * AgenticStandaloneStrategy — Variante del agente agéntico sin uso de dimensiones.
  *
- * Usa exactamente la misma lógica de AgenticStrategy pero omite el
- * DimensionalFilter, operando sobre el grafo completo.
+ * Usa la misma lógica de AgenticStrategy pero no usa el hint dimensional
+ * del intermediario, operando sobre el grafo completo.
  *
- * Propósito: baseline para benchmarks que midan el valor agregado
- * del filtro dimensional (comparar vs Strategy 2.3).
+ * Propósito: baseline para benchmarks.
  */
 
 import {

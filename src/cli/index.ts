@@ -10,11 +10,9 @@
  */
 
 import { Command } from "commander";
-import { Project } from "ts-morph";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
-import { CodeExtractor } from "../extractor/code-extractor.js";
-import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary-1.js";
+import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
 import { BM25Strategy } from "../retriever/strategies/bm25-strategy.js";
@@ -26,10 +24,11 @@ import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
 import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
 import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { EmbeddingIndexer } from "../retriever/utilities/embeddings/embedding-indexer.js";
+import { VectorsIndexer } from "../indexer/vectors-indexer.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import { inspect, inspectQuery } from "./inspect.js";
+import { GraphIndexer } from "../indexer/graph-indexer.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Programa
@@ -68,8 +67,7 @@ program
       lanceDbPath: "./lancedb",
     });
 
-    // ── 3. Shutdown graceful ─────────────────────────────────────────────
-    //    Registrar antes de start() para capturar Ctrl+C durante el cold start
+    // ── 3. Adjuntar el manejador de señales de apagado ─────────────────────────────────────────────
     const shutdown = (): void => {
       console.log("\n[CLI] 🛑 Señal de apagado recibida...");
       void daemon.stop().then(() => process.exit(0));
@@ -78,7 +76,7 @@ program
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
 
-    // ── 4. Arrancar (cold start sincrónico + watcher) ────────────────────
+    // ── 4. Arrancar ────────────────────
     try {
       daemon.start();
     } catch (err) {
@@ -94,7 +92,7 @@ program
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function printBanner(tsconfig: string, dbPath: string): void {
+function printBanner(tsconfig : string, dbPath : string): void {
   console.log("");
   console.log("┌──────────────────────────────────────────────────┐");
   console.log("│     tensor-extractor  ·  Grafo Multirrelacional   │");
@@ -105,9 +103,6 @@ function printBanner(tsconfig: string, dbPath: string): void {
   console.log("");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Parseo de argumentos
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Comando: index_graph <ruta-tsconfig>
@@ -121,42 +116,14 @@ program
   .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
   .option("-v, --verbose", "Imprime progreso detallado", false)
   .action((rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
+   
     console.log("\n[CLI] 🔨 Extrayendo grafo estructural...\n");
     console.log(`  tsconfig : ${rutaTsconfig}`);
     console.log(`  sqlite   : ${options.db}\n`);
 
-    const db = new LaCoCoDatabase(options.db);
-    const project = new Project({ tsConfigFilePath: rutaTsconfig });
-    const extractor = new CodeExtractor(db.getRawDb());
+    const indexer = new GraphIndexer(options.db, rutaTsconfig);
+    indexer.index();
 
-    const sourceFiles = project.getSourceFiles();
-    console.log(`[CLI] Archivos encontrados: ${sourceFiles.length}`);
-
-    console.time("[CLI] Extracción");
-    db.transaction(() => {
-      for (const file of sourceFiles) {
-        if (options.verbose) {
-          console.log(`  ✍  ${file.getFilePath()}`);
-        }
-        try {
-          extractor.processFile(file);
-        } catch (err) {
-          console.error(
-            `  ⚠  Error analizando ${file.getFilePath()}:`,
-            err instanceof Error ? err.message : err
-          );
-        }
-      }
-    });
-    console.timeEnd("[CLI] Extracción");
-
-    const { nodesWritten, edgesWritten } = extractor.getStats();
-    console.log(`[CLI] ✅ Grafo — ${nodesWritten} nodos, ${edgesWritten} aristas.`);
-
-    console.log(`[CLI] 🏷️  Poblando metadatos dimensionales...`);
-    db.populateMetadata();
-
-    db.close();
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,47 +133,20 @@ program
 program
   .command("index_vectors")
   .description(
-    "Genera embeddings semánticos en LanceDB a partir de un grafo SQLite ya poblado."
+    "Genera embeddings semánticos en LanceDB directamente desde el AST (sin dependencia de SQLite)."
   )
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .requiredOption("--tsconfig <path>", "Ruta al tsconfig.json del proyecto a analizar")
   .option("--lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
   .option("-v, --verbose", "Imprime progreso detallado", false)
-  .action(async (options: { db: string; lancedb: string; verbose: boolean }) => {
-    console.log("\n[CLI] 🧠 Generando embeddings semánticos...\n");
-    console.log(`  sqlite  : ${options.db}`);
-    console.log(`  lancedb : ${options.lancedb}\n`);
+  .action(async (options: { tsconfig: string; lancedb: string; verbose: boolean }) => {
+    
+    console.log("\n[CLI] 🧠 Indexando vectores semánticos...\n");
+    console.log(`  tsconfig : ${options.tsconfig}`);
+    console.log(`  lancedb  : ${options.lancedb}\n`);
 
-    const db = new LaCoCoDatabase(options.db);
+    const indexer = new VectorsIndexer(options.lancedb, options.tsconfig);
+    await indexer.index();
 
-    // Validar que hay nodos en el grafo
-    const stats = db.stats();
-    if (stats.nodes === 0) {
-      console.error("[CLI] ❌ El grafo SQLite está vacío. Ejecuta `index_graph` primero.");
-      db.close();
-      process.exit(1);
-    }
-
-    console.log(`[CLI] ${stats.nodes} nodos encontrados en el grafo.`);
-    console.time("[CLI] Embeddings");
-
-    const lanceDb = new LaCoCoLanceDb(options.lancedb);
-    try {
-      await lanceDb.connect();
-      const indexer = new EmbeddingIndexer(db, lanceDb);
-      await indexer.indexAll((current, total) => {
-        if (options.verbose) {
-          console.log(`[CLI]    ${current}/${total} embeddings...`);
-        }
-      });
-      console.timeEnd("[CLI] Embeddings");
-      console.log(`\n[CLI] ✅ Embeddings generados para ${stats.nodes} nodos.`);
-    } catch (err) {
-      console.error("[CLI] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
-      process.exit(1);
-    } finally {
-      await lanceDb.close();
-      db.close();
-    }
   });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +161,7 @@ program
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
   .action(async (query: string, options: { db: string; strategy: string; ollama: string; llm: boolean }) => {
+    
     console.log("\n[CLI] 🔍 Pipeline RAG completo\n");
     console.log(`  query    : ${query}`);
     console.log(`  strategy : ${options.strategy}`);
@@ -232,7 +173,7 @@ program
     try {
       // 1. Agente Intermediario 1
       const intermediary = new AgentIntermediary1();
-      const sanitized = intermediary.sanitize(query);
+      const sanitized = await intermediary.sanitize(query);
 
       console.log("[CLI] 📋 Resultado del intermediario:");
       console.log(`  route      : ${sanitized.route}`);
@@ -241,19 +182,13 @@ program
       console.log(`  dimensions : ${sanitized.dimensions.join(", ") || "ninguna"}\n`);
 
       if (sanitized.route === "LLM_DIRECT") {
-        if (options.llm && await ollama.isAvailable()) {
-          console.log("[CLI] ➡️  Envío directo al LLM (sin RAG)...");
-          const answer = await ollama.generate(query);
-          console.log("\n🤖 Respuesta del LLM:\n" + answer);
-        } else {
-          console.log("[CLI] ➡️  El prompt no requiere RAG. Envío directo al LLM.");
-        }
+        console.log("-------SIMULANDO INTEGRACION DIRECTA CON LLM");
         db.close();
         return;
       }
 
-      // 2. Strategy de recuperación (selector dinámico)
-      let strategy: RecoveryStrategy;
+      // 2. Strategy de recuperación
+      let strategy : RecoveryStrategy;
       const needsLanceDb = ["hybrid", "agentic", "agentic-standalone"].includes(options.strategy);
 
       if (needsLanceDb) {
@@ -319,7 +254,7 @@ program
           const answer = await ollama.generate(enrichedPrompt);
           console.log("🤖 Respuesta del LLM:\n" + answer);
         } else {
-          console.warn("\n[CLI] ⚠️  Ollama no disponible. Mostrando solo chunks recuperados.");
+          console.warn("\n[CLI] ⚠️  Ollama no disponible.");
         }
       } else if (!options.llm) {
         console.log("\n[CLI] 📝 Modo sin LLM (--no-llm). Mostrando chunks únicamente.");

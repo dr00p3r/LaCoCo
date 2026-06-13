@@ -2,8 +2,8 @@ import Database from "better-sqlite3";
 import type { GraphNode } from "../model/types.js";
 
 export class SearchDao {
-  private stmtSearchBM25: Database.Statement;
-  private stmtGetNodesByDimension: Database.Statement;
+  private stmtSearchBM25 : Database.Statement;
+  private stmtGetNodesByDimension : Database.Statement;
 
   constructor(private readonly db: Database.Database) {
     this.stmtSearchBM25 = db.prepare(`
@@ -22,7 +22,7 @@ export class SearchDao {
     `);
   }
 
-  searchBM25(query: string, limit = 50): { node_id: string; score: number }[] {
+  searchBM25(query: string, limit = 10): { node_id: string; score: number }[] {
     return this.stmtSearchBM25.all(query, limit) as {
       node_id: string;
       score: number;

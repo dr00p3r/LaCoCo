@@ -19,9 +19,11 @@ import path from "node:path";
 import { Project, type SourceFile } from "ts-morph";
 import chokidar, { type FSWatcher } from "chokidar";
 import type { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { CodeExtractor } from "./code-extractor.js";
-import { EmbeddingIndexer } from "../retriever/utilities/embeddings/embedding-indexer.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import { CodeExtractor } from "./code-extractor.js";
+import { SqliteCallbacks } from "./sqlite-callbacks.js";
+import { VectorCallbacks } from "./vector-callbacks.js";
+import { EmbeddingGenerator } from "../retriever/utilities/embeddings/embedding-generator.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos auxiliares
@@ -51,36 +53,40 @@ export interface DaemonOptions {
 
 export class DaemonManager {
   private readonly project: Project;
-  private readonly parser: CodeExtractor;
+  private readonly sqliteCallbacks: SqliteCallbacks;
+  private readonly sqliteExtractor: CodeExtractor;
+  private readonly embedGen: EmbeddingGenerator;
+  private lanceDb: LaCoCoLanceDb | null = null;
+  private vectorCallbacks: VectorCallbacks | null = null;
+  private vectorExtractor: CodeExtractor | null = null;
   private watcher: FSWatcher | null = null;
 
   private readonly tsConfigFilePath: string;
   private readonly db: LaCoCoDatabase;
   private readonly watchGlob: string;
   private readonly verbose: boolean;
-  private readonly indexEmbeddings: boolean;
+  private readonly indexVectors: boolean;
   private readonly lanceDbPath: string;
-  private embeddingsPromise: Promise<void> | null = null;
+  private vectorsPromise: Promise<void> | null = null;
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
     this.db = opts.db;
     this.verbose = opts.verbose ?? false;
-    this.indexEmbeddings = opts.indexEmbeddings ?? true;
+    this.indexVectors = opts.indexEmbeddings ?? true;
     this.lanceDbPath = opts.lanceDbPath ?? "./lancedb";
 
-    // Directorio que contiene el tsconfig → raíz del proyecto a observar
     const projectRoot = path.dirname(this.tsConfigFilePath);
     this.watchGlob =
       opts.watchGlob ?? path.join(projectRoot, "**", "*.ts");
 
-    // ts-morph Project: carga el grafo de tipos completo del proyecto
     this.project = new Project({
       tsConfigFilePath: this.tsConfigFilePath,
     });
 
-    // CodeExtractor recibe la conexión raw de SQLite para sus prepared statements
-    this.parser = new CodeExtractor(this.db.getRawDb());
+    this.sqliteCallbacks = new SqliteCallbacks(this.db.getRawDb());
+    this.sqliteExtractor = new CodeExtractor(this.sqliteCallbacks);
+    this.embedGen = new EmbeddingGenerator();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -115,9 +121,9 @@ export class DaemonManager {
    * Espera a que los embeddings terminen (si están en progreso).
    * Útil en modo index (one-shot) para no cerrar la BD antes de tiempo.
    */
-  async awaitEmbeddings(): Promise<void> {
-    if (this.embeddingsPromise) {
-      await this.embeddingsPromise;
+  async awaitVectors(): Promise<void> {
+    if (this.vectorsPromise) {
+      await this.vectorsPromise;
     }
   }
 
@@ -143,69 +149,71 @@ export class DaemonManager {
     const total = sourceFiles.length;
     console.log(`[Daemon]    ${total} archivos TypeScript encontrados.`);
 
-    this.parser.resetStats();
+    // ── Pase 1: SQLite (grafo estructural en transacción atómica) ──────
+    this.sqliteCallbacks.nodesWritten = 0;
+    this.sqliteCallbacks.edgesWritten = 0;
 
-    // Una única transacción para todos los archivos → máximo rendimiento
     this.db.transaction(() => {
       for (const file of sourceFiles) {
         if (this.verbose) {
           console.log(`[Daemon]    ✍  ${file.getFilePath()}`);
         }
-        this.#safeProcessFile(file);
+        this.#safeProcessFile(this.sqliteExtractor, file);
       }
     });
 
-    const { nodesWritten, edgesWritten } = this.parser.getStats();
     console.timeEnd("[Daemon] Cold start");
     console.log(
-      `[Daemon] ✅ Grafo construido — ${nodesWritten} nodos, ${edgesWritten} aristas.`
+      `[Daemon] ✅ Grafo construido — ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas.`
     );
 
-    // Post-cold-start: generar embeddings en LanceDB
-    if (this.indexEmbeddings && nodesWritten > 0) {
-      this.embeddingsPromise = this.#generateEmbeddings();
+    // ── Pase 2: LanceDB (embeddings semánticos, async) ─────────────────
+    if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0) {
+      this.vectorsPromise = this.#generateEmbeddings(sourceFiles);
     }
   }
 
-  /**
-   * Genera embeddings para todos los nodos y los persiste en LanceDB.
-   * Se ejecuta de forma async para no bloquear el cold-start sincrónico.
-   */
-  async #generateEmbeddings(): Promise<void> {
+  async #generateEmbeddings(sourceFiles: ReturnType<Project["getSourceFiles"]>): Promise<void> {
     console.log("[Daemon] 🧠 Generando embeddings semánticos...");
     console.time("[Daemon] Embeddings");
 
-    const lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
+    this.lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
     try {
-      await lanceDb.connect();
-      const indexer = new EmbeddingIndexer(this.db, lanceDb);
-      await indexer.indexAll((current, total) => {
+      await this.lanceDb.connect();
+      this.vectorCallbacks = new VectorCallbacks(
+        this.lanceDb,
+        (t) => this.embedGen.generate(t),
+      );
+      this.vectorExtractor = new CodeExtractor(this.vectorCallbacks);
+
+      for (const file of sourceFiles) {
         if (this.verbose) {
-          console.log(`[Daemon]    ${current}/${total} embeddings...`);
+          console.log(`[Daemon]    🧠  ${file.getFilePath()}`);
         }
-      });
+        this.#safeProcessFile(this.vectorExtractor, file);
+      }
+      await this.vectorCallbacks.flush();
       console.timeEnd("[Daemon] Embeddings");
+      console.log(`[Daemon] ✅ ${this.vectorCallbacks.nodesWritten} embeddings insertados en LanceDB.`);
     } catch (err) {
       console.error("[Daemon] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
-    } finally {
-      await lanceDb.close();
     }
   }
 
-  /**
-   * Re-indexa embeddings para un archivo específico tras hot-reload.
-   */
-  async #reindexEmbeddings(filePath: string): Promise<void> {
-    const lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
-    try {
-      await lanceDb.connect();
-      const indexer = new EmbeddingIndexer(this.db, lanceDb);
-      await indexer.indexFile(filePath);
-    } catch (err) {
-      console.error(`[Daemon] ❌ Error re-indexando embeddings de ${filePath}:`, err instanceof Error ? err.message : err);
-    } finally {
-      await lanceDb.close();
+  async #reindexVectors(filePath: string): Promise<void> {
+    if (!this.lanceDb || !this.vectorCallbacks) return;
+    const sourceFile = this.project.getSourceFile(filePath);
+    if (!sourceFile) return;
+
+    // Eliminar embeddings previos del archivo
+    const nodes = this.db.getNodesByFile(filePath);
+    for (const node of nodes) {
+      await this.lanceDb.deleteByNodeId(node.id);
     }
+
+    // Re-generar embeddings
+    this.#safeProcessFile(this.vectorExtractor!, sourceFile);
+    await this.vectorCallbacks.flush();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -316,36 +324,34 @@ export class DaemonManager {
       // ── Steps 3–5 (F2): Purge + reprocess en UNA transacción atómica ─────
       // Al ser atómica: si falla en mitad del re-proceso, el grafo vuelve
       // al estado anterior (rollback automático de SQLite).
-      this.parser.resetStats();
+      this.sqliteCallbacks.nodesWritten = 0;
+      this.sqliteCallbacks.edgesWritten = 0;
+
       this.db.transaction(() => {
         // 3. Purgar el archivo modificado y re-procesarlo con el AST fresco
         this.#purgeFile(filePath);
-        this.#safeProcessFile(sourceFile);
+        this.#safeProcessFile(this.sqliteExtractor, sourceFile);
 
-        // 4. Propagar a archivos dependientes: sus aristas a los tipos del
-        //    archivo modificado pueden haber quedado obsoletas o huérfanas
-        //    (CASCADE borró las entrantes al hacer purge del archivo modificado).
+        // 4. Propagar a archivos dependientes
         for (const dep of filesToPropagate) {
-          // Refrescamos el contexto de tipos TRAS haber regenerado el archivo fuente
           dep.refreshFromFileSystemSync();
           this.#purgeFile(dep.getFilePath());
-          this.#safeProcessFile(dep);
+          this.#safeProcessFile(this.sqliteExtractor, dep);
         }
       });
 
-      const { nodesWritten, edgesWritten } = this.parser.getStats();
       console.log(
-        `[Daemon]    ↳ ${nodesWritten} nodos, ${edgesWritten} aristas actualizados` +
+        `[Daemon]    ↳ ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas actualizados` +
           (filesToPropagate.length > 0
             ? ` (+ ${filesToPropagate.length} archivo(s) propagados).`
             : ".")
       );
 
-      // Hot-reload de embeddings para archivos modificados
-      if (this.indexEmbeddings && nodesWritten > 0) {
-        void this.#reindexEmbeddings(filePath);
+      // Hot-reload de vectores (LanceDB)
+      if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0 && this.vectorExtractor) {
+        void this.#reindexVectors(filePath);
         for (const dep of filesToPropagate) {
-          void this.#reindexEmbeddings(dep.getFilePath());
+          void this.#reindexVectors(dep.getFilePath());
         }
       }
     } catch (err) {
@@ -399,9 +405,9 @@ export class DaemonManager {
    * Envuelve `parser.processFile` con manejo de errores para que un archivo
    * malformado no detenga el análisis del resto del proyecto.
    */
-  #safeProcessFile(sourceFile: SourceFile): void {
+  #safeProcessFile(extractor: CodeExtractor, sourceFile: SourceFile): void {
     try {
-      this.parser.processFile(sourceFile);
+      extractor.processFile(sourceFile);
     } catch (err) {
       console.error(
         `[Daemon] ⚠  Error analizando ${sourceFile.getFilePath()}:`,

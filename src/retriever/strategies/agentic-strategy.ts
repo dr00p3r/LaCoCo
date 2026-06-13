@@ -3,7 +3,7 @@
  *
  * El SLM (Qwen2.5-Coder:1.5B) emite herramientas (tool-calling) para navegar el grafo.
  * Un motor determinístico ejecuta cada tool sobre SQLite/LanceDB.
- * Máximo 3 iteraciones. Filtro dimensional como hint inicial.
+ * Máximo 3 iteraciones. Usa dimensiones sugeridas por el AgentIntermediary1 como hint inicial.
  */
 
 import {
@@ -12,7 +12,6 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { DimensionalFilter } from "../utilities/filters/dimensional-filter.js";
 import { OllamaService } from "../../slms/ollama-service.js";
 
 /** Herramientas disponibles para el agente */
@@ -22,17 +21,14 @@ interface Tool {
 }
 
 export class AgenticStrategy implements RecoveryStrategy {
-  private readonly dimFilter: DimensionalFilter;
   private readonly ollama: OllamaService;
   private readonly maxIterations = 3;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     ollamaEndpoint = "http://localhost:11434",
-    confidenceThreshold = 0.65
   ) {
     this.ollama = new OllamaService(ollamaEndpoint);
-    this.dimFilter = new DimensionalFilter(confidenceThreshold, this.ollama);
   }
 
   /**
@@ -42,9 +38,6 @@ export class AgenticStrategy implements RecoveryStrategy {
    * @returns Chunks recuperados tras max 3 iteraciones
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    // Hint dimensional inicial
-    const dimensions = await this.dimFilter.filter(query);
-
     // Fase 1: recuperar símbolos semilla por BM25
     const seedResults = this.db.searchBM25(query.clean_query, 20);
     const collected = new Map<string, ContextChunk>();

@@ -1,7 +1,7 @@
 /**
- * BM25DimFilterStrategy (2.2) — BM25 dirigido por dimensión detectada.
+ * BM25DimFilterStrategy — BM25 dirigido por dimensión sugerida por el intermediario.
  *
- * Aplica DimensionalFilter antes de la búsqueda BM25 para limitar
+ * Usa las dimensiones sugeridas por AgentIntermediary1 para limitar
  * el espacio de búsqueda a nodos de la dimensión relevante.
  */
 
@@ -11,17 +11,11 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { DimensionalFilter } from "../utilities/filters/dimensional-filter.js";
 
 export class BM25DimFilterStrategy implements RecoveryStrategy {
-  private readonly dimFilter: DimensionalFilter;
-
   constructor(
     private readonly db: LaCoCoDatabase,
-    confidenceThreshold = 0.65
-  ) {
-    this.dimFilter = new DimensionalFilter(confidenceThreshold);
-  }
+  ) {}
 
   /**
    * Recupera nodos filtrando primero por dimensión, luego aplicando BM25.
@@ -30,7 +24,7 @@ export class BM25DimFilterStrategy implements RecoveryStrategy {
    * @returns Chunks de nodos que coinciden en dimensión y relevancia BM25
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const dimensions = await this.dimFilter.filter(query);
+    const dimensions = query.dimensions;
 
     // Obtener todos los nodos de las dimensiones detectadas
     const candidateIds = new Set<string>();

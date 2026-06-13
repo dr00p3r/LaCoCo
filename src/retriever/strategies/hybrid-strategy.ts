@@ -1,12 +1,11 @@
 /**
- * HybridStrategy — Fusión híbrida BM25 + Embeddings + RRF + DimFilter.
+ * HybridStrategy — Fusión híbrida BM25 + Embeddings + RRF.
  *
  * Pipeline:
- *   1. Aplicar DimensionalFilter como hint.
- *   2. BM25 sobre FTS5 → ranking A.
- *   3. Embedding de query → ANN en LanceDB con filtro pre-ANN por dimensiones → ranking B.
- *   4. Fusión RRF (k=60) entre A y B.
- *   5. Opcional: re-ranker agente sobre top 20.
+ *   1. BM25 sobre FTS5 → ranking A.
+ *   2. Embedding de query → ANN en LanceDB → ranking B.
+ *   3. Fusión RRF (k=60) entre A y B.
+ *   4. Boost por coincidencia de símbolos en la query.
  *
  * Recomendada como estrategia por defecto por máxima calidad de recuperación.
  */
@@ -19,7 +18,6 @@ import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { EmbeddingGenerator } from "../utilities/embeddings/embedding-generator.js";
-import { DimensionalFilter } from "../utilities/filters/dimensional-filter.js";
 
 /** Constante estándar de RRF */
 const RRF_K = 60;
@@ -28,15 +26,12 @@ const RRF_K = 60;
 const SYMBOL_BOOST = 1.5;
 
 export class HybridStrategy implements RecoveryStrategy {
-  private readonly dimFilter: DimensionalFilter;
   private readonly embeddingGen: EmbeddingGenerator;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     private readonly lanceDb: LaCoCoLanceDb,
-    confidenceThreshold = 0.65
   ) {
-    this.dimFilter = new DimensionalFilter(confidenceThreshold);
     this.embeddingGen = new EmbeddingGenerator();
   }
 
@@ -47,10 +42,9 @@ export class HybridStrategy implements RecoveryStrategy {
    * @returns Chunks fusionados y ordenados por score RRF
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const dimensions = await this.dimFilter.filter(query);
-
+    
     // ── 1. Ranking BM25 ────────────────────────────────────────────
-    const bm25Results = this.db.searchBM25(query.clean_query, 50);
+    const bm25Results = this.db.searchBM25(query.clean_query, 10);
     const rankingA = new Map<string, number>();
     for (let i = 0; i < bm25Results.length; i++) {
       const r = bm25Results[i]!;
@@ -59,14 +53,7 @@ export class HybridStrategy implements RecoveryStrategy {
 
     // ── 2. Ranking ANN (LanceDB) ────────────────────────────────────
     const embedding = await this.embeddingGen.generate(query.embedding_input);
-
-    // Construir filtro pre-ANN de dimensiones
-    const dimFilter =
-      dimensions.length > 0
-        ? `dimension IN (${dimensions.map((d) => `'${d}'`).join(", ")})`
-        : undefined;
-
-    const annResults = await this.lanceDb.search(embedding, dimFilter, 50);
+    const annResults = await this.lanceDb.search(embedding, undefined, 10);
     const rankingB = new Map<string, number>();
     for (let i = 0; i < annResults.length; i++) {
       const r = annResults[i]!;

@@ -14,7 +14,7 @@ import path from "node:path";
 import os from "node:os";
 import type Database from "better-sqlite3";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary-1.js";
+import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { BM25Strategy } from "../retriever/strategies/bm25-strategy.js";
 import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
@@ -163,7 +163,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
 
   // 1. Sanitizar
   const intermediary = new AgentIntermediary1();
-  const sanitized = intermediary.sanitize(options.prompt);
+  const sanitized = await intermediary.sanitize(options.prompt);
 
   console.log(`[inspect-query] 📋 route=${sanitized.route} intent=${sanitized.intent} conf=${sanitized.confidence.toFixed(2)}`);
 
