@@ -20,6 +20,7 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import { Bm25Service } from "../utilities/search/bm25-service.js";
 
 const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
   EXTENDS: "SYS",
@@ -76,18 +77,26 @@ function emptyNeighbors(): DimNeighbors {
 
 export class IctdStrategy implements RecoveryStrategy {
   private readonly config: IctdConfig;
+  private readonly bm25: Bm25Service;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     config?: Partial<IctdConfig>
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.bm25 = new Bm25Service(db);
   }
 
+  /**
+   * Recupera contexto aplicando difusión tensorial condicionada por intención.
+   *
+   * @param query Salida sanitizada del intermediario.
+   * @returns Chunks ordenados por temperatura final de difusión.
+   */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
     const weights = this.#computeWeights(query.intent, query.dimensions);
 
-    const anchorResults = this.db.searchBM25(
+    const anchorResults = this.bm25.search(
       query.clean_query,
       this.config.anchorLimit
     );
@@ -95,15 +104,9 @@ export class IctdStrategy implements RecoveryStrategy {
 
     const anchorIds = new Set<string>();
     const anchorHeat = new Map<string, number>();
-    let maxBm25 = 0;
     for (const r of anchorResults) {
-      const s = Math.max(0, 1 - Math.abs(r.score));
-      anchorHeat.set(r.node_id, s);
-      anchorIds.add(r.node_id);
-      if (s > maxBm25) maxBm25 = s;
-    }
-    if (maxBm25 > 0) {
-      for (const [id, s] of anchorHeat) anchorHeat.set(id, s / maxBm25);
+      anchorHeat.set(r.nodeId, r.score);
+      anchorIds.add(r.nodeId);
     }
 
     const { outAdj, inDeg } = this.#buildSubgraph(Array.from(anchorIds));
@@ -111,9 +114,9 @@ export class IctdStrategy implements RecoveryStrategy {
     if (outAdj.size === 0) {
       const sigs = this.db.getNodeSignatures(Array.from(anchorIds));
       return anchorResults.map((r) => ({
-        nodeId: r.node_id,
-        score: anchorHeat.get(r.node_id) ?? 0.5,
-        text: sigs.get(r.node_id) ?? r.node_id,
+        nodeId: r.nodeId,
+        score: anchorHeat.get(r.nodeId) ?? 0.5,
+        text: sigs.get(r.nodeId) ?? r.nodeId,
         source: "ICTD",
       }));
     }

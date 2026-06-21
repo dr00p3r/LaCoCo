@@ -385,16 +385,14 @@ Tabla o lista de cómo el intent del query influye en la estrategia.
 
 | # | Nombre | Archivo | Dependencias | Mecanismo |
 |---|--------|---------|-------------|-----------|
-| 2.1 | BM25 | `bm25-strategy.ts` | SQLite | FTS5 puro |
-| 2.2 | BM25+DimFilter | `bm25-dim-strategy.ts` | SQLite | FTS5 ∩ metadata |
+| Utilidad | BM25 Service | `utilities/search/bm25-service.ts` | SQLite | FTS5, normalización y construcción de chunks |
 | 2.3 | Agentic | `agentic-strategy.ts` | SQLite + Ollama | SLM planifica tools |
 | 2.4 | Hybrid | `hybrid-strategy.ts` | SQLite + LanceDB | BM25 + ANN + RRF |
-| 2.5 | AgenticStandalone | `agentic-standalone-strategy.ts` | SQLite | BFS sin filtro |
 | 2.6 | ICTD | `ictd-strategy.ts` | SQLite | Tensor diffusion |
 | 2.7 | CLCR | `clcr-strategy.ts` | SQLite | Staged BFS cross-layer |
 | 2.8 | RPR | `rpr-strategy.ts` | SQLite | Relational path enumeration |
 
 ---
 
-> Última actualización: 2026-06-07
+> Última actualización: 2026-06-20
 > Mantenedor: Equipo LaCoCo

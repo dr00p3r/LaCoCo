@@ -20,7 +20,8 @@ export class ContextAggregator {
    * @param maxTokens Límite de tokens del contexto (default 4000)
    * @returns Lista truncada y ordenada de chunks únicos
    */
-  aggregate(chunks: ContextChunk[], maxTokens = 4000, minScore = 0.01): ContextChunk[] {
+  aggregate(chunks: ContextChunk[], maxTokens = 4000, minScore = 0): ContextChunk[] {
+
     // 1. Deduplicar por nodeId (quedarse con mayor score)
     const byNode = new Map<string, ContextChunk>();
     for (const chunk of chunks) {
@@ -41,12 +42,13 @@ export class ContextAggregator {
     let tokensUsed = 0;
 
     for (const chunk of sorted) {
+
       const estimatedTokens = Math.ceil(
         chunk.text.split(/\s+/).length / WORDS_PER_TOKEN
       );
-      if (tokensUsed + estimatedTokens > maxTokens) {
-        break;
-      }
+
+      if (tokensUsed + estimatedTokens > maxTokens) break;
+
       result.push(chunk);
       tokensUsed += estimatedTokens;
     }

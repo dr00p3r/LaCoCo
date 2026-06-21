@@ -31,7 +31,7 @@ export class ConnectionDao {
   async buildIndex(table: lancedb.Table): Promise<void> {
     await (table as any).createIndex({
       type: "hnsw",
-      column: "vector",
+      column: "embedding",
       metric_type: "cosine",
     });
   }

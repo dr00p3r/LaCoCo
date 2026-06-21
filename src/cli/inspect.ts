@@ -15,11 +15,11 @@ import os from "node:os";
 import type Database from "better-sqlite3";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
-import { BM25Strategy } from "../retriever/strategies/bm25-strategy.js";
-import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
 import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
-import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-standalone-strategy.js";
+import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
+import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
+import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
@@ -174,7 +174,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
   }
 
   // 2. Seleccionar estrategia
-  const needsLanceDb = ["hybrid", "agentic", "agentic-standalone"].includes(options.strategy);
+  const needsLanceDb = options.strategy === "hybrid";
   let lanceDb: LaCoCoLanceDb | undefined;
 
   let strategy: RecoveryStrategy;
@@ -193,6 +193,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
 
   if (chunks.length === 0) {
     console.error("[inspect-query] ❌ La estrategia no recuperó ningún chunk. Nada que graficar.");
+    if (lanceDb) await lanceDb.close();
     db.close();
     process.exit(1);
   }
@@ -236,6 +237,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
   fs.writeFileSync(options.output, html, "utf-8");
   console.log(`[inspect-query] ✅ HTML generado → ${options.output}`);
 
+  if (lanceDb) await lanceDb.close();
   db.close();
 }
 
@@ -820,19 +822,20 @@ function createStrategy(
 ): RecoveryStrategy {
   switch (name) {
     case "bm25":
-      return new BM25Strategy(db);
-    case "bm25-dim":
-      return new BM25DimFilterStrategy(db);
+      throw new Error("BM25 puro ya no está disponible como estrategia. Usa hybrid.");
     case "hybrid":
       if (!lanceDb) throw new Error("LanceDB requerido para hybrid strategy");
       return new HybridStrategy(db, lanceDb);
     case "agentic":
       return new AgenticStrategy(db, ollamaEndpoint);
-    case "agentic-standalone":
-      return new AgenticStandaloneStrategy(db, ollamaEndpoint);
+    case "ictd":
+      return new IctdStrategy(db);
+    case "clcr":
+      return new ClcrStrategy(db);
+    case "rpr":
+      return new RprStrategy(db);
     default:
-      if (lanceDb) return new HybridStrategy(db, lanceDb);
-      return new BM25Strategy(db);
+      throw new Error(`Estrategia no soportada: ${name}`);
   }
 }
 

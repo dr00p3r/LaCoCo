@@ -1,72 +1,54 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentIntermediary1 } from "../../src/retriever/utilities/mini-agents/agent-intermediary/index.js";
+
+const { classifyMock } = vi.hoisted(() => ({
+  classifyMock: vi.fn(),
+}));
 
 vi.mock("../../src/retriever/utilities/mini-agents/agent-intermediary/classifier.js", () => {
   class MockSlmClassifier {
-    classify = vi.fn().mockResolvedValue({
-      route: "RAG",
-      intent: "refactor",
-      dimensions: ["CPG"],
-      confidence: 0.9,
-    });
+    classify = classifyMock;
   }
   return { SlmClassifier: MockSlmClassifier };
 });
 
 describe("AgentIntermediary1", () => {
-  const intermediary = new AgentIntermediary1();
+  beforeEach(() => {
+    classifyMock.mockReset();
+  });
 
-  describe("sanitize", () => {
-    it("clasifica como RAG cuando hay referencias a código", async () => {
-      const result = await intermediary.sanitize("refactoriza OrderService para usar async/await");
-      expect(result.route).toBe("RAG");
-    });
+  it("delega al SLM la transformación completa del prompt", async () => {
+    const slmOutput = {
+      route: "RAG",
+      clean_query: '"OrderService" OR "async" OR "await"',
+      embedding_input: "Refactorizar OrderService para usar async/await",
+      dimensions: ["CPG"],
+      intent: "refactor",
+      confidence: 0.96,
+    };
+    classifyMock.mockResolvedValue(slmOutput);
 
-    it("clasifica como RAG con consulta de debug", async () => {
-      const result = await intermediary.sanitize("por qué falla el método save() en UserRepository");
-      expect(result.route).toBe("RAG");
-    });
+    const result = await new AgentIntermediary1().sanitize(
+      "  refactoriza OrderService para usar async/await  "
+    );
 
-    it("clasifica como RAG con keyword de refactor", async () => {
-      const result = await intermediary.sanitize("refactoriza la clase OrderService");
-      expect(result.route).toBe("RAG");
-    });
+    expect(classifyMock).toHaveBeenCalledOnce();
+    expect(classifyMock).toHaveBeenCalledWith("refactoriza OrderService para usar async/await");
+    expect(result).toBe(slmOutput);
+  });
 
-    it("clasifica como RAG con keyword de crear", async () => {
-      const result = await intermediary.sanitize("crea un endpoint POST /orders");
-      expect(result.route).toBe("RAG");
-    });
+  it("propaga fallos del SLM sin aplicar fallback local", async () => {
+    classifyMock.mockRejectedValue(new Error("SLM no disponible"));
 
-    it("clasifica como RAG con keyword de entender", async () => {
-      const result = await intermediary.sanitize("qué hace la función calculateTaxes");
-      expect(result.route).toBe("RAG");
-    });
+    await expect(
+      new AgentIntermediary1().sanitize("explica OrderService")
+    ).rejects.toThrow("SLM no disponible");
+  });
 
-    it("clasifica como RAG con keyword de error", async () => {
-      const result = await intermediary.sanitize("por qué falla el test de integración");
-      expect(result.route).toBe("RAG");
-    });
-
-    it("normaliza la query para BM25", async () => {
-      const result = await intermediary.sanitize("Refactoriza OrderService!!!");
-      expect(result.clean_query).toBe("refactoriza OR orderservice");
-    });
-
-    it("usa keywords filtrados para embeddings", async () => {
-      const prompt = "Crea un DTO para crear pedidos";
-      const result = await intermediary.sanitize(prompt);
-      expect(result.embedding_input).toBe("dto pedidos");
-    });
-
-    it("sugiere dimensiones basadas en keywords", async () => {
-      const result = await intermediary.sanitize("hereda de BaseService e implementa IHandler");
-      expect(result.dimensions).toBeDefined();
-    });
-
-    it("retorna confidence en rango 0-1", async () => {
-      const result = await intermediary.sanitize("refactoriza OrderService");
-      expect(result.confidence).toBeGreaterThanOrEqual(0);
-      expect(result.confidence).toBeLessThanOrEqual(1);
-    });
+  it("rechaza prompts vacíos antes de invocar el modelo", async () => {
+    await expect(new AgentIntermediary1().sanitize("   ")).rejects.toThrow(
+      "El prompt no puede estar vacío"
+    );
+    expect(classifyMock).not.toHaveBeenCalled();
   });
 });

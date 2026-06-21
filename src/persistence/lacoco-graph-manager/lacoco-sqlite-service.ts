@@ -85,7 +85,7 @@ export class LaCoCoDatabase {
     );
 
     const edgesStmt = rawDb.prepare(
-      "SELECT relation FROM edges WHERE sourceId = ?",
+      "SELECT relation FROM edges WHERE sourceId = ? OR targetId = ?",
     );
 
     const nodes = rawDb
@@ -109,7 +109,7 @@ export class LaCoCoDatabase {
 
     const tx = rawDb.transaction(() => {
       for (const node of nodes) {
-        const edges = edgesStmt.all(node.id) as { relation: string }[];
+        const edges = edgesStmt.all(node.id, node.id) as { relation: string }[];
         let sys = 0, cpg = 0, dtg = 0;
         for (const e of edges) {
           if (e.relation === "EXTENDS" || e.relation === "IMPLEMENTS") sys++;

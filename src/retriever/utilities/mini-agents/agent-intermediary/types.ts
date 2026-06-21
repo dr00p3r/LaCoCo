@@ -1,8 +1,3 @@
-import type { IntentTag } from "../../../models/utilities/types.js";
+import type { SanitizerOutput } from "../../../models/utilities/types.js";
 
-export interface ClassificationResult {
-  route: "RAG" | "LLM_DIRECT";
-  intent: IntentTag;
-  dimensions: ("SYS" | "CPG" | "DTG")[];
-  confidence: number;
-}
+export type ClassificationResult = SanitizerOutput;

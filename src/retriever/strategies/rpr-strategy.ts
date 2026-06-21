@@ -20,6 +20,7 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import { Bm25Service } from "../utilities/search/bm25-service.js";
 
 const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
   EXTENDS: "SYS",
@@ -74,16 +75,24 @@ const DEFAULT_CONFIG: RprConfig = {
 
 export class RprStrategy implements RecoveryStrategy {
   private readonly config: RprConfig;
+  private readonly bm25: Bm25Service;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     config?: Partial<RprConfig>
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.bm25 = new Bm25Service(db);
   }
 
+  /**
+   * Recupera contexto como trayectorias relacionales relevantes.
+   *
+   * @param query Salida sanitizada del intermediario.
+   * @returns Chunks que representan caminos del grafo.
+   */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const anchorResults = this.db.searchBM25(
+    const anchorResults = this.bm25.search(
       query.clean_query,
       this.config.anchorLimit
     );
@@ -91,15 +100,9 @@ export class RprStrategy implements RecoveryStrategy {
 
     const anchorScores = new Map<string, number>();
     const anchorIds = new Set<string>();
-    let maxBm25 = 0;
     for (const r of anchorResults) {
-      const s = Math.max(0, 1 - Math.abs(r.score));
-      anchorScores.set(r.node_id, s);
-      anchorIds.add(r.node_id);
-      if (s > maxBm25) maxBm25 = s;
-    }
-    if (maxBm25 > 0) {
-      for (const [id, s] of anchorScores) anchorScores.set(id, s / maxBm25);
+      anchorScores.set(r.nodeId, r.score);
+      anchorIds.add(r.nodeId);
     }
 
     const { outgoingEdges, nodeRelevance } = this.#buildSubgraph(

@@ -1,13 +1,4 @@
 #!/usr/bin/env node
-/**
- * LaCoCo CLI — Recuperador de Contexto de Grandes Bases de Código
- *
- * Uso:
- *   lacoco watch <ruta-tsconfig>
- *   lacoco index_graph <ruta-tsconfig>
- *   lacoco index_vectors
- *   lacoco retrieve "<query>"
- */
 
 import { Command } from "commander";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
@@ -15,11 +6,8 @@ import { DaemonManager } from "../extractor/daemon.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
-import { BM25Strategy } from "../retriever/strategies/bm25-strategy.js";
-import { BM25DimFilterStrategy } from "../retriever/strategies/bm25-dim-strategy.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
 import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
-import { AgenticStandaloneStrategy } from "../retriever/strategies/agentic-standalone-strategy.js";
 import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
 import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
 import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
@@ -30,20 +18,14 @@ import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import { inspect, inspectQuery } from "./inspect.js";
 import { GraphIndexer } from "../indexer/graph-indexer.js";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Programa
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 const program = new Command();
-
 program
   .name("lacoco")
   .description("LaCoCo — Recuperador de Contexto de Grandes Bases de Código (RAG local)")
   .version("1.0.0");
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Comando: watch <ruta-tsconfig>
-// ─────────────────────────────────────────────────────────────────────────────
 
 program
   .command("watch <ruta-tsconfig>")
@@ -51,32 +33,30 @@ program
     "Inicia el daemon: cold-start completo + watcher incremental en tiempo real."
   )
   .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
   .option("-v, --verbose", "Imprime el path de cada archivo procesado", false)
-  .action((rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
-    printBanner(rutaTsconfig, options.db);
+  .action((rutaTsconfig: string, options: { db: string; lancedb: string; verbose: boolean }) => {
 
-    // ── 1. Inicializar la base de datos ──────────────────────────────────
+    printBanner(rutaTsconfig, options.db, options.lancedb);
+
     const db = new LaCoCoDatabase(options.db);
 
-    // ── 2. Construir el DaemonManager ────────────────────────────────────
     const daemon = new DaemonManager({
       tsConfigFilePath: rutaTsconfig,
       db,
       verbose: options.verbose,
       indexEmbeddings: true,
-      lanceDbPath: "./lancedb",
+      lanceDbPath: options.lancedb,
     });
 
-    // ── 3. Adjuntar el manejador de señales de apagado ─────────────────────────────────────────────
     const shutdown = (): void => {
-      console.log("\n[CLI] 🛑 Señal de apagado recibida...");
+      console.log("\n[CLI] Señal de apagado recibida...");
       void daemon.stop().then(() => process.exit(0));
     };
 
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
 
-    // ── 4. Arrancar ────────────────────
     try {
       daemon.start();
     } catch (err) {
@@ -88,25 +68,6 @@ program
     }
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-function printBanner(tsconfig : string, dbPath : string): void {
-  console.log("");
-  console.log("┌──────────────────────────────────────────────────┐");
-  console.log("│     tensor-extractor  ·  Grafo Multirrelacional   │");
-  console.log("├──────────────────────────────────────────────────┤");
-  console.log(`│  tsconfig : ${tsconfig.padEnd(37)}│`);
-  console.log(`│  sqlite   : ${dbPath.padEnd(37)}│`);
-  console.log("└──────────────────────────────────────────────────┘");
-  console.log("");
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Comando: index_graph <ruta-tsconfig>
-// ─────────────────────────────────────────────────────────────────────────────
 
 program
   .command("index_graph <ruta-tsconfig>")
@@ -117,7 +78,7 @@ program
   .option("-v, --verbose", "Imprime progreso detallado", false)
   .action((rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
    
-    console.log("\n[CLI] 🔨 Extrayendo grafo estructural...\n");
+    console.log("\n[CLI] Extrayendo grafo estructural...\n");
     console.log(`  tsconfig : ${rutaTsconfig}`);
     console.log(`  sqlite   : ${options.db}\n`);
 
@@ -125,10 +86,6 @@ program
     indexer.index();
 
   });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Comando: index_vectors
-// ─────────────────────────────────────────────────────────────────────────────
 
 program
   .command("index_vectors")
@@ -140,7 +97,7 @@ program
   .option("-v, --verbose", "Imprime progreso detallado", false)
   .action(async (options: { tsconfig: string; lancedb: string; verbose: boolean }) => {
     
-    console.log("\n[CLI] 🧠 Indexando vectores semánticos...\n");
+    console.log("\n[CLI] Indexando vectores semánticos...\n");
     console.log(`  tsconfig : ${options.tsconfig}`);
     console.log(`  lancedb  : ${options.lancedb}\n`);
 
@@ -149,36 +106,34 @@ program
 
   });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Comando: retrieve <query>
-// ─────────────────────────────────────────────────────────────────────────────
-
 program
   .command("retrieve <query>")
   .description("Ejecuta el pipeline RAG completo y muestra la respuesta del LLM.")
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone, ictd, clcr, rpr)", "hybrid")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
   .action(async (query: string, options: { db: string; strategy: string; ollama: string; llm: boolean }) => {
     
-    console.log("\n[CLI] 🔍 Pipeline RAG completo\n");
+    console.log("\n[CLI] Pipeline RAG a ejecutar\n");
     console.log(`  query    : ${query}`);
     console.log(`  strategy : ${options.strategy}`);
     console.log(`  sqlite   : ${options.db}\n`);
 
     const db = new LaCoCoDatabase(options.db);
     const ollama = new OllamaService(options.ollama);
+    let lanceDb: LaCoCoLanceDb | undefined;
 
     try {
-      // 1. Agente Intermediario 1
+
       const intermediary = new AgentIntermediary1();
       const sanitized = await intermediary.sanitize(query);
 
-      console.log("[CLI] 📋 Resultado del intermediario:");
+      console.log("[CLI] Resultado del intermediario:");
       console.log(`  route      : ${sanitized.route}`);
       console.log(`  intent     : ${sanitized.intent}`);
       console.log(`  confidence : ${sanitized.confidence.toFixed(2)}`);
+      console.log(`  sanitized prompt : ${sanitized.clean_query}`);
       console.log(`  dimensions : ${sanitized.dimensions.join(", ") || "ninguna"}\n`);
 
       if (sanitized.route === "LLM_DIRECT") {
@@ -187,32 +142,22 @@ program
         return;
       }
 
-      // 2. Strategy de recuperación
       let strategy : RecoveryStrategy;
-      const needsLanceDb = ["hybrid", "agentic", "agentic-standalone"].includes(options.strategy);
+      const needsLanceDb = options.strategy === "hybrid";
 
       if (needsLanceDb) {
-        const lanceDb = new LaCoCoLanceDb("./lancedb");
+        lanceDb = new LaCoCoLanceDb("./lancedb");
         await lanceDb.connect();
 
         switch (options.strategy) {
           case "hybrid":
             strategy = new HybridStrategy(db, lanceDb);
             break;
-          case "agentic":
-            strategy = new AgenticStrategy(db, options.ollama);
-            break;
-          case "agentic-standalone":
-            strategy = new AgenticStandaloneStrategy(db, options.ollama);
-            break;
           default:
-            strategy = new HybridStrategy(db, lanceDb);
+            throw new Error(`Estrategia no soportada: ${options.strategy}`);
         }
       } else {
         switch (options.strategy) {
-          case "bm25-dim":
-            strategy = new BM25DimFilterStrategy(db);
-            break;
           case "ictd":
             strategy = new IctdStrategy(db);
             break;
@@ -222,16 +167,17 @@ program
           case "rpr":
             strategy = new RprStrategy(db);
             break;
-          case "bm25":
+          case "agentic":
+            strategy = new AgenticStrategy(db, options.ollama);
+            break;
           default:
-            strategy = new BM25Strategy(db);
+            throw new Error(`Estrategia no soportada: ${options.strategy}`);
         }
       }
 
-      console.log(`[CLI] 🎯 Usando estrategia: ${options.strategy}`);
+      console.log(`[CLI] Usando estrategia: ${options.strategy}`);
       const chunks = await strategy.retrieve(sanitized);
 
-      // 3. Agregación
       const aggregator = new ContextAggregator();
       const aggregated = aggregator.aggregate(chunks);
 
@@ -241,7 +187,7 @@ program
       }
 
       const injector = new PromptInjector();
-      console.log("[CLI] 📚 Contexto agregado:\n", injector.inject(query, aggregated));
+      console.log("[CLI] Contexto agregado:\n", injector.inject(query, aggregated));
 
       // 4. Inyección de contexto + LLM
       if (options.llm && aggregated.length > 0) {
@@ -261,9 +207,11 @@ program
       }
 
       console.log("\n[CLI] ✅ Pipeline RAG completado.");
+      if (lanceDb) await lanceDb.close();
       db.close();
     } catch (err) {
       console.error("[CLI] ❌ Error en pipeline RAG:", err instanceof Error ? err.message : err);
+      if (lanceDb) await lanceDb.close();
       db.close();
       process.exit(1);
     }
@@ -319,7 +267,7 @@ program
   )
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (bm25, bm25-dim, hybrid, agentic, agentic-standalone, ictd, clcr, rpr)", "hybrid")
+  .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
   .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
   .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
   .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
@@ -354,3 +302,21 @@ program
   });
 
 program.parse(process.argv);
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function printBanner(tsconfig: string, dbPath: string, lanceDbPath: string): void {
+  console.log("");
+  console.log("┌──────────────────────────────────────────────────┐");
+  console.log("│     tensor-extractor  ·  Grafo Multirrelacional   │");
+  console.log("├──────────────────────────────────────────────────┤");
+  console.log(`│  tsconfig : ${tsconfig.padEnd(37)}│`);
+  console.log(`│  sqlite   : ${dbPath.padEnd(37)}│`);
+  console.log(`│  lancedb  : ${lanceDbPath.padEnd(37)}│`);
+  console.log("└──────────────────────────────────────────────────┘");
+  console.log("");
+}

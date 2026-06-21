@@ -11,6 +11,8 @@ function inferKind(node: NodeRow): "SYS" | "CPG" | "DTG" {
 export class VectorCallbacks implements ExtractionCallbacks {
   private readonly pending: NodeRow[] = [];
   private readonly batchSize: number;
+  private flushChain: Promise<void> = Promise.resolve();
+  private flushScheduled = false;
   nodesWritten = 0;
 
   constructor(
@@ -26,13 +28,14 @@ export class VectorCallbacks implements ExtractionCallbacks {
     this.pending.push(row);
     this.nodesWritten++;
     if (this.pending.length >= this.batchSize) {
-      void this.#flush();
+      void this.#scheduleFlush();
     }
   }
 
   /** Fuerza el vaciado del lote pendiente */
   async flush(): Promise<void> {
-    if (this.pending.length > 0) {
+    await this.flushChain;
+    while (this.pending.length > 0) {
       await this.#flushNow();
     }
   }
@@ -41,8 +44,20 @@ export class VectorCallbacks implements ExtractionCallbacks {
     // VectorsIndexer no persiste aristas
   }
 
-  #flush(): Promise<void> {
-    return this.#flushNow();
+  #scheduleFlush(): Promise<void> {
+    if (this.flushScheduled) return this.flushChain;
+
+    this.flushScheduled = true;
+    this.flushChain = this.flushChain
+      .then(async () => {
+        while (this.pending.length >= this.batchSize) {
+          await this.#flushNow();
+        }
+      })
+      .finally(() => {
+        this.flushScheduled = false;
+      });
+    return this.flushChain;
   }
 
   async #flushNow(): Promise<void> {

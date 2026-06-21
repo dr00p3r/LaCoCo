@@ -4,6 +4,10 @@ import type {
   OllamaChatMessage,
 } from "./model/types.js";
 
+export interface OllamaChatOptions {
+  format?: "json" | Record<string, unknown>;
+}
+
 export class OllamaService {
   constructor(
     private readonly endpoint = "http://localhost:11434",
@@ -20,17 +24,23 @@ export class OllamaService {
         system,
         stream: false,
       } as OllamaGenerateRequest),
+      signal: AbortSignal.timeout(30_000),
     });
 
+    const text = await res.text();
+
     if (!res.ok) {
-      throw new Error(`Ollama error ${res.status}: ${await res.text()}`);
+      throw new Error(`Ollama error ${res.status}: ${text}`);
     }
 
-    const data = (await res.json()) as OllamaGenerateResponse;
+    const data = JSON.parse(text) as OllamaGenerateResponse;
     return data.response.trim();
   }
 
-  async chat(messages: OllamaChatMessage[]): Promise<string> {
+  async chat(
+    messages: OllamaChatMessage[],
+    options: OllamaChatOptions = {}
+  ): Promise<string> {
     const res = await fetch(`${this.endpoint}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,20 +48,27 @@ export class OllamaService {
         model: this.model,
         messages,
         stream: false,
+        ...(options.format ? { format: options.format } : {}),
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
+    const text = await res.text();
+
     if (!res.ok) {
-      throw new Error(`Ollama chat error ${res.status}: ${await res.text()}`);
+      throw new Error(`Ollama chat error ${res.status}: ${text}`);
     }
 
-    const data = (await res.json()) as { message: { content: string } };
+    const data = JSON.parse(text) as { message: { content: string } };
     return data.message.content.trim();
   }
 
   async isAvailable(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.endpoint}/api/tags`, { method: "GET" });
+      const res = await fetch(`${this.endpoint}/api/tags`, {
+        method: "GET",
+        signal: AbortSignal.timeout(5_000),
+      });
       return res.ok;
     } catch {
       return false;

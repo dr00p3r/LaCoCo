@@ -106,13 +106,27 @@ export class DaemonManager {
   /**
    * Detiene el daemon limpiamente:
    *   - Cierra el watcher de chokidar.
-   *   - Cierra la conexión SQLite.
+   *   - Espera escrituras vectoriales pendientes.
+   *   - Cierra las conexiones LanceDB y SQLite.
    */
   async stop(): Promise<void> {
     if (this.watcher) {
       await this.watcher.close();
       this.watcher = null;
     }
+
+    if (this.vectorsPromise) {
+      await this.vectorsPromise;
+      this.vectorsPromise = null;
+    }
+    if (this.vectorCallbacks) {
+      await this.vectorCallbacks.flush();
+    }
+    if (this.lanceDb) {
+      await this.lanceDb.close();
+      this.lanceDb = null;
+    }
+
     this.db.close();
     console.log("\n[Daemon] 🛑 Apagado limpio completado.");
   }
@@ -142,14 +156,13 @@ export class DaemonManager {
      * en < 5 segundos gracias a los prepared statements del CodeExtractor.
    */
   #coldStart(): void {
-    console.log("\n[Daemon] 🚀 Cold start — analizando proyecto completo...");
+    console.log("\n[Daemon] Cold start — analizando proyecto completo...");
     console.time("[Daemon] Cold start");
 
     const sourceFiles = this.project.getSourceFiles();
     const total = sourceFiles.length;
     console.log(`[Daemon]    ${total} archivos TypeScript encontrados.`);
 
-    // ── Pase 1: SQLite (grafo estructural en transacción atómica) ──────
     this.sqliteCallbacks.nodesWritten = 0;
     this.sqliteCallbacks.edgesWritten = 0;
 
@@ -167,7 +180,6 @@ export class DaemonManager {
       `[Daemon] ✅ Grafo construido — ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas.`
     );
 
-    // ── Pase 2: LanceDB (embeddings semánticos, async) ─────────────────
     if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0) {
       this.vectorsPromise = this.#generateEmbeddings(sourceFiles);
     }

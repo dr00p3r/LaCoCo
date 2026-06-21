@@ -21,6 +21,7 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import { Bm25Service } from "../utilities/search/bm25-service.js";
 
 const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
   EXTENDS: "SYS",
@@ -78,19 +79,27 @@ interface Edge {
 
 export class ClcrStrategy implements RecoveryStrategy {
   private readonly config: ClcrConfig;
+  private readonly bm25: Bm25Service;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     config?: Partial<ClcrConfig>
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.bm25 = new Bm25Service(db);
   }
 
+  /**
+   * Recupera contexto mediante cascada entre capas del grafo.
+   *
+   * @param query Salida sanitizada del intermediario.
+   * @returns Chunks ordenados por score cross-layer.
+   */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
     const dominant = this.#computeDominant(query.intent, query.dimensions);
     const cascadeDims = ALL_DIMS.filter((d) => d !== dominant);
 
-    const anchorResults = this.db.searchBM25(
+    const anchorResults = this.bm25.search(
       query.clean_query,
       this.config.anchorLimit
     );
@@ -100,15 +109,9 @@ export class ClcrStrategy implements RecoveryStrategy {
 
     const baseScore = new Map<string, number>();
     const anchorSet = new Set<string>();
-    let maxBm25 = 0;
     for (const r of anchorResults) {
-      const s = Math.max(0, 1 - Math.abs(r.score));
-      baseScore.set(r.node_id, s);
-      anchorSet.add(r.node_id);
-      if (s > maxBm25) maxBm25 = s;
-    }
-    if (maxBm25 > 0) {
-      for (const [id, s] of baseScore) baseScore.set(id, s / maxBm25);
+      baseScore.set(r.nodeId, r.score);
+      anchorSet.add(r.nodeId);
     }
 
     const anchorIds = Array.from(anchorSet);
@@ -166,9 +169,9 @@ export class ClcrStrategy implements RecoveryStrategy {
     if (primarySet.size === 0) {
       const sigs = this.db.getNodeSignatures(anchorIds);
       return anchorResults.map((r) => ({
-        nodeId: r.node_id,
-        score: baseScore.get(r.node_id) ?? 0.5,
-        text: sigs.get(r.node_id) ?? r.node_id,
+        nodeId: r.nodeId,
+        score: baseScore.get(r.nodeId) ?? 0.5,
+        text: sigs.get(r.nodeId) ?? r.nodeId,
         source: "CLCR",
       }));
     }
@@ -254,7 +257,7 @@ export class ClcrStrategy implements RecoveryStrategy {
       `;
       const edgeRows = rawDb
         .prepare(edgeCountSql)
-        .all(...allIds) as { nid: string; relation: string }[];
+        .all(...allIds, ...allIds) as { nid: string; relation: string }[];
 
       const dimsPerNode = new Map<string, Set<Dim>>();
       for (const row of edgeRows) {

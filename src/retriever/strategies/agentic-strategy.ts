@@ -1,11 +1,3 @@
-/**
- * AgenticStrategy (2.3) — Recuperación guiada por LLM planificador + ejecutor determinístico.
- *
- * El SLM (Qwen2.5-Coder:1.5B) emite herramientas (tool-calling) para navegar el grafo.
- * Un motor determinístico ejecuta cada tool sobre SQLite/LanceDB.
- * Máximo 3 iteraciones. Usa dimensiones sugeridas por el AgentIntermediary1 como hint inicial.
- */
-
 import {
   type RecoveryStrategy,
   type ContextChunk,
@@ -13,8 +5,8 @@ import {
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { OllamaService } from "../../slms/ollama-service.js";
+import { Bm25Service } from "../utilities/search/bm25-service.js";
 
-/** Herramientas disponibles para el agente */
 interface Tool {
   name: "get_neighbors" | "get_node_by_symbol" | "get_dependencies";
   params: Record<string, string | number>;
@@ -22,6 +14,7 @@ interface Tool {
 
 export class AgenticStrategy implements RecoveryStrategy {
   private readonly ollama: OllamaService;
+  private readonly bm25: Bm25Service;
   private readonly maxIterations = 3;
 
   constructor(
@@ -29,6 +22,7 @@ export class AgenticStrategy implements RecoveryStrategy {
     ollamaEndpoint = "http://localhost:11434",
   ) {
     this.ollama = new OllamaService(ollamaEndpoint);
+    this.bm25 = new Bm25Service(db);
   }
 
   /**
@@ -39,15 +33,14 @@ export class AgenticStrategy implements RecoveryStrategy {
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
     // Fase 1: recuperar símbolos semilla por BM25
-    const seedResults = this.db.searchBM25(query.clean_query, 20);
+    const seedResults = this.bm25.search(query.clean_query, 5);
     const collected = new Map<string, ContextChunk>();
-    const seedSigs = this.db.getNodeSignatures(seedResults.map((r) => r.node_id));
 
-    for (const r of seedResults) {
-      collected.set(r.node_id, {
-        nodeId: r.node_id,
-        score: Math.max(0, 1 - Math.abs(r.score)),
-        text: seedSigs.get(r.node_id) ?? r.node_id,
+    for (const hit of seedResults) {
+      collected.set(hit.nodeId, {
+        nodeId: hit.nodeId,
+        score: hit.score,
+        text: hit.text,
         source: "AGENTIC",
       });
     }
@@ -99,6 +92,9 @@ export class AgenticStrategy implements RecoveryStrategy {
 - get_node_by_symbol(name): busca un nodo por nombre de símbolo.
 - get_dependencies(package, version): busca dependencias externas.
 
+Usa herramientas solo cuando aporten contexto adicional concreto. Si los nodos actuales ya cubren la consulta,
+responde {"done": true}. No inventes nombres de nodos, paquetes ni versiones.
+
 Responde SOLO con un JSON de la forma: {"name": "...", "params": {...}}.
 Si no necesitas más herramientas, responde: {"done": true}.`;
 
@@ -127,8 +123,11 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
           ),
         };
       }
-    } catch {
-      // Si Ollama devuelve algo inválido, terminamos el ciclo
+    } catch (err) {
+      console.warn(
+        "[AgenticStrategy] ⚠️  SLM falló en planTool:",
+        err instanceof Error ? err.message : String(err)
+      );
     }
     return null;
   }
@@ -200,12 +199,18 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
     }[];
 
     const chunks: ContextChunk[] = [];
+    const neighborIds = new Set<string>();
     for (const row of rows) {
       const otherId = nodeIds.includes(row.sourceId) ? row.targetId : row.sourceId;
+      neighborIds.add(otherId);
+    }
+
+    const sigs = this.db.getNodeSignatures(Array.from(neighborIds));
+    for (const id of neighborIds) {
       chunks.push({
-        nodeId: otherId,
-        score: 0.5, // Score base de vecindad
-        text: `${otherId} (via ${row.relation})`,
+        nodeId: id,
+        score: 0.5,
+        text: sigs.get(id) ?? id,
         source: "AGENTIC",
       });
     }

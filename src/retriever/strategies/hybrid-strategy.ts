@@ -1,15 +1,3 @@
-/**
- * HybridStrategy — Fusión híbrida BM25 + Embeddings + RRF.
- *
- * Pipeline:
- *   1. BM25 sobre FTS5 → ranking A.
- *   2. Embedding de query → ANN en LanceDB → ranking B.
- *   3. Fusión RRF (k=60) entre A y B.
- *   4. Boost por coincidencia de símbolos en la query.
- *
- * Recomendada como estrategia por defecto por máxima calidad de recuperación.
- */
-
 import {
   type RecoveryStrategy,
   type ContextChunk,
@@ -18,21 +6,24 @@ import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { EmbeddingGenerator } from "../utilities/embeddings/embedding-generator.js";
+import { Bm25Service } from "../utilities/search/bm25-service.js";
 
-/** Constante estándar de RRF */
 const RRF_K = 60;
 
 /** Boost multiplicativo para chunks que coinciden con símbolos mencionados en la query */
 const SYMBOL_BOOST = 1.5;
 
 export class HybridStrategy implements RecoveryStrategy {
+
   private readonly embeddingGen: EmbeddingGenerator;
+  private readonly bm25: Bm25Service;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     private readonly lanceDb: LaCoCoLanceDb,
   ) {
     this.embeddingGen = new EmbeddingGenerator();
+    this.bm25 = new Bm25Service(db);
   }
 
   /**
@@ -42,25 +33,22 @@ export class HybridStrategy implements RecoveryStrategy {
    * @returns Chunks fusionados y ordenados por score RRF
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    
-    // ── 1. Ranking BM25 ────────────────────────────────────────────
-    const bm25Results = this.db.searchBM25(query.clean_query, 10);
+
+    const bm25Results = this.bm25.search(query.clean_query, 20);
     const rankingA = new Map<string, number>();
     for (let i = 0; i < bm25Results.length; i++) {
       const r = bm25Results[i]!;
-      rankingA.set(r.node_id, i + 1);
+      rankingA.set(r.nodeId, i + 1);
     }
 
-    // ── 2. Ranking ANN (LanceDB) ────────────────────────────────────
     const embedding = await this.embeddingGen.generate(query.embedding_input);
-    const annResults = await this.lanceDb.search(embedding, undefined, 10);
+    const annResults = await this.lanceDb.search(embedding, undefined, 20);
     const rankingB = new Map<string, number>();
     for (let i = 0; i < annResults.length; i++) {
       const r = annResults[i]!;
       rankingB.set(r.node_id, i + 1);
     }
 
-    // ── 3. Fusión RRF ──────────────────────────────────────────────
     const allIds = new Set([...rankingA.keys(), ...rankingB.keys()]);
     const rrfScores = new Map<string, number>();
 
@@ -75,7 +63,6 @@ export class HybridStrategy implements RecoveryStrategy {
       rrfScores.set(id, score);
     }
 
-    // ── 4. Convertir a ContextChunks ───────────────────────────────
     const sorted = Array.from(rrfScores.entries()).sort((a, b) => b[1] - a[1]);
     const signatures = this.db.getNodeSignatures(sorted.map(([id]) => id));
 
@@ -86,7 +73,6 @@ export class HybridStrategy implements RecoveryStrategy {
       source: "RRF",
     }));
 
-    // ── 5. Boost por coincidencia de símbolos en la query ──────────
     const queryTokens = query.embedding_input.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
     for (const chunk of chunks) {
       const lowerId = chunk.nodeId.toLowerCase();
@@ -98,4 +84,5 @@ export class HybridStrategy implements RecoveryStrategy {
 
     return chunks;
   }
+
 }

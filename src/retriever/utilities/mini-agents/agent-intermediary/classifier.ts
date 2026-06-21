@@ -1,92 +1,169 @@
 import { OllamaService } from "../../../../slms/ollama-service.js";
+import type { IntentTag } from "../../../models/utilities/types.js";
 import type { ClassificationResult } from "./types.js";
 
-const SYSTEM_PROMPT = `Eres un clasificador de consultas de código para LaCoCo, un sistema RAG local que recupera contexto de repositorios TypeScript/Node.js.
+const ROUTES = ["RAG", "LLM_DIRECT"] as const;
+const INTENTS: IntentTag[] = [
+  "understand",
+  "refactor",
+  "create",
+  "debug",
+  "integrate",
+  "unknown",
+];
+const DIMENSIONS = ["SYS", "CPG", "DTG"] as const;
 
-Tu tarea es clasificar la consulta del usuario en los siguientes campos, respondiendo SOLO con JSON válido, sin texto adicional ni markdown.
+const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 
-### Campos del JSON de salida:
+Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: tu salida será utilizada directamente para búsqueda FTS5, embeddings y selección dimensional.
 
-1. "route": "RAG" | "LLM_DIRECT"
-   - "RAG": la consulta necesita recuperar código del repositorio actual. Incluye referencias a clases, funciones, métodos, variables, archivos, o cualquier símbolo del código (incluso escritos en minúsculas o español).
-   - "LLM_DIRECT": la consulta es genérica, no depende del código del proyecto. Preguntas conceptuales sobre programación, saludos, agradecimientos.
+Responde SOLO con un objeto JSON válido, sin markdown ni texto adicional, con exactamente estos campos:
 
-2. "intent": "understand" | "refactor" | "create" | "debug" | "integrate" | "unknown"
+{
+  "route": "RAG" | "LLM_DIRECT",
+  "clean_query": string,
+  "embedding_input": string,
+  "dimensions": ("SYS" | "CPG" | "DTG")[],
+  "intent": "understand" | "refactor" | "create" | "debug" | "integrate" | "unknown",
+  "confidence": number
+}
 
-3. "dimensions": ["SYS"] | ["CPG"] | ["DTG"] | combinaciones | []
+Responsabilidad de cada campo:
 
-4. "confidence": número entre 0.0 y 1.0
+1. route
+   - RAG cuando la petición depende del repositorio actual o pretende leer, explicar, crear, modificar, depurar o integrar código en él.
+   - LLM_DIRECT solo para conversación o conocimiento genérico que no necesita el proyecto.
+   - Si existe duda, elige RAG.
 
-### Reglas importantes (léelas con atención):
+2. clean_query
+   - Para RAG, genera una consulta SQLite FTS5 precisa.
+   - Conserva nombres de símbolos, archivos, rutas, métodos, clases, paquetes y términos técnicos relevantes.
+   - Combina alternativas con OR y encierra cada término o frase entre comillas dobles.
+   - No incluyas instrucciones conversacionales ni sintaxis distinta de frases entre comillas y OR.
+   - Para LLM_DIRECT, usa una cadena vacía.
 
-1. **CUALQUIER mención a un posible símbolo de código es RAG**, incluso si está en minúsculas y sin PascalCase. Los usuarios escriben "hybrid strategy" para referirse a la clase HybridStrategy, "order service" para OrderService, "user repository" para UserRepository, etc. No asumas que es un concepto genérico.
+3. embedding_input
+   - Para RAG, redacta una consulta semántica breve y autosuficiente que preserve la intención y todos los símbolos relevantes.
+   - Para LLM_DIRECT, conserva el significado completo del prompt para el modelo final.
 
-2. **Si hay duda entre RAG y LLM_DIRECT, prefiere SIEMPRE RAG.** Un falso positivo (enviar algo genérico al RAG) solo añade contexto innecesario. Un falso negativo (no recuperar código cuando sí se necesita) produce alucinaciones.
+4. dimensions
+   - SYS: contratos, herencia, interfaces, módulos y dependencias externas.
+   - CPG: estructura, llamadas, instanciación, inyección y flujo de ejecución.
+   - DTG: tipos, DTOs, entradas, salidas, producción, consumo y mutación de datos.
+   - Puede contener varias dimensiones. Para LLM_DIRECT debe ser [].
 
-3. **"qué hace X", "cómo funciona X", "explica X" con un nombre específico (aunque sea lowercase) es RAG.** Si X suena a clase, función, método, endpoint, servicio, repositorio, controlador, etc. → RAG.
+5. intent
+   - Clasifica la acción principal solicitada.
 
-4. **LLM_DIRECT solo cuando es EVIDENTE** que no hay referencia a código: preguntas conceptuales ("qué es async/await", "cómo funciona TypeScript"), saludos, agradecimientos.
+6. confidence
+   - Número entre 0.0 y 1.0 que refleje tu confianza en toda la transformación.
 
-### Ejemplos:
+Ejemplos:
 
-Consulta: "refactoriza OrderService para async/await"
-Salida: {"route":"RAG","intent":"refactor","dimensions":["CPG"],"confidence":0.95}
+Prompt: refactoriza OrderService para usar async/await
+Salida: {"route":"RAG","clean_query":"\"OrderService\" OR \"async\" OR \"await\"","embedding_input":"Refactorizar OrderService para usar async/await","dimensions":["CPG"],"intent":"refactor","confidence":0.96}
 
-Consulta: "qué hace UserRepository"
-Salida: {"route":"RAG","intent":"understand","dimensions":["CPG","DTG"],"confidence":0.90}
+Prompt: por qué save falla al persistir CreateOrderDto
+Salida: {"route":"RAG","clean_query":"\"save\" OR \"CreateOrderDto\"","embedding_input":"Depurar por qué save falla al persistir CreateOrderDto","dimensions":["CPG","DTG"],"intent":"debug","confidence":0.94}
 
-Consulta: "qué hace "X" módulo"
-Salida: {"route":"RAG","intent":"understand","dimensions":["CPG"],"confidence":0.85}
-
-Consulta: "explica order service"
-Salida: {"route":"RAG","intent":"understand","dimensions":["CPG"],"confidence":0.80}
-
-Consulta: "cómo funciona el daemon"
-Salida: {"route":"RAG","intent":"understand","dimensions":["CPG"],"confidence":0.85}
-
-Consulta: "qué es TypeScript"
-Salida: {"route":"LLM_DIRECT","intent":"understand","dimensions":[],"confidence":0.95}
-
-Consulta: "gracias"
-Salida: {"route":"LLM_DIRECT","intent":"unknown","dimensions":[],"confidence":1.0}
-
-Consulta: "crea un endpoint POST /orders"
-Salida: {"route":"RAG","intent":"create","dimensions":["DTG","CPG"],"confidence":0.90}`;
+Prompt: qué es TypeScript
+Salida: {"route":"LLM_DIRECT","clean_query":"","embedding_input":"Explicar qué es TypeScript","dimensions":[],"intent":"understand","confidence":0.99}`;
 
 export class SlmClassifier {
 
-  constructor(private readonly ollama : OllamaService = new OllamaService()) {}
+  constructor(private readonly ollama: OllamaService = new OllamaService()) {};
 
-  async classify(prompt : string) : Promise<ClassificationResult> {
-    const response = await this.ollama.chat([
+  async classify(prompt: string): Promise<ClassificationResult> {
+
+    const messages = [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: `Consulta: "${prompt}"\n\nSalida:` },
-    ]);
+      { role: "user", content: `Prompt: ${JSON.stringify(prompt)}\nSalida:` },
+    ] as const;
 
-    return this.#parseResponse(response);
+    const response = await this.ollama.chat([...messages], { format: "json" });
+
+    try {
+
+      return this.#parseResponse(response);
+
+    } catch (firstError) {
+
+      const repairedResponse = await this.ollama.chat(
+        [
+          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "user",
+            content:
+              `Prompt original: ${JSON.stringify(prompt)}\n` +
+              "Tu respuesta anterior no fue JSON válido o incumplió el contrato. " +
+              "Genera nuevamente el objeto completo.\n" +
+              `Respuesta inválida: ${JSON.stringify(response)}\nSalida:`,
+          },
+        ],
+        { format: "json" }
+      );
+
+      try {
+
+        return this.#parseResponse(repairedResponse);
+
+      } catch (secondError) {
+        
+        throw new Error(
+          "El SLM no produjo una salida JSON válida después de dos intentos",
+          { cause: secondError instanceof Error ? secondError : firstError }
+        );
+
+      }
+    }
   }
 
-  #parseResponse(text : string) : ClassificationResult {
-
+  #parseResponse(text: string): ClassificationResult {
+    
     const jsonMatch = text.match(/\{[\s\S]*\}/);
+
     if (!jsonMatch) throw new Error("No se pudo extraer JSON de la respuesta del SLM");
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
 
-    const route = parsed.route === "LLM_DIRECT" ? "LLM_DIRECT" : "RAG";
+    if (!ROUTES.includes(parsed.route as (typeof ROUTES)[number])) throw new Error("El SLM devolvió una ruta inválida");
+    if (!INTENTS.includes(parsed.intent as IntentTag)) throw new Error("El SLM devolvió una intención inválida");
 
-    const intent = ["understand", "refactor", "create", "debug", "integrate", "unknown"].includes(parsed.intent)
-      ? parsed.intent
-      : "unknown";
+    if (!Array.isArray(parsed.dimensions) || parsed.dimensions.some(
+      (dimension) => !DIMENSIONS.includes(dimension as (typeof DIMENSIONS)[number])
+    )) {
+      throw new Error("El SLM devolvió dimensiones inválidas");
+    }
 
-    const dimensions: ("SYS" | "CPG" | "DTG")[] = Array.isArray(parsed.dimensions)
-      ? parsed.dimensions.filter((d: string) => ["SYS", "CPG", "DTG"].includes(d))
-      : [];
-      
-    const confidence = typeof parsed.confidence === "number"
-      ? Math.max(0, Math.min(1, parsed.confidence))
-      : 0.3;
+    if (typeof parsed.clean_query !== "string") throw new Error("El SLM no devolvió clean_query");
+    if (typeof parsed.embedding_input !== "string" || parsed.embedding_input.trim().length === 0) throw new Error("El SLM no devolvió embedding_input");
+    
+    if (
+      typeof parsed.confidence !== "number" ||
+      !Number.isFinite(parsed.confidence) ||
+      parsed.confidence < 0 ||
+      parsed.confidence > 1
+    ) {
+      throw new Error("El SLM devolvió una confianza inválida");
+    }
 
-    return { route, intent, dimensions, confidence };
+    if (parsed.route === "RAG" && parsed.clean_query.trim().length === 0) throw new Error("El SLM devolvió una clean_query vacía para RAG");
+    
+    if (
+      parsed.route === "LLM_DIRECT" &&
+      (parsed.clean_query.length > 0 || parsed.dimensions.length > 0)
+    ) {
+      throw new Error("El SLM devolvió contexto de retrieval para LLM_DIRECT");
+    }
+
+    return {
+      route: parsed.route as ClassificationResult["route"],
+      clean_query: parsed.clean_query,
+      embedding_input: parsed.embedding_input,
+      dimensions: parsed.dimensions as ClassificationResult["dimensions"],
+      intent: parsed.intent as IntentTag,
+      confidence: parsed.confidence,
+    };
+    
   }
 }
