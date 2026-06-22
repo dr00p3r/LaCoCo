@@ -49,6 +49,10 @@ export class LaCoCoDatabase {
     this.nodeDao.deleteNodesByFile(filepath);
   }
 
+  clearGraph(): void {
+    this.db.exec("DELETE FROM edges; DELETE FROM nodes;");
+  }
+
   getNodesByFile(filepath: string): GraphNode[] {
     return this.nodeDao.getNodesByFile(filepath);
   }

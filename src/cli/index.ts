@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { DaemonManager } from "../extractor/daemon.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
+import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
@@ -110,10 +111,11 @@ program
   .command("retrieve <query>")
   .description("Ejecuta el pipeline RAG completo y muestra la respuesta del LLM.")
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
   .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
-  .action(async (query: string, options: { db: string; strategy: string; ollama: string; llm: boolean }) => {
+  .action(async (query: string, options: { db: string; lancedb: string; strategy: string; ollama: string; llm: boolean }) => {
     
     console.log("\n[CLI] Pipeline RAG a ejecutar\n");
     console.log(`  query    : ${query}`);
@@ -126,7 +128,7 @@ program
 
     try {
 
-      const intermediary = new AgentIntermediary1();
+      const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
       const sanitized = await intermediary.sanitize(query);
 
       console.log("[CLI] Resultado del intermediario:");
@@ -146,7 +148,7 @@ program
       const needsLanceDb = options.strategy === "hybrid";
 
       if (needsLanceDb) {
-        lanceDb = new LaCoCoLanceDb("./lancedb");
+        lanceDb = new LaCoCoLanceDb(options.lancedb);
         await lanceDb.connect();
 
         switch (options.strategy) {
@@ -266,6 +268,7 @@ program
     "Pipeline RAG completo → visualización del subgrafo recuperado para un prompt."
   )
   .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
   .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
   .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
@@ -274,6 +277,7 @@ program
   .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
   .action(async (prompt: string, opts: {
     db: string;
+    lancedb: string;
     budget: string;
     strategy: string;
     mode: string;
@@ -292,6 +296,7 @@ program
     await inspectQuery({
       prompt,
       db: opts.db,
+      lancedb: opts.lancedb,
       budget,
       strategy: opts.strategy,
       mode,

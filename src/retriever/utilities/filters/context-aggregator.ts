@@ -47,7 +47,7 @@ export class ContextAggregator {
         chunk.text.split(/\s+/).length / WORDS_PER_TOKEN
       );
 
-      if (tokensUsed + estimatedTokens > maxTokens) break;
+      if (tokensUsed + estimatedTokens > maxTokens) continue;
 
       result.push(chunk);
       tokensUsed += estimatedTokens;

@@ -53,6 +53,16 @@ export class LaCoCoLanceDb {
     await this.embeddingDao.deleteByNodeId(this.table, nodeId);
   }
 
+  async deleteByFilePath(filePath: string): Promise<void> {
+    if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
+    await this.embeddingDao.deleteByFilePath(this.table, filePath);
+  }
+
+  async clear(): Promise<void> {
+    if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
+    await this.embeddingDao.clear(this.table);
+  }
+
   async buildIndex(): Promise<void> {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
     await this.connectionDao.buildIndex(this.table);

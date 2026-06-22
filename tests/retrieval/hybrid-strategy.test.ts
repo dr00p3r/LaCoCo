@@ -22,7 +22,7 @@ describe("HybridStrategy", () => {
     db.close();
   });
 
-  it("fusiona BM25 y ANN con filtro dimensional pre-ANN", async () => {
+  it("fusiona BM25 y ANN sin aplicar filtro dimensional", async () => {
     const search = vi.fn().mockResolvedValue([
       { node_id: "file1#OrderService.createOrder", score: 0.9 },
     ]);
@@ -33,20 +33,20 @@ describe("HybridStrategy", () => {
 
     expect(search).toHaveBeenCalledWith(
       expect.any(Float32Array),
-      "dimension IN ('CPG')",
-      50
+      undefined,
+      20
     );
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]!.source).toBe("RRF");
   });
 
-  it("omite filtro ANN cuando se consultan todas las dimensiones", async () => {
+  it("mantiene ANN sin filtro aunque se consulten todas las dimensiones", async () => {
     const search = vi.fn().mockResolvedValue([]);
     const lanceDb = { search } as unknown as LaCoCoLanceDb;
     const strategy = new HybridStrategy(db, lanceDb);
 
     await strategy.retrieve(makeQuery("OrderService", ["SYS", "CPG", "DTG"]));
 
-    expect(search).toHaveBeenCalledWith(expect.any(Float32Array), undefined, 50);
+    expect(search).toHaveBeenCalledWith(expect.any(Float32Array), undefined, 20);
   });
 });

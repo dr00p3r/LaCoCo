@@ -15,6 +15,7 @@ import os from "node:os";
 import type Database from "better-sqlite3";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
+import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
 import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
 import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
@@ -42,6 +43,7 @@ export interface InspectOptions {
 export interface InspectQueryOptions {
   prompt: string;
   db: string;
+  lancedb: string;
   budget: number;
   strategy: string;
   mode: InspectMode;
@@ -162,7 +164,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
   const ollama = new OllamaService(options.ollama);
 
   // 1. Sanitizar
-  const intermediary = new AgentIntermediary1();
+  const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
   const sanitized = await intermediary.sanitize(options.prompt);
 
   console.log(`[inspect-query] 📋 route=${sanitized.route} intent=${sanitized.intent} conf=${sanitized.confidence.toFixed(2)}`);
@@ -179,7 +181,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
 
   let strategy: RecoveryStrategy;
   if (needsLanceDb) {
-    lanceDb = new LaCoCoLanceDb("./lancedb");
+    lanceDb = new LaCoCoLanceDb(options.lancedb);
     await lanceDb.connect();
     strategy = createStrategy(options.strategy, db, options.ollama, lanceDb);
   } else {

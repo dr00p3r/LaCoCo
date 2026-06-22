@@ -79,5 +79,15 @@ describe("ContextAggregator", () => {
       const result = aggregator.aggregate(chunks, 0);
       expect(result).toHaveLength(0);
     });
+
+    it("omite un chunk demasiado grande y conserva los siguientes que caben", () => {
+      const chunks: ContextChunk[] = [
+        chunk("A", 0.9, "word ".repeat(100)),
+        chunk("B", 0.8, "short text"),
+      ];
+
+      const result = aggregator.aggregate(chunks, 10);
+      expect(result.map((item) => item.nodeId)).toEqual(["B"]);
+    });
   });
 });

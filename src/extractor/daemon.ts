@@ -68,6 +68,8 @@ export class DaemonManager {
   private readonly indexVectors: boolean;
   private readonly lanceDbPath: string;
   private vectorsPromise: Promise<void> | null = null;
+  private fileOperationChain: Promise<void> = Promise.resolve();
+  private vectorOperationChain: Promise<void> = Promise.resolve();
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
@@ -119,6 +121,8 @@ export class DaemonManager {
       await this.vectorsPromise;
       this.vectorsPromise = null;
     }
+    await this.fileOperationChain;
+    await this.vectorOperationChain;
     if (this.vectorCallbacks) {
       await this.vectorCallbacks.flush();
     }
@@ -167,6 +171,7 @@ export class DaemonManager {
     this.sqliteCallbacks.edgesWritten = 0;
 
     this.db.transaction(() => {
+      this.db.clearGraph();
       for (const file of sourceFiles) {
         if (this.verbose) {
           console.log(`[Daemon]    ✍  ${file.getFilePath()}`);
@@ -174,6 +179,7 @@ export class DaemonManager {
         this.#safeProcessFile(this.sqliteExtractor, file);
       }
     });
+    this.db.populateMetadata();
 
     console.timeEnd("[Daemon] Cold start");
     console.log(
@@ -192,6 +198,7 @@ export class DaemonManager {
     this.lanceDb = new LaCoCoLanceDb(this.lanceDbPath);
     try {
       await this.lanceDb.connect();
+      await this.lanceDb.clear();
       this.vectorCallbacks = new VectorCallbacks(
         this.lanceDb,
         (t) => this.embedGen.generate(t),
@@ -214,14 +221,10 @@ export class DaemonManager {
 
   async #reindexVectors(filePath: string): Promise<void> {
     if (!this.lanceDb || !this.vectorCallbacks) return;
+    await this.lanceDb.deleteByFilePath(filePath);
+
     const sourceFile = this.project.getSourceFile(filePath);
     if (!sourceFile) return;
-
-    // Eliminar embeddings previos del archivo
-    const nodes = this.db.getNodesByFile(filePath);
-    for (const node of nodes) {
-      await this.lanceDb.deleteByNodeId(node.id);
-    }
 
     // Re-generar embeddings
     this.#safeProcessFile(this.vectorExtractor!, sourceFile);
@@ -255,15 +258,15 @@ export class DaemonManager {
     });
 
     this.watcher.on("change", (filePath) => {
-      void this.#handleFileChange(filePath, "change");
+      this.#enqueueFileOperation(() => this.#handleFileChange(filePath, "change"));
     });
 
     this.watcher.on("add", (filePath) => {
-      void this.#handleFileChange(filePath, "add");
+      this.#enqueueFileOperation(() => this.#handleFileChange(filePath, "add"));
     });
 
     this.watcher.on("unlink", (filePath) => {
-      this.#handleFileDelete(filePath);
+      this.#enqueueFileOperation(async () => this.#handleFileDelete(filePath));
     });
 
     this.watcher.on("error", (error) => {
@@ -351,6 +354,7 @@ export class DaemonManager {
           this.#safeProcessFile(this.sqliteExtractor, dep);
         }
       });
+      this.db.populateMetadata();
 
       console.log(
         `[Daemon]    ↳ ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas actualizados` +
@@ -360,11 +364,11 @@ export class DaemonManager {
       );
 
       // Hot-reload de vectores (LanceDB)
-      if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0 && this.vectorExtractor) {
-        void this.#reindexVectors(filePath);
-        for (const dep of filesToPropagate) {
-          void this.#reindexVectors(dep.getFilePath());
-        }
+      if (this.indexVectors) {
+        this.#enqueueVectorUpdates([
+          filePath,
+          ...filesToPropagate.map((dep) => dep.getFilePath()),
+        ]);
       }
     } catch (err) {
       console.error(
@@ -386,6 +390,9 @@ export class DaemonManager {
     try {
       console.log(`[Daemon] 🗑  Archivo eliminado: ${relativePath}`);
       this.#purgeFile(filePath);
+      const sourceFile = this.project.getSourceFile(filePath);
+      if (sourceFile) this.project.removeSourceFile(sourceFile);
+      if (this.indexVectors) this.#enqueueVectorUpdates([filePath]);
       console.log(`[Daemon]    ↳ Registros del archivo purgados de SQLite.`);
     } catch (err) {
       console.error(
@@ -411,6 +418,33 @@ export class DaemonManager {
    */
   #purgeFile(filePath: string): void {
     this.db.deleteNodesByFile(filePath);
+  }
+
+  #enqueueFileOperation(operation: () => Promise<void>): void {
+    this.fileOperationChain = this.fileOperationChain
+      .then(operation)
+      .catch((err: unknown) => {
+        console.error(
+          "[Daemon] Error en cola de archivos:",
+          err instanceof Error ? err.message : err
+        );
+      });
+  }
+
+  #enqueueVectorUpdates(filePaths: string[]): void {
+    this.vectorOperationChain = this.vectorOperationChain
+      .then(async () => {
+        if (this.vectorsPromise) await this.vectorsPromise;
+        for (const filePath of new Set(filePaths)) {
+          await this.#reindexVectors(filePath);
+        }
+      })
+      .catch((err: unknown) => {
+        console.error(
+          "[Daemon] Error en cola vectorial:",
+          err instanceof Error ? err.message : err
+        );
+      });
   }
 
   /**

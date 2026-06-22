@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli/index.ts",
-    "build": "tsc --project tsconfig.json",
+    "build": "tsc --project tsconfig.json && node scripts/copy-migrations.mjs",
     "start": "node dist/cli/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

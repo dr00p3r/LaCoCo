@@ -33,4 +33,24 @@ describe("Bm25Service", () => {
     expect(chunks[0]!.source).toBe("TEST");
   });
 
+  it("mantiene FTS sincronizado al actualizar y eliminar nodos", () => {
+    const node = {
+      id: "/tmp/fts.ts#SearchTarget",
+      kind: "CLASS",
+      name: "SearchTarget",
+      filepath: "/tmp/fts.ts",
+      signature: "olduniqueterm",
+      isDeprecated: 0,
+    };
+
+    db.insertNode(node);
+    db.insertNode({ ...node, signature: "newuniqueterm" });
+
+    expect(service.search("olduniqueterm")).toEqual([]);
+    expect(service.search("newuniqueterm")).toHaveLength(1);
+
+    db.deleteNodesByFile(node.filepath);
+    expect(service.search("newuniqueterm")).toEqual([]);
+  });
+
 });

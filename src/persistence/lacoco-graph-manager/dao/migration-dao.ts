@@ -4,20 +4,13 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export class MigrationDao {
+  private currentVersion = 0;
+
   constructor(private readonly db: Database.Database) {}
 
   initSchema(): void {
-    const SCHEMA_VERSION = 2;
-    const current = this.db.pragma("user_version", { simple: true }) as number;
-
-    if (current < SCHEMA_VERSION) {
-      console.log(
-        `[LaCoCo] Migrando esquema v${current} \u2192 v${SCHEMA_VERSION} (first-time or upgrade)...`
-      );
-      this.#migrateSchema(SCHEMA_VERSION);
-    } else {
-      this.#createTables();
-    }
+    this.currentVersion = this.db.pragma("user_version", { simple: true }) as number;
+    this.#createTables();
   }
 
   #createTables(): void {
@@ -46,22 +39,11 @@ export class MigrationDao {
     `);
   }
 
-  #migrateSchema(targetVersion: number): void {
-    this.db.exec(`
-      DROP TABLE IF EXISTS edges;
-      DROP TABLE IF EXISTS nodes;
-    `);
-    this.#createTables();
-    this.db.pragma(`user_version = ${targetVersion}`);
-    console.log(`[LaCoCo] Migraci\u00f3n completada \u2192 v${targetVersion}.`);
-  }
-
   runMigrations(): void {
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const migrationsDir = path.join(__dirname, "..", "migrations");
     if (!fs.existsSync(migrationsDir)) {
-      console.warn("[LaCoCo] Directorio migrations/ no encontrado; omitiendo migraciones FTS5.");
-      return;
+      throw new Error(`Directorio de migraciones no encontrado: ${migrationsDir}`);
     }
 
     const files = fs
@@ -70,12 +52,19 @@ export class MigrationDao {
       .sort();
 
     for (const file of files) {
-      const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
-      try {
-        this.db.exec(sql);
-      } catch (err) {
-        console.error(`[LaCoCo] Error ejecutando migraci\u00f3n ${file}:`, err);
+      const version = Number.parseInt(file.split("_")[0] ?? "", 10);
+      if (!Number.isInteger(version)) {
+        throw new Error(`Nombre de migración inválido: ${file}`);
       }
+      if (version <= this.currentVersion) continue;
+
+      const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
+      this.db.transaction(() => {
+        this.db.exec(sql);
+        this.db.pragma(`user_version = ${version}`);
+      })();
+      console.log(`[LaCoCo] Migración aplicada: ${file}`);
+      this.currentVersion = version;
     }
   }
 }

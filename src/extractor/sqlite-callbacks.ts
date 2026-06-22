@@ -11,10 +11,16 @@ export class SqliteCallbacks implements ExtractionCallbacks {
 
   constructor(db: Database.Database) {
     this.stmtInsertNode = db.prepare(`
-      INSERT OR REPLACE INTO nodes
+      INSERT INTO nodes
         (id, kind, name, filepath, signature, isDeprecated)
       VALUES
         (@id, @kind, @name, @filepath, @signature, @isDeprecated)
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind,
+        name = excluded.name,
+        filepath = excluded.filepath,
+        signature = excluded.signature,
+        isDeprecated = excluded.isDeprecated
     `);
 
     this.stmtInsertEdge = db.prepare(`

@@ -32,6 +32,7 @@ export class GraphIndexer {
         
         console.time("[CLI]/[GraphIndexer] Extracción");
         this.db.transaction(() => {
+            this.db.clearGraph();
             for (const file of sourceFiles) {
                 try {
                     codeExtractor.processFile(file);
@@ -52,4 +53,4 @@ export class GraphIndexer {
 
         this.db.close();
     }
-} 
+}

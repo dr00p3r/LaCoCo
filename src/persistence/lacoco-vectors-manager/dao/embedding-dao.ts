@@ -8,6 +8,18 @@ export class EmbeddingDao {
   }
 
   async deleteByNodeId(table: lancedb.Table, nodeId: string): Promise<void> {
-    await table.delete(`node_id = '${nodeId}'`);
+    await table.delete(`node_id = '${this.#escapeLiteral(nodeId)}'`);
+  }
+
+  async deleteByFilePath(table: lancedb.Table, filePath: string): Promise<void> {
+    await table.delete(`file_path = '${this.#escapeLiteral(filePath)}'`);
+  }
+
+  async clear(table: lancedb.Table): Promise<void> {
+    await table.delete("node_id IS NOT NULL");
+  }
+
+  #escapeLiteral(value: string): string {
+    return value.replaceAll("'", "''");
   }
 }

@@ -71,7 +71,7 @@ Estrategias CLI válidas:
 
 | Nombre | Mecanismo |
 |---|---|
-| `hybrid` | BM25 + ANN + Reciprocal Rank Fusion; usa filtro dimensional pre-ANN |
+| `hybrid` | BM25 + ANN + Reciprocal Rank Fusion; deliberadamente ignora dimensiones |
 | `agentic` | Semillas BM25 + planificación local Ollama, máximo 3 iteraciones, con fallback determinístico |
 | `ictd` | Difusión tensorial guiada por intent y dimensión |
 | `clcr` | Recuperación por etapas entre capas |
@@ -88,8 +88,8 @@ npm run build
 npm run dev -- watch <tsconfig> --db <sqlite> --lancedb <directorio>
 npm run dev -- index_graph <tsconfig>
 npm run dev -- index_vectors --tsconfig <tsconfig>
-npm run dev -- retrieve "<consulta>" --strategy hybrid
-npm run dev -- inspect-query "<consulta>" --strategy hybrid
+npm run dev -- retrieve "<consulta>" --strategy hybrid --lancedb <directorio>
+npm run dev -- inspect-query "<consulta>" --strategy hybrid --lancedb <directorio>
 ```
 
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.

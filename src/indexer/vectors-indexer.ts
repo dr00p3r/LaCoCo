@@ -15,6 +15,7 @@ export class VectorsIndexer {
 
   async index(): Promise<void> {
     await this.lanceDb.connect();
+    await this.lanceDb.clear();
 
     const project = new Project({ tsConfigFilePath: this.tsConfigPath });
     const sourceFiles = project.getSourceFiles();
