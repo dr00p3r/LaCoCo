@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Bm25Service } from "../../src/retriever/utilities/search/bm25-service.js";
+import {
+  Bm25Service,
+  normalizeFts5Query,
+} from "../../src/retriever/utilities/search/bm25-service.js";
 import type { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { createGraphDb } from "./test-helpers.js";
 
@@ -51,6 +54,31 @@ describe("Bm25Service", () => {
 
     db.deleteNodesByFile(node.filepath);
     expect(service.search("newuniqueterm")).toEqual([]);
+  });
+
+  it("normaliza caracteres especiales a sintaxis FTS5 segura", () => {
+    expect(normalizeFts5Query("OrderService(save)")).toBe('"OrderService(save)"');
+    expect(normalizeFts5Query("createOrder(dto: CreateOrderDto)")).toBe(
+      '"createOrder(dto: CreateOrderDto)"'
+    );
+    expect(normalizeFts5Query('"OrderService" OR "`"')).toBe('"OrderService" OR "`"');
+    expect(normalizeFts5Query('"OrderService" OR "save"')).toBe('"OrderService" OR "save"');
+  });
+
+  it("no lanza errores FTS5 con paréntesis, comillas, backticks, saltos de línea ni unicode", () => {
+    const queries = [
+      "OrderService(save)",
+      "OrderService(createOrder(dto))",
+      "OrderService's save",
+      'OrderService "save"',
+      "`",
+      "OrderService\ncreateOrder",
+      "qué hace OrderService",
+    ];
+
+    for (const query of queries) {
+      expect(() => service.search(query)).not.toThrow();
+    }
   });
 
 });

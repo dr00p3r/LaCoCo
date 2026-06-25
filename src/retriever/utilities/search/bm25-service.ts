@@ -30,6 +30,75 @@ export function normalizeBm25Score(
   return Math.max(0, Math.min(1, rankScore));
 }
 
+/**
+ * Convierte la consulta emitida por el SLM en sintaxis FTS5 segura.
+ *
+ * El SLM sigue siendo la unica capa que decide los terminos semanticos. Esta
+ * funcion solo normaliza la sintaxis para que caracteres como paréntesis,
+ * comillas invertidas o dos puntos no sean interpretados como operadores FTS5.
+ */
+export function normalizeFts5Query(query: string): string {
+  const clauses = splitByOr(query)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+
+  return clauses.map(quoteFts5Phrase).join(" OR ");
+}
+
+function splitByOr(query: string): string[] {
+  const clauses: string[] = [];
+  let current = "";
+  let inQuote = false;
+
+  for (let index = 0; index < query.length; index++) {
+    const char = query[index]!;
+
+    if (char === '"') {
+      if (inQuote && query[index + 1] === '"') {
+        current += '""';
+        index++;
+        continue;
+      }
+      inQuote = !inQuote;
+      current += char;
+      continue;
+    }
+
+    if (!inQuote && isStandaloneOr(query, index)) {
+      clauses.push(current);
+      current = "";
+      index += 1;
+      continue;
+    }
+
+    current += char;
+  }
+
+  clauses.push(current);
+  return clauses;
+}
+
+function isStandaloneOr(query: string, index: number): boolean {
+  const candidate = query.slice(index, index + 2);
+  if (candidate.toUpperCase() !== "OR") return false;
+
+  const before = index === 0 ? " " : query[index - 1]!;
+  const after = index + 2 >= query.length ? " " : query[index + 2]!;
+  return /\s/.test(before) && /\s/.test(after);
+}
+
+function quoteFts5Phrase(clause: string): string {
+  const phrase = unwrapQuotedPhrase(clause);
+  return `"${phrase.replace(/"/g, '""')}"`;
+}
+
+function unwrapQuotedPhrase(clause: string): string {
+  if (clause.length >= 2 && clause.startsWith('"') && clause.endsWith('"')) {
+    return clause.slice(1, -1).replace(/""/g, '"');
+  }
+  return clause;
+}
+
 export class Bm25Service {
   constructor(private readonly db: LaCoCoDatabase) {}
 
@@ -43,7 +112,10 @@ export class Bm25Service {
   search(query: string, limit = 50): Bm25Hit[] {
     if (query.trim().length === 0) return [];
 
-    const results = this.db.searchBM25(query, limit);
+    const ftsQuery = normalizeFts5Query(query);
+    if (ftsQuery.length === 0) return [];
+
+    const results = this.db.searchBM25(ftsQuery, limit);
     const signatures = this.db.getNodeSignatures(results.map((r) => r.node_id));
     const total = results.length;
 

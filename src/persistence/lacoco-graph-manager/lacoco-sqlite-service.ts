@@ -34,7 +34,7 @@ export class LaCoCoDatabase {
     this.searchDao = new SearchDao(this.db);
     this.connectionDao = new ConnectionDao(this.db);
 
-    console.log(`[LaCoCo] Base de datos conectada → ${resolvedPath}`);
+    console.error(`[LaCoCo] Base de datos conectada → ${resolvedPath}`);
   }
 
   insertNode(node: GraphNode): void {
@@ -144,7 +144,7 @@ export class LaCoCoDatabase {
     });
     tx();
 
-    console.log(`[LaCoCo] ✅ Metadatos poblados para ${nodes.length} nodos.`);
+    console.error(`[LaCoCo] ✅ Metadatos poblados para ${nodes.length} nodos.`);
   }
 
   close(): void {

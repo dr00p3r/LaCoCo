@@ -8,7 +8,7 @@
  *
  * Algoritmo:
  *   1. Determinar dimensión dominante según intent de la consulta
- *   2. BFS sobre la capa primaria (dominante, 2 hops) desde anclas BM25
+ *   2. BFS sobre la capa primaria desde anclas híbridas BM25 + ANN + RRF
  *   3. Cascade hacia las otras 2 dimensiones (1 hop c/u)
  *   4. Cross-layer score: contar en cuántas dimensiones participa cada nodo
  *   5. Boost = 1 + λ × (layerCount − 1), λ = 0.25
@@ -21,7 +21,8 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { Bm25Service } from "../utilities/search/bm25-service.js";
+import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
 
 const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
   EXTENDS: "SYS",
@@ -79,14 +80,15 @@ interface Edge {
 
 export class ClcrStrategy implements RecoveryStrategy {
   private readonly config: ClcrConfig;
-  private readonly bm25: Bm25Service;
+  private readonly anchors: HybridAnchorService;
 
   constructor(
     private readonly db: LaCoCoDatabase,
+    lanceDb: LaCoCoLanceDb,
     config?: Partial<ClcrConfig>
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.bm25 = new Bm25Service(db);
+    this.anchors = new HybridAnchorService(db, lanceDb);
   }
 
   /**
@@ -99,10 +101,8 @@ export class ClcrStrategy implements RecoveryStrategy {
     const dominant = this.#computeDominant(query.intent, query.dimensions);
     const cascadeDims = ALL_DIMS.filter((d) => d !== dominant);
 
-    const anchorResults = this.bm25.search(
-      query.clean_query,
-      this.config.anchorLimit
-    );
+    const anchorResults = (await this.anchors.search(query, this.config.anchorLimit))
+      .slice(0, this.config.anchorLimit);
     if (anchorResults.length === 0) return [];
 
     const rawDb = this.db.getRawDb();

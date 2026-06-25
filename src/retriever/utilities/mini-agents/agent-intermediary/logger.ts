@@ -6,7 +6,7 @@ export function logClassification(
 ): void {
   const timestamp = new Date().toISOString();
   const sanitizedPrompt = prompt.replace(/"/g, "'").substring(0, 200);
-  console.log(
+  console.error(
     `[AgentIntermediary1] CLASSIFY | ${timestamp} | ` +
     `prompt="${sanitizedPrompt}" | ` +
     `route=${result.route} | ` +

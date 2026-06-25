@@ -63,7 +63,7 @@ export class MigrationDao {
         this.db.exec(sql);
         this.db.pragma(`user_version = ${version}`);
       })();
-      console.log(`[LaCoCo] Migración aplicada: ${file}`);
+      console.error(`[LaCoCo] Migración aplicada: ${file}`);
       this.currentVersion = version;
     }
   }

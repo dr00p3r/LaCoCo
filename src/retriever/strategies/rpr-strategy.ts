@@ -6,7 +6,7 @@
  * recuperación deja de ser el nodo y pasa a ser la trayectoria relacional.
  *
  * Algoritmo:
- *   1. Anclas vía BM25
+ *   1. Anclas híbridas vía BM25 + ANN + RRF
  *   2. Subgrafo local vía BFS bidireccional (2 hops)
  *   3. Enumeración de caminos desde cada ancla (DFS, solo salientes, depth≤3)
  *   4. Scoring: avgNodeRelevance × uniqueDims
@@ -20,7 +20,8 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { Bm25Service } from "../utilities/search/bm25-service.js";
+import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
 
 const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
   EXTENDS: "SYS",
@@ -75,14 +76,15 @@ const DEFAULT_CONFIG: RprConfig = {
 
 export class RprStrategy implements RecoveryStrategy {
   private readonly config: RprConfig;
-  private readonly bm25: Bm25Service;
+  private readonly anchors: HybridAnchorService;
 
   constructor(
     private readonly db: LaCoCoDatabase,
+    lanceDb: LaCoCoLanceDb,
     config?: Partial<RprConfig>
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.bm25 = new Bm25Service(db);
+    this.anchors = new HybridAnchorService(db, lanceDb);
   }
 
   /**
@@ -92,10 +94,8 @@ export class RprStrategy implements RecoveryStrategy {
    * @returns Chunks que representan caminos del grafo.
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const anchorResults = this.bm25.search(
-      query.clean_query,
-      this.config.anchorLimit
-    );
+    const anchorResults = (await this.anchors.search(query, this.config.anchorLimit))
+      .slice(0, this.config.anchorLimit);
     if (anchorResults.length === 0) return [];
 
     const anchorScores = new Map<string, number>();

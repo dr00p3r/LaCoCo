@@ -176,7 +176,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
   }
 
   // 2. Seleccionar estrategia
-  const needsLanceDb = options.strategy === "hybrid";
+  const needsLanceDb = ["hybrid", "ictd", "clcr", "rpr"].includes(options.strategy);
   let lanceDb: LaCoCoLanceDb | undefined;
 
   let strategy: RecoveryStrategy;
@@ -831,11 +831,14 @@ function createStrategy(
     case "agentic":
       return new AgenticStrategy(db, ollamaEndpoint);
     case "ictd":
-      return new IctdStrategy(db);
+      if (!lanceDb) throw new Error("LanceDB requerido para ictd strategy");
+      return new IctdStrategy(db, lanceDb);
     case "clcr":
-      return new ClcrStrategy(db);
+      if (!lanceDb) throw new Error("LanceDB requerido para clcr strategy");
+      return new ClcrStrategy(db, lanceDb);
     case "rpr":
-      return new RprStrategy(db);
+      if (!lanceDb) throw new Error("LanceDB requerido para rpr strategy");
+      return new RprStrategy(db, lanceDb);
     default:
       throw new Error(`Estrategia no soportada: ${name}`);
   }

@@ -73,11 +73,11 @@ Estrategias CLI válidas:
 |---|---|
 | `hybrid` | BM25 + ANN + Reciprocal Rank Fusion; deliberadamente ignora dimensiones |
 | `agentic` | Semillas BM25 + planificación local Ollama, máximo 3 iteraciones, con fallback determinístico |
-| `ictd` | Difusión tensorial guiada por intent y dimensión |
-| `clcr` | Recuperación por etapas entre capas |
-| `rpr` | Enumeración y puntuación de caminos relacionales |
+| `ictd` | Anclas híbridas + difusión tensorial guiada por intent y dimensión |
+| `clcr` | Anclas híbridas + recuperación por etapas entre capas |
+| `rpr` | Anclas híbridas + enumeración y puntuación de caminos relacionales |
 
-`hybrid` es la estrategia predeterminada y la única que requiere LanceDB durante retrieval. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
+`hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
 
 ## Comandos
 
@@ -85,6 +85,21 @@ Estrategias CLI válidas:
 npm run typecheck
 npm test
 npm run build
+npm run dev -- init
+npm run dev -- status
+npm run dev -- config list
+npm run dev -- config get <clave>
+npm run dev -- config set <clave> <valor> --local
+npm run dev -- config set <clave> <valor> --global
+npm run dev -- project list
+npm run dev -- project inspect <proyecto>
+npm run dev -- project remove <proyecto>
+npm run dev -- context export "<consulta>" --output contexto.md --strategy hybrid --lancedb <directorio>
+npm run dev -- watch start [proyecto]
+npm run dev -- watch stop [proyecto]
+npm run dev -- watch restart [proyecto]
+npm run dev -- watch status [proyecto]
+npm run dev -- watch list
 npm run dev -- watch <tsconfig> --db <sqlite> --lancedb <directorio>
 npm run dev -- index_graph <tsconfig>
 npm run dev -- index_vectors --tsconfig <tsconfig>
@@ -93,6 +108,11 @@ npm run dev -- inspect-query "<consulta>" --strategy hybrid --lancedb <directori
 ```
 
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
+
+Los watchers administrados por CLI registran PID, comando y rutas en el registro
+de proyectos, usan locks atómicos por proyecto bajo el estado de LaCoCo y marcan
+`stale` cuando el PID registrado no existe o, en Linux, cuando `/proc/<pid>/cmdline`
+no coincide con el comando watcher esperado.
 
 ## Convenciones
 

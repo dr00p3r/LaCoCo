@@ -37,6 +37,7 @@ describe("HybridStrategy", () => {
       20
     );
     expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0]!.nodeId).toBe("file1#OrderService.createOrder");
     expect(chunks[0]!.source).toBe("RRF");
   });
 

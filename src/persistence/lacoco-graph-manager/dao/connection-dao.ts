@@ -9,7 +9,7 @@ export class ConnectionDao {
 
   close(): void {
     this.db.close();
-    console.log("[LaCoCo] Conexión SQLite cerrada.");
+    console.error("[LaCoCo] Conexión SQLite cerrada.");
   }
 
   stats(): { nodes: number; edges: number } {
