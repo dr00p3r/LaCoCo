@@ -77,7 +77,15 @@ describe("Bm25Service", () => {
     ];
 
     for (const query of queries) {
-      expect(() => service.search(query)).not.toThrow();
+      const hits = service.search(query);
+      expect(hits).toBeInstanceOf(Array);
+      expect(hits.length).toBeGreaterThanOrEqual(0);
+      for (const hit of hits) {
+        expect(hit).toHaveProperty("nodeId");
+        expect(hit).toHaveProperty("score");
+        expect(hit).toHaveProperty("text");
+        expect(typeof hit.score).toBe("number");
+      }
     }
   });
 

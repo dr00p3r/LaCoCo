@@ -10,6 +10,7 @@ import {
   unsetConfig,
 } from "../../src/cli/state/config-store.js";
 import {
+  configureProjectStorage,
   configureProjectWatcher,
   getProjectsPath,
   inspectProject,
@@ -23,6 +24,7 @@ import {
   acquireWatchLock,
   getWatchLockPath,
 } from "../../src/cli/state/watch-lock.js";
+import { STRATEGY_NAMES } from "../../src/retriever/strategies/strategy-names.js";
 
 let tempDir: string;
 let previousCwd: string;
@@ -98,6 +100,19 @@ describe("config-store", () => {
     expect(file.values.timeout.ms).toBe(1500);
   });
 
+  it("acepta todas las estrategias registradas como strategy.default", () => {
+    const projectDir = createProject("app");
+    process.chdir(projectDir);
+
+    for (const strategy of STRATEGY_NAMES) {
+      expect(() => setConfig("strategy.default", strategy, "local")).not.toThrow();
+      expect(resolveConfig("strategy.default")).toMatchObject({
+        value: strategy,
+        source: "local",
+      });
+    }
+  });
+
   it("elimina una propiedad sin destruir el resto del archivo", () => {
     const projectDir = createProject("app");
     process.chdir(projectDir);
@@ -167,6 +182,18 @@ describe("project-registry", () => {
     expect(stopped.watcher.status).toBe("stopped");
     expect(stopped.watcher.pid).toBeNull();
     expect(stopped.watcher.command).toBeNull();
+  });
+
+  it("persiste rutas de almacenamiento del proyecto separadas del watcher", () => {
+    const projectDir = createProject("storage-app");
+    const project = configureProjectStorage(projectDir, {
+      dbPath: path.join(projectDir, ".lacoco", "tensor.sqlite"),
+      lanceDbPath: path.join(projectDir, ".lacoco", "lancedb"),
+    });
+
+    expect(project.storage.dbPath).toBe(path.join(projectDir, ".lacoco", "tensor.sqlite"));
+    expect(project.storage.lanceDbPath).toBe(path.join(projectDir, ".lacoco", "lancedb"));
+    expect(inspectProject(project.id).storage.updatedAt).not.toBeNull();
   });
 
   it("marca como stale un watcher running cuyo PID ya no existe", () => {

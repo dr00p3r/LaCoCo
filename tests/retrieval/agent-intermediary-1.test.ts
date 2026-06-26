@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentIntermediary1 } from "../../src/retriever/utilities/mini-agents/agent-intermediary/index.js";
+import { SlmClassifier } from "../../src/retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 
 const { classifyMock } = vi.hoisted(() => ({
   classifyMock: vi.fn(),
@@ -28,7 +29,7 @@ describe("AgentIntermediary1", () => {
     };
     classifyMock.mockResolvedValue(slmOutput);
 
-    const result = await new AgentIntermediary1().sanitize(
+    const result = await new AgentIntermediary1(new SlmClassifier()).sanitize(
       "  refactoriza OrderService para usar async/await  "
     );
 
@@ -41,12 +42,12 @@ describe("AgentIntermediary1", () => {
     classifyMock.mockRejectedValue(new Error("SLM no disponible"));
 
     await expect(
-      new AgentIntermediary1().sanitize("explica OrderService")
+      new AgentIntermediary1(new SlmClassifier()).sanitize("explica OrderService")
     ).rejects.toThrow("SLM no disponible");
   });
 
   it("rechaza prompts vacíos antes de invocar el modelo", async () => {
-    await expect(new AgentIntermediary1().sanitize("   ")).rejects.toThrow(
+    await expect(new AgentIntermediary1(new SlmClassifier()).sanitize("   ")).rejects.toThrow(
       "El prompt no puede estar vacío"
     );
     expect(classifyMock).not.toHaveBeenCalled();

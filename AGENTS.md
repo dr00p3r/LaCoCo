@@ -43,13 +43,13 @@ src/
     lacoco-vectors-manager/  LanceDB y búsqueda ANN
   retriever/
     models/             contratos de estrategias y utilidades
-    strategies/         implementaciones seleccionables
+    strategies/         implementaciones seleccionables y clase base AbstractAnchoredStrategy
     utilities/
       embeddings/       generación local de embeddings
       filters/          agregación e inyección de contexto
       mini-agents/      AgentIntermediary1
       search/           servicios internos de búsqueda
-  slms/                 cliente local de Ollama
+  slms/                 cliente local de Ollama e interfaz LlmClient
 tests/retrieval/        pruebas Vitest del pipeline de retrieval
 ```
 
@@ -77,7 +77,11 @@ Estrategias CLI válidas:
 | `clcr` | Anclas híbridas + recuperación por etapas entre capas |
 | `rpr` | Anclas híbridas + enumeración y puntuación de caminos relacionales |
 
-`hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
+`hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF, centralizado en `AbstractAnchoredStrategy`. Cada subclase solo implementa `expand()` con su lógica de difusión específica. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
+
+`AgenticStrategy` y cualquier consumidor de Ollama deben depender de la interfaz
+`LlmClient` (`src/slms/llm-client.ts`), no de la clase concreta `OllamaService`.
+`OllamaService` solo se instancia en puntos de composición (CLI, `inspect.ts`).
 
 ## Comandos
 
@@ -94,7 +98,7 @@ npm run dev -- config set <clave> <valor> --global
 npm run dev -- project list
 npm run dev -- project inspect <proyecto>
 npm run dev -- project remove <proyecto>
-npm run dev -- context export "<consulta>" --output contexto.md --strategy hybrid --lancedb <directorio>
+npm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid --lancedb <directorio>
 npm run dev -- watch start [proyecto]
 npm run dev -- watch stop [proyecto]
 npm run dev -- watch restart [proyecto]
@@ -103,11 +107,23 @@ npm run dev -- watch list
 npm run dev -- watch <tsconfig> --db <sqlite> --lancedb <directorio>
 npm run dev -- index_graph <tsconfig>
 npm run dev -- index_vectors --tsconfig <tsconfig>
-npm run dev -- retrieve "<consulta>" --strategy hybrid --lancedb <directorio>
+npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --lancedb <directorio>
 npm run dev -- inspect-query "<consulta>" --strategy hybrid --lancedb <directorio>
 ```
 
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
+Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy` u
+`--ollama`, la CLI resuelve `strategy.default` y `agent.endpoint` desde la
+configuración persistente, respetando la precedencia env > local > global >
+default. Los flags explícitos siempre tienen prioridad.
+Cuando se omiten `--db` o `--lancedb`, la CLI usa rutas por proyecto bajo
+`paths.data`: `tensor.sqlite` para SQLite y `lancedb` para LanceDB. Las rutas
+explícitas se normalizan a absolutas; las rutas resueltas se guardan en el
+registro de proyectos como `storage.dbPath` y `storage.lanceDbPath`.
+
+`retrieve` y `context export` aceptan un argumento `[proyecto]` opcional que
+resuelve el proyecto desde el registro (por nombre, id o ruta). Si se omite,
+usan `process.cwd()`.
 
 Los watchers administrados por CLI registran PID, comando y rutas en el registro
 de proyectos, usan locks atómicos por proyecto bajo el estado de LaCoCo y marcan
@@ -118,11 +134,13 @@ no coincide con el comando watcher esperado.
 
 - Node.js 20 o superior, TypeScript estricto, ESM y resolución `NodeNext`.
 - Los imports relativos TypeScript usan extensión `.js`.
-- Preferir DAOs y servicios existentes; SQL directo solo cuando una estrategia necesita una consulta especializada.
+- Preferir DAOs y servicios existentes; SQL directo solo cuando una estrategia necesita una consulta especializada. Las consultas de vecindad deben usar `EdgeDao.getNeighborhood()` e `EdgeDao.getIncidentRelations()`.
 - Las implementaciones públicas de `RecoveryStrategy.retrieve` deben incluir JSDoc.
 - Mantener el código y comentarios en ASCII salvo que el archivo ya requiera otro juego de caracteres.
 - No realizar llamadas a modelos remotos durante análisis o retrieval. Ollama es local.
-- Una estrategia nueva debe registrarse en `src/cli/index.ts`, `src/cli/inspect.ts`, esta tabla y sus pruebas.
+- Una estrategia nueva debe registrarse en `src/retriever/strategies/registry.ts`;
+  los nombres válidos viven en `src/retriever/strategies/strategy-names.ts` y
+  alimentan CLI, `inspect-query`, configuración, esta tabla y sus pruebas.
 
 ## Verificación mínima
 
@@ -133,10 +151,16 @@ Antes de cerrar cambios de comportamiento:
 3. Ejecutar `npm run build` si se modificó CLI, configuración o contratos públicos.
 4. Buscar imports, opciones y documentación obsoletos con `rg`.
 
+La suite incluye una prueba E2E del binario CLI que crea un proyecto temporal,
+ejecuta `init`, `index_graph` e `index_vectors`, y verifica SQLite + LanceDB
+reales bajo almacenamiento por proyecto. Usa `LACOCO_TEST_EMBEDDINGS=1` para
+evitar descargas de modelos durante tests. Si el runner bloquea `spawnSync`, la
+prueba se omite explícitamente.
+
 ## Riesgos conocidos
 
 - El intermediario depende obligatoriamente de Ollama; no existe fallback local cuando el modelo no está disponible.
-- No hay todavía pruebas end-to-end del binario CLI contra SQLite y LanceDB reales.
-- La reindexación vectorial necesita una política explícita de reemplazo para evitar registros duplicados.
+- La prueba end-to-end del binario CLI se omite en runners que bloquean `spawnSync`.
+- La reindexación vectorial reemplaza lotes por `node_id`; falta una política explícita de compactación/optimización para LanceDB.
+- `EmbeddingDao.replaceBatch` (delete + insert) no es atómico; un crash entre ambas operaciones puede causar pérdida de embeddings hasta la siguiente reindexación.
 - Faltan benchmarks comparables de precisión, latencia y consumo entre estrategias.
-- `natural` permanece como dependencia aunque ya no define una estrategia BM25.

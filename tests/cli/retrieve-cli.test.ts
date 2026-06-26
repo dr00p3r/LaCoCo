@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import {
   type RetrieveCliOptions,
   type RetrieveRuntime,
 } from "../../src/cli/index.js";
+import { configureProjectStorage } from "../../src/cli/state/project-registry.js";
 
 interface CliResult {
   code: number;
@@ -109,6 +110,82 @@ describe("lacoco retrieve CLI", () => {
       temp.cleanup();
     }
   });
+
+  it("resuelve estrategia y endpoint desde configuración cuando no se pasan opciones", async () => {
+    const temp = createTempIndexedDb();
+    const previousStrategy = process.env.LACOCO_STRATEGY;
+    const previousEndpoint = process.env.LACOCO_AGENT_ENDPOINT;
+    const capture: RuntimeCapture = {
+      ollamaEndpoints: [],
+    };
+
+    try {
+      process.env.LACOCO_STRATEGY = "agentic";
+      process.env.LACOCO_AGENT_ENDPOINT = "http://ollama.local:11434";
+
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        {
+          db: temp.dbPath,
+          lancedb: "./lancedb",
+          llm: false,
+          verbose: false,
+        },
+        streams,
+        createFakeRuntime(capture),
+      );
+
+      expect(code).toBe(0);
+      expect(read().stdout).toContain("### Contexto del Proyecto");
+      expect(capture.ollamaEndpoints).toContain("http://ollama.local:11434");
+      expect(capture.strategyName).toBe("agentic");
+      expect(capture.strategyOllamaEndpoint).toBe("http://ollama.local:11434");
+    } finally {
+      restoreEnv("LACOCO_STRATEGY", previousStrategy);
+      restoreEnv("LACOCO_AGENT_ENDPOINT", previousEndpoint);
+      temp.cleanup();
+    }
+  });
+
+  it("usa rutas de almacenamiento registradas cuando retrieve no recibe --db", async () => {
+    const temp = createTempIndexedDb();
+    const previousCwd = process.cwd();
+    const previousStateHome = process.env.XDG_STATE_HOME;
+    const capture: RuntimeCapture = {
+      ollamaEndpoints: [],
+    };
+
+    try {
+      mkdirSync(path.join(temp.dir, ".git"));
+      process.env.XDG_STATE_HOME = path.join(temp.dir, "state-home");
+      process.chdir(temp.dir);
+      configureProjectStorage(temp.dir, {
+        dbPath: temp.dbPath,
+        lanceDbPath: path.join(temp.dir, ".lacoco", "lancedb"),
+      });
+
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        {
+          llm: false,
+          verbose: false,
+        },
+        streams,
+        createFakeRuntime(capture),
+      );
+
+      expect(code).toBe(0);
+      expect(read().stdout).toContain("file1#OrderService");
+      expect(capture.dbPath).toBe(temp.dbPath);
+      expect(capture.lanceDbPath).toBe(path.join(temp.dir, ".lacoco", "lancedb"));
+    } finally {
+      process.chdir(previousCwd);
+      restoreEnv("XDG_STATE_HOME", previousStateHome);
+      temp.cleanup();
+    }
+  });
 });
 
 async function runRetrieveWithFakes(query: string, dbPath: string): Promise<CliResult> {
@@ -173,15 +250,29 @@ function createCapturedStreams(): {
   };
 }
 
-function createFakeRuntime(): RetrieveRuntime {
+interface RuntimeCapture {
+  ollamaEndpoints: string[];
+  dbPath?: string;
+  lanceDbPath?: string;
+  strategyName?: string;
+  strategyOllamaEndpoint?: string;
+}
+
+function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
   return {
-    createDatabase: (pathToDb) => new LaCoCoDatabase(pathToDb),
-    createOllama: () => ({
-      isAvailable: async () => false,
-      generate: async () => {
-        throw new Error("No debe llamarse al LLM final en --no-llm");
-      },
-    }),
+    createDatabase: (pathToDb) => {
+      if (capture) capture.dbPath = pathToDb;
+      return new LaCoCoDatabase(pathToDb);
+    },
+    createOllama: (endpoint) => {
+      capture?.ollamaEndpoints.push(endpoint);
+      return {
+        isAvailable: async () => false,
+        generate: async () => {
+          throw new Error("No debe llamarse al LLM final en --no-llm");
+        },
+      };
+    },
     createIntermediary: () => ({
       sanitize: async (prompt) => {
         const trimmed = prompt.trim();
@@ -197,9 +288,16 @@ function createFakeRuntime(): RetrieveRuntime {
         };
       },
     }),
-    createStrategy: async (_strategyName, db) => ({
-      strategy: createBm25Strategy(db),
-    }),
+    createStrategy: async (strategyName, db, _lanceDbPath, ollamaEndpoint) => {
+      if (capture) {
+        capture.strategyName = strategyName;
+        capture.lanceDbPath = _lanceDbPath;
+        capture.strategyOllamaEndpoint = ollamaEndpoint;
+      }
+      return {
+        strategy: createBm25Strategy(db),
+      };
+    },
   };
 }
 
@@ -263,4 +361,12 @@ function createTempIndexedDb(): { dir: string; dbPath: string; cleanup: () => vo
 
 function countOccurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
 }

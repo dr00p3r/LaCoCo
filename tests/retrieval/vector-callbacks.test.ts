@@ -18,7 +18,7 @@ describe("VectorCallbacks", () => {
   it("espera todos los flushes programados antes de terminar", async () => {
     const inserted: string[] = [];
     const lanceDb = {
-      insertBatch: vi.fn(async (records: { node_id: string }[]) => {
+      replaceBatch: vi.fn(async (records: { node_id: string }[]) => {
         await new Promise((resolve) => setTimeout(resolve, 1));
         inserted.push(...records.map((record) => record.node_id));
       }),
@@ -32,6 +32,6 @@ describe("VectorCallbacks", () => {
     await callbacks.flush();
 
     expect(inserted.sort()).toEqual(["node0", "node1", "node2", "node3", "node4"]);
-    expect(lanceDb.insertBatch).toHaveBeenCalledTimes(3);
+    expect(lanceDb.replaceBatch).toHaveBeenCalledTimes(3);
   });
 });

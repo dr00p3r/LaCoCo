@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as lancedb from "@lancedb/lancedb";
 import { EmbeddingDao } from "../../src/persistence/lacoco-vectors-manager/dao/embedding-dao.js";
+import type { NodeEmbeddingRecord } from "../../src/persistence/lacoco-vectors-manager/model/types.js";
 
 describe("EmbeddingDao", () => {
   it("elimina por archivo escapando literales SQL", async () => {
@@ -20,4 +21,43 @@ describe("EmbeddingDao", () => {
 
     expect(table.delete).toHaveBeenCalledWith("node_id IS NOT NULL");
   });
+
+  it("elimina varios nodos escapando literales SQL", async () => {
+    const table = { delete: vi.fn().mockResolvedValue(undefined) } as unknown as lancedb.Table;
+    const dao = new EmbeddingDao();
+
+    await dao.deleteByNodeIds(table, ["file#A", "file#O'Brien", "file#A"]);
+
+    expect(table.delete).toHaveBeenCalledWith("node_id IN ('file#A', 'file#O''Brien')");
+  });
+
+  it("reemplaza lotes de forma idempotente por node_id", async () => {
+    const table = {
+      add: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as lancedb.Table;
+    const dao = new EmbeddingDao();
+
+    await dao.replaceBatch(table, [
+      record("file#A", "old"),
+      record("file#B", "current"),
+      record("file#A", "current"),
+    ]);
+
+    expect(table.delete).toHaveBeenCalledWith("node_id IN ('file#A', 'file#B')");
+    expect(table.add).toHaveBeenCalledWith([
+      expect.objectContaining({ node_id: "file#A", file_path: "current" }),
+      expect.objectContaining({ node_id: "file#B", file_path: "current" }),
+    ]);
+  });
 });
+
+function record(nodeId: string, filePath: string): NodeEmbeddingRecord {
+  return {
+    node_id: nodeId,
+    embedding: new Float32Array(384),
+    dimension: "CPG",
+    sub_type: "function",
+    file_path: filePath,
+  };
+}

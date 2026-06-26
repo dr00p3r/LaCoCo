@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { SlmClassifier } from "../../src/retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import type { OllamaService } from "../../src/slms/ollama-service.js";
+import type { LlmClient } from "../../src/slms/llm-client.js";
 
 function createClassifier(response: string): SlmClassifier {
   const ollama = {
     chat: vi.fn().mockResolvedValue(response),
-  } as unknown as OllamaService;
+  } as unknown as LlmClient;
   return new SlmClassifier(ollama);
 }
 
@@ -16,7 +16,7 @@ function createRetryingClassifier(
   const chat = vi.fn()
     .mockResolvedValueOnce(firstResponse)
     .mockResolvedValueOnce(secondResponse);
-  const ollama = { chat } as unknown as OllamaService;
+  const ollama = { chat } as unknown as LlmClient;
   return { classifier: new SlmClassifier(ollama), chat };
 }
 
