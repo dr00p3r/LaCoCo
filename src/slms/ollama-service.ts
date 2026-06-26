@@ -1,17 +1,13 @@
 import type {
   OllamaGenerateRequest,
-  OllamaGenerateResponse,
-  OllamaChatMessage,
 } from "./model/types.js";
+import type { LlmClient, ChatMessage, ChatOptions } from "./llm-client.js";
 
-export interface OllamaChatOptions {
-  format?: "json" | Record<string, unknown>;
-}
-
-export class OllamaService {
+export class OllamaService implements LlmClient {
   constructor(
     private readonly endpoint = "http://localhost:11434",
-    private readonly model = "qwen2.5-coder:1.5b"
+    private readonly model = "qwen2.5-coder:1.5b",
+    private readonly timeoutMs = 30_000,
   ) {}
 
   async generate(prompt: string, system?: string): Promise<string> {
@@ -24,7 +20,7 @@ export class OllamaService {
         system,
         stream: false,
       } as OllamaGenerateRequest),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
     const text = await res.text();
@@ -33,13 +29,16 @@ export class OllamaService {
       throw new Error(`Ollama error ${res.status}: ${text}`);
     }
 
-    const data = JSON.parse(text) as OllamaGenerateResponse;
+    const data = JSON.parse(text) as Record<string, unknown>;
+    if (typeof data.response !== "string") {
+      throw new Error("Ollama generate no devolvió una respuesta válida");
+    }
     return data.response.trim();
   }
 
   async chat(
-    messages: OllamaChatMessage[],
-    options: OllamaChatOptions = {}
+    messages: ChatMessage[],
+    options: ChatOptions = {}
   ): Promise<string> {
     const res = await fetch(`${this.endpoint}/api/chat`, {
       method: "POST",
@@ -50,7 +49,7 @@ export class OllamaService {
         stream: false,
         ...(options.format ? { format: options.format } : {}),
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
     const text = await res.text();
@@ -59,15 +58,19 @@ export class OllamaService {
       throw new Error(`Ollama chat error ${res.status}: ${text}`);
     }
 
-    const data = JSON.parse(text) as { message: { content: string } };
-    return data.message.content.trim();
+    const data = JSON.parse(text) as Record<string, unknown>;
+    const message = data.message as Record<string, unknown> | undefined;
+    if (!message || typeof message.content !== "string") {
+      throw new Error("Ollama chat no devolvió una respuesta válida");
+    }
+    return message.content.trim();
   }
 
   async isAvailable(): Promise<boolean> {
     try {
       const res = await fetch(`${this.endpoint}/api/tags`, {
         method: "GET",
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(Math.min(this.timeoutMs, 5_000)),
       });
       return res.ok;
     } catch {

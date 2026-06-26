@@ -4,7 +4,7 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { OllamaService } from "../../slms/ollama-service.js";
+import type { LlmClient } from "../../slms/llm-client.js";
 import { Bm25Service } from "../utilities/search/bm25-service.js";
 
 interface Tool {
@@ -13,15 +13,13 @@ interface Tool {
 }
 
 export class AgenticStrategy implements RecoveryStrategy {
-  private readonly ollama: OllamaService;
   private readonly bm25: Bm25Service;
   private readonly maxIterations = 3;
 
   constructor(
     private readonly db: LaCoCoDatabase,
-    ollamaEndpoint = "http://localhost:11434",
+    private readonly ollama: LlmClient,
   ) {
-    this.ollama = new OllamaService(ollamaEndpoint);
     this.bm25 = new Bm25Service(db);
   }
 
@@ -148,31 +146,23 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
   }
 
   #getNodeBySymbol(name: string): ContextChunk[] {
-    const rawDb = this.db.getRawDb();
-    const rows = rawDb
-      .prepare("SELECT id FROM nodes WHERE name = ? LIMIT 10")
-      .all(name) as { id: string }[];
-    const sigs = this.db.getNodeSignatures(rows.map((r) => r.id));
-    return rows.map((r) => ({
-      nodeId: r.id,
+    const ids = this.db.nodeDao.getNodeIdsBySymbol(name, 10);
+    const sigs = this.db.getNodeSignatures(ids);
+    return ids.map((id) => ({
+      nodeId: id,
       score: 0.7,
-      text: sigs.get(r.id) ?? r.id,
+      text: sigs.get(id) ?? id,
       source: "AGENTIC",
     }));
   }
 
   #getDependencies(pkg: string, version?: string): ContextChunk[] {
-    const rawDb = this.db.getRawDb();
-    const sql = version
-      ? "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? AND name LIKE ? LIMIT 10"
-      : "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? LIMIT 10";
-    const params = version ? [`%${pkg}%`, `%${version}%`] : [`%${pkg}%`];
-    const rows = rawDb.prepare(sql).all(...params) as { id: string }[];
-    const sigs = this.db.getNodeSignatures(rows.map((r) => r.id));
-    return rows.map((r) => ({
-      nodeId: r.id,
+    const ids = this.db.nodeDao.getExternalLibraryIds(pkg, version, 10);
+    const sigs = this.db.getNodeSignatures(ids);
+    return ids.map((id) => ({
+      nodeId: id,
       score: 0.6,
-      text: sigs.get(r.id) ?? r.id,
+      text: sigs.get(id) ?? id,
       source: "AGENTIC",
     }));
   }
@@ -183,20 +173,7 @@ Si no necesitas más herramientas, responde: {"done": true}.`;
   #getNeighbors(nodeIds: string[]): ContextChunk[] {
     if (nodeIds.length === 0) return [];
 
-    const placeholders = nodeIds.map(() => "?").join(",");
-    const sql = `
-      SELECT sourceId, targetId, relation
-      FROM edges
-      WHERE sourceId IN (${placeholders}) OR targetId IN (${placeholders})
-      LIMIT 100
-    `;
-
-    const rawDb = this.db.getRawDb();
-    const rows = rawDb.prepare(sql).all([...nodeIds, ...nodeIds]) as {
-      sourceId: string;
-      targetId: string;
-      relation: string;
-    }[];
+    const rows = this.db.edgeDao.getNeighborhood(nodeIds, { limit: 100 });
 
     const chunks: ContextChunk[] = [];
     const neighborIds = new Set<string>();

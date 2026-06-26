@@ -6,7 +6,7 @@ export class AgentIntermediary1 {
 
   private readonly classifier: SlmClassifier;
 
-  constructor(classifier: SlmClassifier = new SlmClassifier()) {
+  constructor(classifier: SlmClassifier) {
     this.classifier = classifier;
   }
 

@@ -14,26 +14,13 @@
  *   5. Los nodos con mayor temperatura final forman el contexto
  */
 
-import {
-  type RecoveryStrategy,
-  type ContextChunk,
-} from "../models/strategies/types.js";
+import type { ContextChunk } from "../models/strategies/types.js";
 import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
-
-const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
-  EXTENDS: "SYS",
-  IMPLEMENTS: "SYS",
-  IMPORTS_EXTERNAL: "SYS",
-  INJECTS: "CPG",
-  CALLS: "CPG",
-  INSTANTIATES: "CPG",
-  CONSUMES_DATA: "DTG",
-  PRODUCES: "DTG",
-  MUTATES_STATE: "DTG",
-};
+import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
+import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
+import { RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
 
 const INTENT_WEIGHTS: Record<IntentTag, { SYS: number; CPG: number; DTG: number }> = {
   debug:      { SYS: 0.30, CPG: 0.40, DTG: 0.30 },
@@ -64,7 +51,7 @@ const DEFAULT_CONFIG: IctdConfig = {
   maxHops: 2,
 };
 
-type Dim = "SYS" | "CPG" | "DTG";
+type Dim = Dimension;
 
 interface DimNeighbors {
   SYS: string[];
@@ -76,31 +63,24 @@ function emptyNeighbors(): DimNeighbors {
   return { SYS: [], CPG: [], DTG: [] };
 }
 
-export class IctdStrategy implements RecoveryStrategy {
+export class IctdStrategy extends AbstractAnchoredStrategy {
   private readonly config: IctdConfig;
-  private readonly anchors: HybridAnchorService;
 
   constructor(
-    private readonly db: LaCoCoDatabase,
+    db: LaCoCoDatabase,
     lanceDb: LaCoCoLanceDb,
     config?: Partial<IctdConfig>
   ) {
+    super(db, lanceDb);
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.anchors = new HybridAnchorService(db, lanceDb);
   }
 
-  /**
-   * Recupera contexto aplicando difusión tensorial condicionada por intención.
-   *
-   * @param query Salida sanitizada del intermediario.
-   * @returns Chunks ordenados por temperatura final de difusión.
-   */
-  async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const weights = this.#computeWeights(query.intent, query.dimensions);
+  protected getAnchorLimit(): number {
+    return this.config.anchorLimit;
+  }
 
-    const anchorResults = (await this.anchors.search(query, this.config.anchorLimit))
-      .slice(0, this.config.anchorLimit);
-    if (anchorResults.length === 0) return [];
+  protected async expand(anchorResults: HybridAnchor[], query: SanitizerOutput): Promise<ContextChunk[]> {
+    const weights = this.#computeWeights(query.intent, query.dimensions);
 
     const anchorIds = new Set<string>();
     const anchorHeat = new Map<string, number>();
@@ -112,13 +92,9 @@ export class IctdStrategy implements RecoveryStrategy {
     const { outAdj, inDeg } = this.#buildSubgraph(Array.from(anchorIds));
 
     if (outAdj.size === 0) {
-      const sigs = this.db.getNodeSignatures(Array.from(anchorIds));
-      return anchorResults.map((r) => ({
-        nodeId: r.nodeId,
-        score: anchorHeat.get(r.nodeId) ?? 0.5,
-        text: sigs.get(r.nodeId) ?? r.nodeId,
-        source: "ICTD",
-      }));
+      return anchorResults.map((anchor) =>
+        this.toChunk(anchor, "ICTD", anchorHeat.get(anchor.nodeId) ?? 0.5)
+      );
     }
 
     const allIds = Array.from(outAdj.keys());
@@ -216,7 +192,6 @@ export class IctdStrategy implements RecoveryStrategy {
     outAdj: Map<string, DimNeighbors>;
     inDeg: Map<string, { SYS: number; CPG: number; DTG: number }>;
   } {
-    const rawDb = this.db.getRawDb();
     const outAdj = new Map<string, DimNeighbors>();
     const inDeg = new Map<string, { SYS: number; CPG: number; DTG: number }>();
 
@@ -225,26 +200,14 @@ export class IctdStrategy implements RecoveryStrategy {
 
     for (let hop = 0; hop < this.config.maxHops && frontier.size > 0; hop++) {
       const frontierArr = Array.from(frontier);
-      const placeholders = frontierArr.map(() => "?").join(",");
-
-      const sql = `
-        SELECT sourceId, targetId, relation
-        FROM edges
-        WHERE sourceId IN (${placeholders}) OR targetId IN (${placeholders})
-        LIMIT 5000
-      `;
-
-      const params = [...frontierArr, ...frontierArr];
-      const edges = rawDb.prepare(sql).all(...params) as {
-        sourceId: string;
-        targetId: string;
-        relation: string;
-      }[];
+      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
+        limit: this.config.bfsMaxNodes,
+      });
 
       const nextFrontier = new Set<string>();
 
       for (const edge of edges) {
-        const dim = DIM_MAP[edge.relation];
+        const dim = RELATION_TO_DIM[edge.relation];
         if (!dim) continue;
 
         if (!outAdj.has(edge.sourceId)) {

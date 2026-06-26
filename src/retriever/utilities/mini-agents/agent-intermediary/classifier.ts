@@ -1,4 +1,5 @@
-import { OllamaService } from "../../../../slms/ollama-service.js";
+import type { LlmClient } from "../../../../slms/llm-client.js";
+import { DIMENSIONS } from "../../../../domain/dimensions.js";
 import type { IntentTag } from "../../../models/utilities/types.js";
 import type { ClassificationResult } from "./types.js";
 
@@ -11,8 +12,6 @@ const INTENTS: IntentTag[] = [
   "integrate",
   "unknown",
 ];
-const DIMENSIONS = ["SYS", "CPG", "DTG"] as const;
-
 const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 
 Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: tu salida será utilizada directamente para búsqueda FTS5, embeddings y selección dimensional.
@@ -47,6 +46,7 @@ Responsabilidad de cada campo:
    - Para LLM_DIRECT, conserva el significado completo del prompt para el modelo final.
 
 4. dimensions
+   - Usa solo la taxonomía canónica definida en src/domain/dimensions.ts.
    - SYS: contratos, herencia, interfaces, módulos y dependencias externas.
    - CPG: estructura, llamadas, instanciación, inyección y flujo de ejecución.
    - DTG: tipos, DTOs, entradas, salidas, producción, consumo y mutación de datos.
@@ -71,7 +71,7 @@ Salida: {"route":"LLM_DIRECT","clean_query":"","embedding_input":"Explicar qué 
 
 export class SlmClassifier {
 
-  constructor(private readonly ollama: OllamaService = new OllamaService()) {};
+  constructor(private readonly ollama: LlmClient) {}
 
   async classify(prompt: string): Promise<ClassificationResult> {
 

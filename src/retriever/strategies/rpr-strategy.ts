@@ -14,28 +14,15 @@
  *   6. Chunks con trayectoria relacional completa como texto
  */
 
-import {
-  type RecoveryStrategy,
-  type ContextChunk,
-} from "../models/strategies/types.js";
+import type { ContextChunk } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
+import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
+import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
+import { RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
 
-const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
-  EXTENDS: "SYS",
-  IMPLEMENTS: "SYS",
-  IMPORTS_EXTERNAL: "SYS",
-  INJECTS: "CPG",
-  CALLS: "CPG",
-  INSTANTIATES: "CPG",
-  CONSUMES_DATA: "DTG",
-  PRODUCES: "DTG",
-  MUTATES_STATE: "DTG",
-};
-
-type Dim = "SYS" | "CPG" | "DTG";
+type Dim = Dimension;
 
 interface OutEdge {
   targetId: string;
@@ -74,30 +61,23 @@ const DEFAULT_CONFIG: RprConfig = {
   decayPerHop: 0.5,
 };
 
-export class RprStrategy implements RecoveryStrategy {
+export class RprStrategy extends AbstractAnchoredStrategy {
   private readonly config: RprConfig;
-  private readonly anchors: HybridAnchorService;
 
   constructor(
-    private readonly db: LaCoCoDatabase,
+    db: LaCoCoDatabase,
     lanceDb: LaCoCoLanceDb,
     config?: Partial<RprConfig>
   ) {
+    super(db, lanceDb);
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.anchors = new HybridAnchorService(db, lanceDb);
   }
 
-  /**
-   * Recupera contexto como trayectorias relacionales relevantes.
-   *
-   * @param query Salida sanitizada del intermediario.
-   * @returns Chunks que representan caminos del grafo.
-   */
-  async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const anchorResults = (await this.anchors.search(query, this.config.anchorLimit))
-      .slice(0, this.config.anchorLimit);
-    if (anchorResults.length === 0) return [];
+  protected getAnchorLimit(): number {
+    return this.config.anchorLimit;
+  }
 
+  protected async expand(anchorResults: HybridAnchor[], _query: SanitizerOutput): Promise<ContextChunk[]> {
     const anchorScores = new Map<string, number>();
     const anchorIds = new Set<string>();
     for (const r of anchorResults) {
@@ -118,13 +98,9 @@ export class RprStrategy implements RecoveryStrategy {
     const paths = this.#enumeratePaths(Array.from(anchorIds), outgoingEdges);
 
     if (paths.length === 0) {
-      const sigs = this.db.getNodeSignatures(Array.from(anchorIds));
-      return Array.from(anchorIds).map((id) => ({
-        nodeId: id,
-        score: anchorScores.get(id) ?? 0.5,
-        text: sigs.get(id) ?? id,
-        source: "RPR",
-      }));
+      return anchorResults.map((anchor) =>
+        this.toChunk(anchor, "RPR", anchorScores.get(anchor.nodeId) ?? 0.5)
+      );
     }
 
     const scored = this.#scorePaths(paths, nodeRelevance);
@@ -178,7 +154,6 @@ export class RprStrategy implements RecoveryStrategy {
     outgoingEdges: Map<string, OutEdge[]>;
     nodeRelevance: Map<string, number>;
   } {
-    const rawDb = this.db.getRawDb();
     const outgoingEdges = new Map<string, OutEdge[]>();
     const nodeRelevance = new Map<string, number>();
 
@@ -195,26 +170,14 @@ export class RprStrategy implements RecoveryStrategy {
       hop++
     ) {
       const frontierArr = Array.from(frontier);
-      const placeholders = frontierArr.map(() => "?").join(",");
-
-      const sql = `
-        SELECT sourceId, targetId, relation
-        FROM edges
-        WHERE sourceId IN (${placeholders}) OR targetId IN (${placeholders})
-        LIMIT 5000
-      `;
-
-      const params = [...frontierArr, ...frontierArr];
-      const edges = rawDb.prepare(sql).all(...params) as {
-        sourceId: string;
-        targetId: string;
-        relation: string;
-      }[];
+      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
+        limit: this.config.bfsMaxNodes,
+      });
 
       const nextFrontier = new Set<string>();
 
       for (const edge of edges) {
-        const dim = DIM_MAP[edge.relation];
+        const dim = RELATION_TO_DIM[edge.relation];
         if (!dim) continue;
 
         if (!outgoingEdges.has(edge.sourceId)) {

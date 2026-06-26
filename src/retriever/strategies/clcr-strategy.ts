@@ -15,32 +15,24 @@
  *   6. Top-K por score final
  */
 
-import {
-  type RecoveryStrategy,
-  type ContextChunk,
-} from "../models/strategies/types.js";
+import type { ContextChunk } from "../models/strategies/types.js";
 import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
+import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
+import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
+import { DIMENSIONS, RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
 
-const DIM_MAP: Record<string, "SYS" | "CPG" | "DTG"> = {
-  EXTENDS: "SYS",
-  IMPLEMENTS: "SYS",
-  IMPORTS_EXTERNAL: "SYS",
-  INJECTS: "CPG",
-  CALLS: "CPG",
-  INSTANTIATES: "CPG",
-  CONSUMES_DATA: "DTG",
-  PRODUCES: "DTG",
-  MUTATES_STATE: "DTG",
-};
+type Dim = Dimension;
+const ALL_DIMS: Dim[] = [...DIMENSIONS];
 
-const DIM_RELATIONS: Record<Dim, string[]> = {
-  SYS: ["EXTENDS", "IMPLEMENTS", "IMPORTS_EXTERNAL"],
-  CPG: ["INJECTS", "CALLS", "INSTANTIATES"],
-  DTG: ["CONSUMES_DATA", "PRODUCES", "MUTATES_STATE"],
-};
+const DIM_RELATIONS = Object.entries(RELATION_TO_DIM).reduce<Record<Dim, string[]>>(
+  (relationsByDim, [relation, dimension]) => {
+    relationsByDim[dimension].push(relation);
+    return relationsByDim;
+  },
+  { SYS: [], CPG: [], DTG: [] },
+);
 
 const INTENT_WEIGHTS: Record<IntentTag, { SYS: number; CPG: number; DTG: number }> = {
   debug:      { SYS: 0.30, CPG: 0.40, DTG: 0.30 },
@@ -69,43 +61,31 @@ const DEFAULT_CONFIG: ClcrConfig = {
   lambda: 0.25,
 };
 
-type Dim = "SYS" | "CPG" | "DTG";
-const ALL_DIMS: Dim[] = ["SYS", "CPG", "DTG"];
-
 interface Edge {
   sourceId: string;
   targetId: string;
   relation: string;
 }
 
-export class ClcrStrategy implements RecoveryStrategy {
+export class ClcrStrategy extends AbstractAnchoredStrategy {
   private readonly config: ClcrConfig;
-  private readonly anchors: HybridAnchorService;
 
   constructor(
-    private readonly db: LaCoCoDatabase,
+    db: LaCoCoDatabase,
     lanceDb: LaCoCoLanceDb,
     config?: Partial<ClcrConfig>
   ) {
+    super(db, lanceDb);
     this.config = { ...DEFAULT_CONFIG, ...config };
-    this.anchors = new HybridAnchorService(db, lanceDb);
   }
 
-  /**
-   * Recupera contexto mediante cascada entre capas del grafo.
-   *
-   * @param query Salida sanitizada del intermediario.
-   * @returns Chunks ordenados por score cross-layer.
-   */
-  async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
+  protected getAnchorLimit(): number {
+    return this.config.anchorLimit;
+  }
+
+  protected async expand(anchorResults: HybridAnchor[], query: SanitizerOutput): Promise<ContextChunk[]> {
     const dominant = this.#computeDominant(query.intent, query.dimensions);
     const cascadeDims = ALL_DIMS.filter((d) => d !== dominant);
-
-    const anchorResults = (await this.anchors.search(query, this.config.anchorLimit))
-      .slice(0, this.config.anchorLimit);
-    if (anchorResults.length === 0) return [];
-
-    const rawDb = this.db.getRawDb();
 
     const baseScore = new Map<string, number>();
     const anchorSet = new Set<string>();
@@ -121,24 +101,11 @@ export class ClcrStrategy implements RecoveryStrategy {
 
     for (let hop = 0; hop < this.config.primaryHops && frontier.size > 0; hop++) {
       const relations = DIM_RELATIONS[dominant];
-      const rPlaceholders = relations.map(() => "?").join(",");
       const frontierArr = Array.from(frontier);
-      const fPlaceholders = frontierArr.map(() => "?").join(",");
-
-      const sql = `
-        SELECT sourceId, targetId, relation
-        FROM edges
-        WHERE (sourceId IN (${fPlaceholders}) OR targetId IN (${fPlaceholders}))
-          AND relation IN (${rPlaceholders})
-        LIMIT 5000
-      `;
-
-      const params = [
-        ...frontierArr,
-        ...frontierArr,
-        ...relations,
-      ];
-      const edges = rawDb.prepare(sql).all(...params) as Edge[];
+      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
+        limit: this.config.bfsMaxNodes,
+        relations,
+      }) as Edge[];
 
       const nextFrontier = new Set<string>();
       for (const edge of edges) {
@@ -167,13 +134,9 @@ export class ClcrStrategy implements RecoveryStrategy {
     }
 
     if (primarySet.size === 0) {
-      const sigs = this.db.getNodeSignatures(anchorIds);
-      return anchorResults.map((r) => ({
-        nodeId: r.nodeId,
-        score: baseScore.get(r.nodeId) ?? 0.5,
-        text: sigs.get(r.nodeId) ?? r.nodeId,
-        source: "CLCR",
-      }));
+      return anchorResults.map((anchor) =>
+        this.toChunk(anchor, "CLCR", baseScore.get(anchor.nodeId) ?? 0.5)
+      );
     }
 
     const reachedBy = new Map<string, Set<Dim>>();
@@ -189,24 +152,11 @@ export class ClcrStrategy implements RecoveryStrategy {
         hop++
       ) {
         const relations = DIM_RELATIONS[cascadeDim];
-        const rPlaceholders = relations.map(() => "?").join(",");
         const frontierArr = Array.from(frontier);
-        const fPlaceholders = frontierArr.map(() => "?").join(",");
-
-        const sql = `
-          SELECT sourceId, targetId, relation
-          FROM edges
-          WHERE (sourceId IN (${fPlaceholders}) OR targetId IN (${fPlaceholders}))
-            AND relation IN (${rPlaceholders})
-          LIMIT 5000
-        `;
-
-        const params = [
-          ...frontierArr,
-          ...frontierArr,
-          ...relations,
-        ];
-        const edges = rawDb.prepare(sql).all(...params) as Edge[];
+        const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
+          limit: this.config.bfsMaxNodes,
+          relations,
+        }) as Edge[];
 
         const nextFrontier = new Set<string>();
         for (const edge of edges) {
@@ -247,24 +197,14 @@ export class ClcrStrategy implements RecoveryStrategy {
 
     const layerCounts = new Map<string, number>();
     if (allIds.length > 0) {
-      const placeholders = allIds.map(() => "?").join(",");
-      const edgeCountSql = `
-        SELECT nid, relation FROM (
-          SELECT sourceId AS nid, relation FROM edges WHERE sourceId IN (${placeholders})
-          UNION ALL
-          SELECT targetId AS nid, relation FROM edges WHERE targetId IN (${placeholders})
-        )
-      `;
-      const edgeRows = rawDb
-        .prepare(edgeCountSql)
-        .all(...allIds, ...allIds) as { nid: string; relation: string }[];
+      const edgeRows = this.db.edgeDao.getIncidentRelations(allIds);
 
       const dimsPerNode = new Map<string, Set<Dim>>();
       for (const row of edgeRows) {
-        const dim = DIM_MAP[row.relation];
+        const dim = RELATION_TO_DIM[row.relation];
         if (!dim) continue;
-        if (!dimsPerNode.has(row.nid)) dimsPerNode.set(row.nid, new Set());
-        dimsPerNode.get(row.nid)!.add(dim);
+        if (!dimsPerNode.has(row.nodeId)) dimsPerNode.set(row.nodeId, new Set());
+        dimsPerNode.get(row.nodeId)!.add(dim);
       }
 
       for (const id of allIds) {

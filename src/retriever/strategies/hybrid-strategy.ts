@@ -1,37 +1,36 @@
-import {
-  type RecoveryStrategy,
-  type ContextChunk,
-} from "../models/strategies/types.js";
+import type { ContextChunk } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { HybridAnchorService } from "../utilities/search/hybrid-anchor-service.js";
+import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
+import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
 
-export class HybridStrategy implements RecoveryStrategy {
+export interface HybridConfig {
+  anchorLimit: number;
+}
 
-  private readonly anchors: HybridAnchorService;
+const DEFAULT_CONFIG: HybridConfig = {
+  anchorLimit: 20,
+};
+
+export class HybridStrategy extends AbstractAnchoredStrategy {
+  private readonly config: HybridConfig;
 
   constructor(
     db: LaCoCoDatabase,
     lanceDb: LaCoCoLanceDb,
+    config?: Partial<HybridConfig>,
   ) {
-    this.anchors = new HybridAnchorService(db, lanceDb);
+    super(db, lanceDb);
+    this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  /**
-   * Recupera contexto mediante fusión híbrida de rankings.
-   *
-   * @param query Salida sanitizada del intermediario
-   * @returns Chunks fusionados y ordenados por score RRF
-   */
-  async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    const anchors = await this.anchors.search(query, 20);
-    return anchors.map(({ nodeId, score, text }) => ({
-      nodeId,
-      score,
-      text,
-      source: "RRF",
-    }));
+  protected getAnchorLimit(): number {
+    return this.config.anchorLimit;
+  }
+
+  protected async expand(anchors: HybridAnchor[], _query: SanitizerOutput): Promise<ContextChunk[]> {
+    return anchors.map((anchor) => this.toChunk(anchor, "RRF"));
   }
 
 }
