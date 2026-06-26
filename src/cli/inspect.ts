@@ -16,13 +16,10 @@ import type Database from "better-sqlite3";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
-import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
-import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
-import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
-import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
+import { getStrategyEntry } from "../retriever/strategies/registry.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { OllamaService } from "../slms/ollama-service.js";
+import { RELATION_TO_DIM } from "../domain/dimensions.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import type { ContextChunk } from "../retriever/models/strategies/types.js";
 
@@ -50,6 +47,7 @@ export interface InspectQueryOptions {
   output: string;
   cdn: boolean;
   ollama: string;
+  timeoutMs?: number;
 }
 
 interface NodeRow {
@@ -102,15 +100,8 @@ const KIND_SHAPES: Record<string, string> = {
   EXTERNAL_LIB: "star",
 };
 
-const SYS_RELS = new Set(["EXTENDS", "IMPLEMENTS", "IMPORTS_EXTERNAL"]);
-const CPG_RELS = new Set(["INJECTS", "CALLS", "INSTANTIATES"]);
-const DTG_RELS = new Set(["CONSUMES_DATA", "PRODUCES", "MUTATES_STATE"]);
-
 function getEdgeDim(relation: string): string {
-  if (SYS_RELS.has(relation)) return "SYS";
-  if (CPG_RELS.has(relation)) return "CPG";
-  if (DTG_RELS.has(relation)) return "DTG";
-  return "unknown";
+  return RELATION_TO_DIM[relation] ?? "unknown";
 }
 
 const CYTOSCAPE_VERSION = "3.33.1";
@@ -126,9 +117,8 @@ export async function inspect(options: InspectOptions): Promise<void> {
 
   const rootIds = findRootNodes(rawDb, options.rootNode);
   if (rootIds.length === 0) {
-    console.error(`[inspect] ❌ Nodo "${options.rootNode}" no encontrado en la base de datos.`);
     db.close();
-    process.exit(1);
+    throw new Error(`Nodo "${options.rootNode}" no encontrado en la base de datos`);
   }
 
   if (rootIds.length > 1) {
@@ -161,86 +151,96 @@ export async function inspect(options: InspectOptions): Promise<void> {
 
 export async function inspectQuery(options: InspectQueryOptions): Promise<void> {
   const db = new LaCoCoDatabase(options.db);
-  const ollama = new OllamaService(options.ollama);
-
-  // 1. Sanitizar
-  const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
-  const sanitized = await intermediary.sanitize(options.prompt);
-
-  console.log(`[inspect-query] 📋 route=${sanitized.route} intent=${sanitized.intent} conf=${sanitized.confidence.toFixed(2)}`);
-
-  if (sanitized.route === "LLM_DIRECT") {
-    console.error("[inspect-query] ❌ El prompt no requiere RAG (no referencia código del proyecto). Nada que graficar.");
-    db.close();
-    process.exit(1);
-  }
-
-  // 2. Seleccionar estrategia
-  const needsLanceDb = ["hybrid", "ictd", "clcr", "rpr"].includes(options.strategy);
+  const ollama = new OllamaService(options.ollama, "qwen2.5-coder:1.5b", options.timeoutMs);
   let lanceDb: LaCoCoLanceDb | undefined;
 
-  let strategy: RecoveryStrategy;
-  if (needsLanceDb) {
-    lanceDb = new LaCoCoLanceDb(options.lancedb);
-    await lanceDb.connect();
-    strategy = createStrategy(options.strategy, db, options.ollama, lanceDb);
-  } else {
-    strategy = createStrategy(options.strategy, db, options.ollama);
-  }
+  try {
+    // 1. Sanitizar
+    const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
+    const sanitized = await intermediary.sanitize(options.prompt);
 
-  console.log(`[inspect-query] 🎯 Estrategia: ${options.strategy}`);
+    console.log(`[inspect-query] 📋 route=${sanitized.route} intent=${sanitized.intent} conf=${sanitized.confidence.toFixed(2)}`);
 
-  // 3. Recuperar chunks
-  const chunks = await strategy.retrieve(sanitized);
+    if (sanitized.route === "LLM_DIRECT") {
+      console.error("[inspect-query] ❌ El prompt no requiere RAG (no referencia código del proyecto). Nada que graficar.");
+      process.exitCode = 1;
+      return;
+    }
 
-  if (chunks.length === 0) {
-    console.error("[inspect-query] ❌ La estrategia no recuperó ningún chunk. Nada que graficar.");
+    // 2. Seleccionar estrategia
+    const entry = getStrategyEntry(options.strategy);
+
+    let strategy: RecoveryStrategy;
+    if (entry.needsLanceDb) {
+      lanceDb = new LaCoCoLanceDb(options.lancedb);
+      await lanceDb.connect();
+      strategy = entry.create({
+        db,
+        ollamaEndpoint: options.ollama,
+        ...(options.timeoutMs !== undefined ? { ollamaTimeoutMs: options.timeoutMs } : {}),
+        lanceDb,
+      });
+    } else {
+      strategy = entry.create({
+        db,
+        ollamaEndpoint: options.ollama,
+        ...(options.timeoutMs !== undefined ? { ollamaTimeoutMs: options.timeoutMs } : {}),
+      });
+    }
+
+    console.log(`[inspect-query] 🎯 Estrategia: ${options.strategy}`);
+
+    // 3. Recuperar chunks
+    const chunks = await strategy.retrieve(sanitized);
+
+    if (chunks.length === 0) {
+      console.error("[inspect-query] ❌ La estrategia no recuperó ningún chunk. Nada que graficar.");
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(`[inspect-query] 📦 Chunks recuperados: ${chunks.length}`);
+
+    // 4. Extraer anchors
+    const anchorScores = new Map<string, number>();
+    const anchorIds: string[] = [];
+    for (const chunk of chunks) {
+      if (!anchorScores.has(chunk.nodeId)) {
+        anchorIds.push(chunk.nodeId);
+      }
+      // Tomar el mejor score si un nodo aparece múltiples veces
+      const prev = anchorScores.get(chunk.nodeId) ?? 0;
+      anchorScores.set(chunk.nodeId, Math.max(prev, chunk.score));
+    }
+
+    console.log(`[inspect-query] 🔗 Anchors únicos: ${anchorIds.length}`);
+
+    // 5. Expandir BFS alrededor de los anchors
+    const visited = expandBFS(db.getRawDb(), anchorIds, options.budget, "ALL");
+    const nodes = loadNodes(db.getRawDb(), visited);
+    const edges = loadEdges(db.getRawDb(), visited);
+
+    const stats = computeStats(nodes, edges, anchorScores);
+
+    console.log(`[inspect-query] 📊 Subgrafo: ${stats.totalNodes} nodos, ${stats.totalEdges} aristas (${stats.anchorCount} anchors)`);
+
+    const cytoscapeTag = await getCytoscapeTag(!options.cdn);
+    const html = generateHtml({
+      nodes,
+      edges,
+      anchors: anchorScores,
+      stats,
+      mode: options.mode,
+      title: `LaCoCo: "${options.prompt.slice(0, 60)}"`,
+      cytoscapeTag,
+    });
+
+    fs.writeFileSync(options.output, html, "utf-8");
+    console.log(`[inspect-query] ✅ HTML generado → ${options.output}`);
+  } finally {
     if (lanceDb) await lanceDb.close();
     db.close();
-    process.exit(1);
   }
-
-  console.log(`[inspect-query] 📦 Chunks recuperados: ${chunks.length}`);
-
-  // 4. Extraer anchors
-  const anchorScores = new Map<string, number>();
-  const anchorIds: string[] = [];
-  for (const chunk of chunks) {
-    if (!anchorScores.has(chunk.nodeId)) {
-      anchorIds.push(chunk.nodeId);
-    }
-    // Tomar el mejor score si un nodo aparece múltiples veces
-    const prev = anchorScores.get(chunk.nodeId) ?? 0;
-    anchorScores.set(chunk.nodeId, Math.max(prev, chunk.score));
-  }
-
-  console.log(`[inspect-query] 🔗 Anchors únicos: ${anchorIds.length}`);
-
-  // 5. Expandir BFS alrededor de los anchors
-  const visited = expandBFS(db.getRawDb(), anchorIds, options.budget, "ALL");
-  const nodes = loadNodes(db.getRawDb(), visited);
-  const edges = loadEdges(db.getRawDb(), visited);
-
-  const stats = computeStats(nodes, edges, anchorScores);
-
-  console.log(`[inspect-query] 📊 Subgrafo: ${stats.totalNodes} nodos, ${stats.totalEdges} aristas (${stats.anchorCount} anchors)`);
-
-  const cytoscapeTag = await getCytoscapeTag(!options.cdn);
-  const html = generateHtml({
-    nodes,
-    edges,
-    anchors: anchorScores,
-    stats,
-    mode: options.mode,
-    title: `LaCoCo: "${options.prompt.slice(0, 60)}"`,
-    cytoscapeTag,
-  });
-
-  fs.writeFileSync(options.output, html, "utf-8");
-  console.log(`[inspect-query] ✅ HTML generado → ${options.output}`);
-
-  if (lanceDb) await lanceDb.close();
-  db.close();
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -815,34 +815,6 @@ async function getCytoscapeTag(standalone: boolean): Promise<string> {
 }
 
 // ── Factory de estrategias ───────────────────────────────────────────────────
-
-function createStrategy(
-  name: string,
-  db: LaCoCoDatabase,
-  ollamaEndpoint: string,
-  lanceDb?: LaCoCoLanceDb,
-): RecoveryStrategy {
-  switch (name) {
-    case "bm25":
-      throw new Error("BM25 puro ya no está disponible como estrategia. Usa hybrid.");
-    case "hybrid":
-      if (!lanceDb) throw new Error("LanceDB requerido para hybrid strategy");
-      return new HybridStrategy(db, lanceDb);
-    case "agentic":
-      return new AgenticStrategy(db, ollamaEndpoint);
-    case "ictd":
-      if (!lanceDb) throw new Error("LanceDB requerido para ictd strategy");
-      return new IctdStrategy(db, lanceDb);
-    case "clcr":
-      if (!lanceDb) throw new Error("LanceDB requerido para clcr strategy");
-      return new ClcrStrategy(db, lanceDb);
-    case "rpr":
-      if (!lanceDb) throw new Error("LanceDB requerido para rpr strategy");
-      return new RprStrategy(db, lanceDb);
-    default:
-      throw new Error(`Estrategia no soportada: ${name}`);
-  }
-}
 
 // ── Utilidades ───────────────────────────────────────────────────────────────
 

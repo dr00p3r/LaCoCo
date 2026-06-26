@@ -12,13 +12,10 @@ import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-int
 import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
-import { HybridStrategy } from "../retriever/strategies/hybrid-strategy.js";
-import { AgenticStrategy } from "../retriever/strategies/agentic-strategy.js";
-import { IctdStrategy } from "../retriever/strategies/ictd-strategy.js";
-import { ClcrStrategy } from "../retriever/strategies/clcr-strategy.js";
-import { RprStrategy } from "../retriever/strategies/rpr-strategy.js";
+import { getStrategyEntry, STRATEGY_NAMES } from "../retriever/strategies/registry.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { VectorsIndexer } from "../indexer/vectors-indexer.js";
+import type { LlmClient } from "../slms/llm-client.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import type { SanitizerOutput } from "../retriever/models/utilities/types.js";
@@ -45,6 +42,7 @@ import {
   markWatcherStopped,
   registerCurrentProject,
   removeProject,
+  configureProjectStorage,
   configureProjectWatcher,
   type ProjectRecord,
 } from "./state/project-registry.js";
@@ -242,25 +240,25 @@ const contextCommand = program
   .description("Exporta y administra contextos recuperados.");
 
 contextCommand
-  .command("export <query>")
+  .command("export [project] <query>")
   .description("Recupera contexto y lo exporta como Markdown identificable por pregunta.")
   .requiredOption("-o, --output <path>", "Archivo Markdown de salida")
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
-  .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
+  .option("-d, --db <path>", "Ruta al archivo SQLite; por defecto paths.data/tensor.sqlite del proyecto")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
+  .option("-s, --strategy <name>", strategyHelp())
+  .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
   .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
   .option("--json", "Imprime JSON válido", false)
-  .action(async (query: string, options: ContextExportCliOptions) => {
-    const exitCode = await runContextExport(query, options);
+  .action(async (project: string | undefined, query: string, options: ContextExportCliOptions) => {
+    const exitCode = await runContextExport(query, options, undefined, undefined, project);
     if (exitCode !== 0) process.exitCode = exitCode;
   });
 
 
 program
   .command("_watch-foreground <ruta-tsconfig>", { hidden: true })
-  .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
-  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
+  .option("-d, --db <path>", "Ruta al archivo SQLite de salida")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB")
   .option("-v, --verbose", "Imprime el path de cada archivo procesado", false)
   .action((rutaTsconfig: string, options: WatchForegroundOptions) => {
     startForegroundWatcher(
@@ -276,8 +274,8 @@ program
   .description(
     "Administra watchers. Compatibilidad: `watch <tsconfig>` inicia foreground."
   )
-  .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
-  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
+  .option("-d, --db <path>", "Ruta al archivo SQLite de salida; por defecto paths.data/tensor.sqlite del proyecto")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
   .option("-v, --verbose", "Imprime el path de cada archivo procesado", false)
   .option("--foreground", "Ejecuta el watcher en primer plano", false)
   .option("--json", "Imprime JSON válido", false)
@@ -293,19 +291,20 @@ program
   .description(
     "Extrae solo el grafo estructural en SQLite (sin embeddings ni watcher)."
   )
-  .option("-d, --db <path>", "Ruta al archivo SQLite de salida", "tensor.sqlite")
+  .option("-d, --db <path>", "Ruta al archivo SQLite de salida; por defecto paths.data/tensor.sqlite del proyecto")
   .option("-v, --verbose", "Imprime progreso detallado", false)
-  .action((rutaTsconfig: string, options: { db: string; verbose: boolean }) => {
+  .action((rutaTsconfig: string, options: { db?: string; verbose: boolean }) => {
    
     console.log("\n[CLI] Extrayendo grafo estructural...\n");
     console.log(`  tsconfig : ${rutaTsconfig}`);
-    console.log(`  sqlite   : ${options.db}\n`);
-
     const projectPath = projectPathFromTsconfig(rutaTsconfig);
+    const dbPath = resolveDbPath(projectPath, options.db);
+    console.log(`  sqlite   : ${dbPath}\n`);
     registerCurrentProject(projectPath);
+    configureProjectStorage(projectPath, { dbPath });
 
     try {
-      const indexer = new GraphIndexer(options.db, rutaTsconfig);
+      const indexer = new GraphIndexer(dbPath, rutaTsconfig);
       indexer.index();
       markProjectIndexStatus(projectPath, "completed");
     } catch (err) {
@@ -321,19 +320,20 @@ program
     "Genera embeddings semánticos en LanceDB directamente desde el AST (sin dependencia de SQLite)."
   )
   .requiredOption("--tsconfig <path>", "Ruta al tsconfig.json del proyecto a analizar")
-  .option("--lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
+  .option("--lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
   .option("-v, --verbose", "Imprime progreso detallado", false)
-  .action(async (options: { tsconfig: string; lancedb: string; verbose: boolean }) => {
+  .action(async (options: { tsconfig: string; lancedb?: string; verbose: boolean }) => {
     
     console.log("\n[CLI] Indexando vectores semánticos...\n");
     console.log(`  tsconfig : ${options.tsconfig}`);
-    console.log(`  lancedb  : ${options.lancedb}\n`);
-
     const projectPath = projectPathFromTsconfig(options.tsconfig);
+    const lanceDbPath = resolveLanceDbPath(projectPath, options.lancedb);
+    console.log(`  lancedb  : ${lanceDbPath}\n`);
     registerCurrentProject(projectPath);
+    configureProjectStorage(projectPath, { lanceDbPath });
 
     try {
-      const indexer = new VectorsIndexer(options.lancedb, options.tsconfig);
+      const indexer = new VectorsIndexer(lanceDbPath, options.tsconfig);
       await indexer.index();
       markProjectIndexStatus(projectPath, "completed");
     } catch (err) {
@@ -344,24 +344,24 @@ program
   });
 
 program
-  .command("retrieve <query>")
+  .command("retrieve [project] <query>")
   .description("Ejecuta el pipeline RAG completo y muestra la respuesta del LLM.")
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
-  .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
+  .option("-d, --db <path>", "Ruta al archivo SQLite; por defecto paths.data/tensor.sqlite del proyecto")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
+  .option("-s, --strategy <name>", strategyHelp())
+  .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
   .option("--no-llm", "Solo muestra chunks recuperados, no llama al LLM")
   .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
-  .action(async (query: string, options: RetrieveCliOptions) => {
-    const exitCode = await runRetrieve(query, options);
+  .action(async (project: string | undefined, query: string, options: RetrieveCliOptions) => {
+    const exitCode = await runRetrieve(query, options, undefined, undefined, project);
     if (exitCode !== 0) process.exitCode = exitCode;
   });
 
 export interface RetrieveCliOptions {
-  db: string;
-  lancedb: string;
-  strategy: string;
-  ollama: string;
+  db?: string;
+  lancedb?: string;
+  strategy?: string;
+  ollama?: string;
   llm: boolean;
   verbose: boolean;
 }
@@ -370,14 +370,16 @@ export interface ContextExportCliOptions extends Omit<RetrieveCliOptions, "llm">
   output: string;
 }
 
+type ResolvedRetrieveCliOptions = RetrieveCliOptions & {
+  db: string;
+  lancedb: string;
+  strategy: string;
+  ollama: string;
+};
+
 export interface CliStreams {
   stdout: Pick<NodeJS.WritableStream, "write">;
   stderr: Pick<NodeJS.WritableStream, "write">;
-}
-
-export interface RetrieveOllamaClient {
-  isAvailable(): Promise<boolean>;
-  generate(prompt: string, system?: string): Promise<string>;
 }
 
 export interface RetrieveIntermediary {
@@ -386,13 +388,14 @@ export interface RetrieveIntermediary {
 
 export interface RetrieveRuntime {
   createDatabase(dbPath: string): LaCoCoDatabase;
-  createOllama(endpoint: string): RetrieveOllamaClient;
-  createIntermediary(ollama: RetrieveOllamaClient): RetrieveIntermediary;
+  createOllama(endpoint: string): LlmClient;
+  createIntermediary(ollama: LlmClient): RetrieveIntermediary;
   createStrategy(
     strategyName: string,
     db: LaCoCoDatabase,
     lanceDbPath: string,
     ollamaEndpoint: string,
+    ollamaTimeoutMs?: number,
   ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }>;
 }
 
@@ -413,9 +416,10 @@ interface RetrievedContext {
 
 const defaultRetrieveRuntime: RetrieveRuntime = {
   createDatabase: (dbPath) => new LaCoCoDatabase(dbPath),
-  createOllama: (endpoint) => new OllamaService(endpoint),
+  createOllama: (endpoint) =>
+    new OllamaService(endpoint, "qwen2.5-coder:1.5b", resolveNumberConfig("timeout.ms")),
   createIntermediary: (ollama) =>
-    new AgentIntermediary1(new SlmClassifier(ollama as OllamaService)),
+    new AgentIntermediary1(new SlmClassifier(ollama)),
   createStrategy: createRecoveryStrategy,
 };
 
@@ -430,6 +434,7 @@ export async function runRetrieve(
   options: RetrieveCliOptions,
   streams: CliStreams = { stdout: process.stdout, stderr: process.stderr },
   runtime: RetrieveRuntime = defaultRetrieveRuntime,
+  project?: string,
 ): Promise<number> {
   const writeStdout = (message: string): void => {
     streams.stdout.write(message.endsWith("\n") ? message : `${message}\n`);
@@ -439,10 +444,11 @@ export async function runRetrieve(
   };
 
   try {
-    const context = await retrieveContext(query, options, streams, runtime);
+    const resolvedOptions = resolveRetrieveOptions(options, project);
+    const context = await retrieveContext(query, resolvedOptions, streams, runtime);
 
-    if (options.llm && context.chunks.length > 0 && context.sanitized.route === "RAG") {
-      const ollama = runtime.createOllama(options.ollama);
+    if (resolvedOptions.llm && context.chunks.length > 0 && context.sanitized.route === "RAG") {
+      const ollama = runtime.createOllama(resolvedOptions.ollama);
       if (await ollama.isAvailable()) {
         const answer = await ollama.generate(context.enrichedPrompt);
         writeStdout(answer);
@@ -454,7 +460,7 @@ export async function runRetrieve(
       writeStdout(context.enrichedPrompt);
     }
 
-    if (options.verbose) writeStderr("[CLI] retrieve completado");
+    if (resolvedOptions.verbose) writeStderr("[CLI] retrieve completado");
     return 0;
   } catch (err) {
     const stage = err instanceof PipelineStageError ? err.stage : "inicialización";
@@ -468,6 +474,7 @@ export async function runContextExport(
   options: ContextExportCliOptions,
   streams: CliStreams = { stdout: process.stdout, stderr: process.stderr },
   runtime: RetrieveRuntime = defaultRetrieveRuntime,
+  project?: string,
 ): Promise<number> {
   const writeStdout = (message: string): void => {
     streams.stdout.write(message.endsWith("\n") ? message : `${message}\n`);
@@ -477,7 +484,8 @@ export async function runContextExport(
   };
 
   try {
-    const context = await retrieveContext(query, { ...options, llm: false }, streams, runtime);
+    const resolvedOptions = resolveRetrieveOptions({ ...options, llm: false });
+    const context = await retrieveContext(query, resolvedOptions, streams, runtime);
     const markdown = renderContextMarkdown(context);
     const outputPath = path.resolve(options.output);
     writeTextFileAtomic(outputPath, markdown);
@@ -502,9 +510,46 @@ export async function runContextExport(
   }
 }
 
+function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): ResolvedRetrieveCliOptions {
+  const projectPath = resolveRetrieveProjectPath(project);
+  return {
+    ...options,
+    db: resolveDbPath(projectPath, options.db),
+    lancedb: resolveLanceDbPath(projectPath, options.lancedb),
+    strategy: options.strategy ?? resolveStringConfig("strategy.default"),
+    ollama: options.ollama ?? resolveStringConfig("agent.endpoint"),
+  };
+}
+
+function resolveRetrieveProjectPath(project?: string): string {
+  if (!project) return process.cwd();
+  try {
+    const record = inspectProject(project);
+    return record.path;
+  } catch {
+    return project;
+  }
+}
+
+function resolveStringConfig(key: string): string {
+  const entry = resolveConfig(key);
+  if (typeof entry.value !== "string") {
+    throw new Error(`La configuración ${key} debe ser string`);
+  }
+  return entry.value;
+}
+
+function resolveNumberConfig(key: string): number {
+  const entry = resolveConfig(key);
+  if (typeof entry.value !== "number") {
+    throw new Error(`La configuración ${key} debe ser number`);
+  }
+  return entry.value;
+}
+
 async function retrieveContext(
   query: string,
-  options: RetrieveCliOptions,
+  options: ResolvedRetrieveCliOptions,
   streams: CliStreams,
   runtime: RetrieveRuntime,
 ): Promise<RetrievedContext> {
@@ -545,6 +590,7 @@ async function retrieveContext(
       db,
       options.lancedb,
       options.ollama,
+      resolveNumberConfig("timeout.ms"),
     );
     lanceDb = created.connectedLanceDb;
 
@@ -581,7 +627,7 @@ async function retrieveContext(
 
 function createRetrievedContext(
   originalQuery: string,
-  options: RetrieveCliOptions,
+  options: ResolvedRetrieveCliOptions,
   sanitized: SanitizerOutput,
   chunks: RetrievedContext["chunks"],
   enrichedPrompt: string,
@@ -699,31 +745,34 @@ async function createRecoveryStrategy(
   db: LaCoCoDatabase,
   lanceDbPath: string,
   ollamaEndpoint: string,
+  ollamaTimeoutMs?: number,
 ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }> {
-  const needsLanceDb = ["hybrid", "ictd", "clcr", "rpr"].includes(strategyName);
-  const lanceDb = needsLanceDb ? new LaCoCoLanceDb(lanceDbPath) : undefined;
+  let lanceDb: LaCoCoLanceDb | undefined;
 
-  if (lanceDb) await lanceDb.connect();
+  try {
+    const entry = getStrategyEntry(strategyName);
+    lanceDb = entry.needsLanceDb ? new LaCoCoLanceDb(lanceDbPath) : undefined;
+    if (lanceDb) await lanceDb.connect();
+    const deps = {
+      db,
+      ollamaEndpoint,
+      ollama: new OllamaService(ollamaEndpoint, "qwen2.5-coder:1.5b", ollamaTimeoutMs),
+      ...(lanceDb ? { lanceDb } : {}),
+      ...(ollamaTimeoutMs !== undefined ? { ollamaTimeoutMs } : {}),
+    };
 
-  switch (strategyName) {
-    case "hybrid":
-      if (!lanceDb) throw new Error("LanceDB requerido para hybrid strategy");
-      return { strategy: new HybridStrategy(db, lanceDb), connectedLanceDb: lanceDb };
-    case "ictd":
-      if (!lanceDb) throw new Error("LanceDB requerido para ictd strategy");
-      return { strategy: new IctdStrategy(db, lanceDb), connectedLanceDb: lanceDb };
-    case "clcr":
-      if (!lanceDb) throw new Error("LanceDB requerido para clcr strategy");
-      return { strategy: new ClcrStrategy(db, lanceDb), connectedLanceDb: lanceDb };
-    case "rpr":
-      if (!lanceDb) throw new Error("LanceDB requerido para rpr strategy");
-      return { strategy: new RprStrategy(db, lanceDb), connectedLanceDb: lanceDb };
-    case "agentic":
-      return { strategy: new AgenticStrategy(db, ollamaEndpoint) };
-    default:
-      if (lanceDb) await lanceDb.close();
-      throw new Error(`Estrategia no soportada: ${strategyName}`);
+    return {
+      strategy: entry.create(deps),
+      ...(lanceDb ? { connectedLanceDb: lanceDb } : {}),
+    };
+  } catch (error) {
+    if (lanceDb) await lanceDb.close();
+    throw error;
   }
+}
+
+function strategyHelp(): string {
+  return `Estrategia de recuperación (${STRATEGY_NAMES.join(", ")}); por defecto strategy.default`;
 }
 
 function formatError(err: unknown): string {
@@ -739,13 +788,13 @@ program
   .description(
     "Visualiza el subgrafo alrededor de un nodo usando expansión BFS con budget."
   )
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
+  .option("-d, --db <path>", "Ruta al archivo SQLite; por defecto paths.data/tensor.sqlite del proyecto")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
   .option("-f, --focus <dim>", "Prioridad dimensional: SYS, CPG, DTG, ALL", "ALL")
   .option("-o, --output <path>", "Archivo HTML de salida", "inspect.html")
   .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
   .action(async (rootNode: string, opts: {
-    db: string;
+    db?: string;
     budget: string;
     focus: string;
     output: string;
@@ -761,7 +810,7 @@ program
       : "ALL";
     await inspect({
       rootNode,
-      db: opts.db,
+      db: resolveDbPath(process.cwd(), opts.db),
       budget,
       focus,
       output: opts.output,
@@ -778,23 +827,23 @@ program
   .description(
     "Pipeline RAG completo → visualización del subgrafo recuperado para un prompt."
   )
-  .option("-d, --db <path>", "Ruta al archivo SQLite", "tensor.sqlite")
-  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB", "./lancedb")
+  .option("-d, --db <path>", "Ruta al archivo SQLite; por defecto paths.data/tensor.sqlite del proyecto")
+  .option("-l, --lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
   .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
-  .option("-s, --strategy <name>", "Estrategia de recuperación (hybrid, agentic, ictd, clcr, rpr)", "hybrid")
+  .option("-s, --strategy <name>", strategyHelp())
   .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
   .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
   .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
-  .option("--ollama <url>", "Endpoint de Ollama", "http://localhost:11434")
+  .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
   .action(async (prompt: string, opts: {
-    db: string;
-    lancedb: string;
+    db?: string;
+    lancedb?: string;
     budget: string;
-    strategy: string;
+    strategy?: string;
     mode: string;
     output: string;
     cdn: boolean;
-    ollama: string;
+    ollama?: string;
   }) => {
     const budget = parseInt(opts.budget, 10);
     if (isNaN(budget) || budget < 1) {
@@ -806,14 +855,15 @@ program
       : "default";
     await inspectQuery({
       prompt,
-      db: opts.db,
-      lancedb: opts.lancedb,
+      db: resolveDbPath(process.cwd(), opts.db),
+      lancedb: resolveLanceDbPath(process.cwd(), opts.lancedb),
       budget,
-      strategy: opts.strategy,
+      strategy: opts.strategy ?? resolveStringConfig("strategy.default"),
       mode,
       output: opts.output,
       cdn: opts.cdn,
-      ollama: opts.ollama,
+      ollama: opts.ollama ?? resolveStringConfig("agent.endpoint"),
+      timeoutMs: resolveNumberConfig("timeout.ms"),
     });
   });
 
@@ -851,7 +901,51 @@ function projectPathFromTsconfig(tsconfigPath: string): string {
   return path.dirname(path.resolve(tsconfigPath));
 }
 
+function resolveDbPath(projectPath: string, explicitPath?: string): string {
+  return resolveStoragePath(projectPath, explicitPath, "dbPath", "tensor.sqlite");
+}
+
+function resolveLanceDbPath(projectPath: string, explicitPath?: string): string {
+  return resolveStoragePath(projectPath, explicitPath, "lanceDbPath", "lancedb");
+}
+
+function resolveStoragePath(
+  projectPath: string,
+  explicitPath: string | undefined,
+  storageKey: "dbPath" | "lanceDbPath",
+  defaultName: string,
+): string {
+  if (explicitPath !== undefined) return path.resolve(explicitPath);
+
+  const project = tryInspectProject(projectPath);
+  const storedPath = project?.storage[storageKey] ?? project?.watcher[storageKey];
+  if (storedPath) return storedPath;
+
+  return path.join(resolveProjectDataDir(project?.path ?? projectPath), defaultName);
+}
+
+function resolveProjectDataDir(projectPath: string): string {
+  const dataPath = resolveStringConfig("paths.data");
+  return path.isAbsolute(dataPath)
+    ? dataPath
+    : path.join(path.resolve(projectPath), dataPath);
+}
+
+function tryInspectProject(projectPath: string): ProjectRecord | null {
+  try {
+    return inspectProject(projectPath);
+  } catch {
+    return null;
+  }
+}
+
 interface WatchForegroundOptions {
+  db?: string;
+  lancedb?: string;
+  verbose: boolean;
+}
+
+interface ResolvedWatchOptions {
   db: string;
   lancedb: string;
   verbose: boolean;
@@ -912,6 +1006,7 @@ function startManagedWatcher(target: string, options: WatchCliOptions): void {
 
   try {
     const current = inspectProject(project.id);
+    const resolvedOptions = resolveWatchOptions(current, options);
 
     if (current.watcher.status === "running") {
       throw new Error(`Ya existe un watcher activo para ${current.name} (pid ${current.watcher.pid})`);
@@ -921,13 +1016,13 @@ function startManagedWatcher(target: string, options: WatchCliOptions): void {
     if (!tsconfig) throw new Error(`Proyecto sin tsconfig configurado: ${current.name}`);
 
     if (options.foreground) {
-      startForegroundWatcher(tsconfig, options, current.id, lock);
+      startForegroundWatcher(tsconfig, resolvedOptions, current.id, lock);
       return;
     }
 
     markWatcherStarting(current.id);
     launchAttempted = true;
-    const { command, childPid } = spawnDetachedWatcher(current, tsconfig, options);
+    const { command, childPid } = spawnDetachedWatcher(current, tsconfig, resolvedOptions);
     const updated = markWatcherRunning(current.id, childPid, command);
     if (options.json) {
       console.log(JSON.stringify(updated, null, 2));
@@ -962,20 +1057,39 @@ function stopManagedWatcher(selector: string, json: boolean, quiet = false): voi
 function resolveProjectForWatcher(target: string, options: WatchForegroundOptions): ProjectRecord {
   if (looksLikeTsconfig(target)) {
     const projectPath = projectPathFromTsconfig(target);
+    const dbPath = resolveDbPath(projectPath, options.db);
+    const lanceDbPath = resolveLanceDbPath(projectPath, options.lancedb);
     return configureProjectWatcher(projectPath, {
       tsconfig: target,
-      dbPath: options.db,
-      lanceDbPath: options.lancedb,
+      dbPath,
+      lanceDbPath,
     });
   }
 
   const project = inspectProject(target);
   const tsconfig = project.watcher.tsconfig ?? inferTsconfig(project);
+  const dbPath = options.db
+    ? path.resolve(options.db)
+    : project.watcher.dbPath ?? project.storage.dbPath ?? resolveDbPath(project.path);
+  const lanceDbPath = options.lancedb
+    ? path.resolve(options.lancedb)
+    : project.watcher.lanceDbPath ?? project.storage.lanceDbPath ?? resolveLanceDbPath(project.path);
   return configureProjectWatcher(project.path, {
     tsconfig,
-    dbPath: project.watcher.dbPath ?? options.db,
-    lanceDbPath: project.watcher.lanceDbPath ?? options.lancedb,
+    dbPath,
+    lanceDbPath,
   });
+}
+
+function resolveWatchOptions(
+  project: ProjectRecord,
+  options: WatchForegroundOptions,
+): ResolvedWatchOptions {
+  return {
+    db: options.db ? path.resolve(options.db) : project.watcher.dbPath ?? resolveDbPath(project.path),
+    lancedb: options.lancedb ? path.resolve(options.lancedb) : project.watcher.lanceDbPath ?? resolveLanceDbPath(project.path),
+    verbose: options.verbose,
+  };
 }
 
 function inferTsconfig(project: ProjectRecord): string {
@@ -992,11 +1106,17 @@ function startForegroundWatcher(
   projectId?: string,
   existingLock?: WatchLock,
 ): void {
-  printBanner(rutaTsconfig, options.db, options.lancedb);
-  const project = configureProjectWatcher(projectPathFromTsconfig(rutaTsconfig), {
+  const projectPath = projectPathFromTsconfig(rutaTsconfig);
+  const resolvedOptions: ResolvedWatchOptions = {
+    db: resolveDbPath(projectPath, options.db),
+    lancedb: resolveLanceDbPath(projectPath, options.lancedb),
+    verbose: options.verbose,
+  };
+  printBanner(rutaTsconfig, resolvedOptions.db, resolvedOptions.lancedb);
+  const project = configureProjectWatcher(projectPath, {
     tsconfig: rutaTsconfig,
-    dbPath: options.db,
-    lanceDbPath: options.lancedb,
+    dbPath: resolvedOptions.db,
+    lanceDbPath: resolvedOptions.lancedb,
   });
   const watcherProjectId = projectId ?? project.id;
   const lock = existingLock ?? acquireWatchLock(watcherProjectId);
@@ -1013,21 +1133,29 @@ function startForegroundWatcher(
 
   markWatcherRunning(watcherProjectId, process.pid, process.argv);
 
-  const db = new LaCoCoDatabase(options.db);
+  const db = new LaCoCoDatabase(resolvedOptions.db);
 
   const daemon = new DaemonManager({
     tsConfigFilePath: rutaTsconfig,
     db,
-    verbose: options.verbose,
+    verbose: resolvedOptions.verbose,
     indexEmbeddings: true,
-    lanceDbPath: options.lancedb,
+    lanceDbPath: resolvedOptions.lancedb,
+    watchDebounceMs: resolveNumberConfig("watcher.debounceMs"),
   });
 
+  let shuttingDown = false;
+
   const shutdown = (): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
+
     console.log("\n[CLI] Señal de apagado recibida...");
     markWatcherStopped(watcherProjectId);
     lock.release();
-    void daemon.stop().then(() => process.exit(0));
+    daemon.stop().then(() => process.exit(0)).catch(() => process.exit(1));
   };
 
   process.on("SIGINT", shutdown);
@@ -1042,14 +1170,14 @@ function startForegroundWatcher(
       "[CLI] ❌ Error fatal durante el arranque:",
       err instanceof Error ? err.message : err
     );
-    void daemon.stop().then(() => process.exit(1));
+    daemon.stop().then(() => process.exit(1)).catch(() => process.exit(1));
   }
 }
 
 function spawnDetachedWatcher(
   project: ProjectRecord,
   tsconfig: string,
-  options: WatchForegroundOptions,
+  options: ResolvedWatchOptions,
 ): { command: string[]; childPid: number } {
   const entrypoint = process.argv[1];
   if (!entrypoint) throw new Error("No se pudo resolver el entrypoint de la CLI");
@@ -1085,7 +1213,7 @@ function spawnDetachedWatcher(
 function buildWatchCommand(
   entrypoint: string,
   tsconfig: string,
-  options: WatchForegroundOptions,
+  options: ResolvedWatchOptions,
 ): string[] {
   const args = [
     "_watch-foreground",
@@ -1129,8 +1257,8 @@ interface ConfigScopeOptions extends JsonOption {
   local: boolean;
 }
 
-function runCliCommand(action: () => void | Promise<void>): void {
-  Promise.resolve()
+function runCliCommand(action: () => void | Promise<void>): Promise<void> {
+  return Promise.resolve()
     .then(action)
     .catch((err: unknown) => {
       console.error(formatError(err));
@@ -1161,8 +1289,12 @@ function writeProjectResult(project: ProjectRecord, json: boolean): void {
       ["registeredAt", project.registeredAt],
       ["lastIndexedAt", project.lastIndexedAt ?? "-"],
       ["lastIndexStatus", project.lastIndexStatus],
+      ["storageDbPath", project.storage.dbPath ?? "-"],
+      ["storageLanceDbPath", project.storage.lanceDbPath ?? "-"],
       ["watcherStatus", project.watcher.status],
       ["watcherPid", project.watcher.pid === null ? "-" : String(project.watcher.pid)],
+      ["watcherDbPath", project.watcher.dbPath ?? "-"],
+      ["watcherLanceDbPath", project.watcher.lanceDbPath ?? "-"],
     ],
   ));
 }

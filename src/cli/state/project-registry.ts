@@ -17,6 +17,11 @@ export interface ProjectRecord {
   lastIndexedAt: string | null;
   lastIndexStatus: IndexStatus;
   config: Record<string, ConfigValue>;
+  storage: {
+    dbPath: string | null;
+    lanceDbPath: string | null;
+    updatedAt: string | null;
+  };
   watcher: {
     status: WatcherStatus;
     pid: number | null;
@@ -33,6 +38,11 @@ export interface WatcherConfig {
   tsconfig: string;
   dbPath: string;
   lanceDbPath: string;
+}
+
+export interface ProjectStorageConfig {
+  dbPath?: string;
+  lanceDbPath?: string;
 }
 
 interface ProjectRegistryFile {
@@ -59,6 +69,11 @@ export function registerCurrentProject(projectPath = process.cwd()): ProjectReco
     lastIndexedAt: existing?.lastIndexedAt ?? null,
     lastIndexStatus: existing?.lastIndexStatus ?? "never",
     config: snapshotConfig(),
+    storage: existing?.storage ?? {
+      dbPath: null,
+      lanceDbPath: null,
+      updatedAt: null,
+    },
     watcher: existing?.watcher ?? {
       status: "stopped",
       pid: null,
@@ -79,6 +94,25 @@ export function registerCurrentProject(projectPath = process.cwd()): ProjectReco
 
   writeRegistry(registry);
   return record;
+}
+
+export function configureProjectStorage(
+  projectPath: string,
+  config: ProjectStorageConfig,
+): ProjectRecord {
+  const registered = registerCurrentProject(projectPath);
+  const registry = readRegistry();
+  const index = findProjectIndex(registry, registered.id);
+  if (index < 0) throw new Error(`Proyecto no encontrado tras registrar: ${projectPath}`);
+
+  const project = registry.projects[index]!;
+  project.storage = {
+    ...project.storage,
+    ...config,
+    updatedAt: new Date().toISOString(),
+  };
+  writeRegistry(registry);
+  return withComputedWatcherStatus(project);
 }
 
 export function markProjectIndexStatus(
@@ -112,6 +146,13 @@ export function configureProjectWatcher(
   if (index < 0) throw new Error(`Proyecto no encontrado tras registrar: ${projectPath}`);
 
   const project = registry.projects[index]!;
+  const storage = {
+    ...project.storage,
+    dbPath: config.dbPath,
+    lanceDbPath: config.lanceDbPath,
+    updatedAt: new Date().toISOString(),
+  };
+  project.storage = storage;
   project.watcher = {
     ...project.watcher,
     tsconfig: path.resolve(config.tsconfig),
@@ -246,6 +287,11 @@ function writeRegistry(registry: ProjectRegistryFile): void {
 function normalizeProjectRecord(project: ProjectRecord): ProjectRecord {
   return {
     ...project,
+    storage: {
+      dbPath: project.storage?.dbPath ?? null,
+      lanceDbPath: project.storage?.lanceDbPath ?? null,
+      updatedAt: project.storage?.updatedAt ?? null,
+    },
     watcher: {
       status: project.watcher.status,
       pid: project.watcher.pid,

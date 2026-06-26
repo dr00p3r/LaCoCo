@@ -49,8 +49,11 @@ function createLock(filePath: string, projectId: string): WatchLock {
     createdAt: new Date().toISOString(),
   };
 
-  fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
-  fs.closeSync(fd);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
+  } finally {
+    fs.closeSync(fd);
+  }
 
   return {
     path: filePath,

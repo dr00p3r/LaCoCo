@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { readJsonFile, writeJsonFileAtomic } from "./json-store.js";
+import { STRATEGY_NAMES } from "../../retriever/strategies/strategy-names.js";
 
 export type ConfigScope = "default" | "global" | "local" | "env";
 export type WritableConfigScope = "global" | "local";
@@ -29,9 +30,7 @@ export type ConfigKey = keyof typeof CONFIG_DEFINITIONS;
 export type ConfigValue = string | number | boolean;
 
 const CONFIG_VERSION = 1;
-const STRATEGIES = new Set(["hybrid", "agentic", "ictd", "clcr", "rpr"]);
-const LOG_LEVELS = new Set(["error", "warn", "info", "debug"]);
-const OUTPUT_FORMATS = new Set(["text", "json"]);
+const STRATEGIES = new Set<string>(STRATEGY_NAMES);
 
 const CONFIG_DEFINITIONS = {
   "agent.endpoint": {
@@ -52,15 +51,6 @@ const CONFIG_DEFINITIONS = {
         ? null
         : `strategy.default debe ser una de: ${Array.from(STRATEGIES).join(", ")}`,
   },
-  "logging.level": {
-    type: "string",
-    defaultValue: "info",
-    env: "LACOCO_LOG_LEVEL",
-    validate: (value) =>
-      typeof value === "string" && LOG_LEVELS.has(value)
-        ? null
-        : `logging.level debe ser uno de: ${Array.from(LOG_LEVELS).join(", ")}`,
-  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,
@@ -69,15 +59,6 @@ const CONFIG_DEFINITIONS = {
       typeof value === "number" && Number.isInteger(value) && value > 0
         ? null
         : "timeout.ms debe ser un entero positivo",
-  },
-  "output.format": {
-    type: "string",
-    defaultValue: "text",
-    env: "LACOCO_OUTPUT_FORMAT",
-    validate: (value) =>
-      typeof value === "string" && OUTPUT_FORMATS.has(value)
-        ? null
-        : `output.format debe ser uno de: ${Array.from(OUTPUT_FORMATS).join(", ")}`,
   },
   "watcher.debounceMs": {
     type: "number",

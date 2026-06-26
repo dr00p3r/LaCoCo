@@ -28,11 +28,15 @@ export function writeTextFileAtomic(filePath: string, value: string, mode = 0o60
     `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
   );
 
-  fs.writeFileSync(tempPath, value, {
-    encoding: "utf-8",
-    mode,
-  });
-  fs.renameSync(tempPath, filePath);
+  try {
+    fs.writeFileSync(tempPath, value, {
+      encoding: "utf-8",
+      mode,
+    });
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    try { fs.rmSync(tempPath, { force: true }); } catch { /* best-effort */ }
+  }
 }
 
 export function pathExists(filePath: string): boolean {
