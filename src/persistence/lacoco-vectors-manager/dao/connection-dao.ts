@@ -29,10 +29,14 @@ export class ConnectionDao {
   }
 
   async buildIndex(table: lancedb.Table): Promise<void> {
-    await (table as any).createIndex({
-      type: "hnsw",
-      column: "embedding",
-      metric_type: "cosine",
+    await table.createIndex("embedding", {
+      config: lancedb.Index.hnswSq({
+        distanceType: "cosine",
+        numPartitions: 1,
+      }),
+      name: "embedding_hnsw",
+      replace: true,
+      waitTimeoutSeconds: 60,
     });
   }
 }

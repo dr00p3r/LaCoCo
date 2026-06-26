@@ -28,9 +28,12 @@ export class LaCoCoLanceDb {
 
   async close(): Promise<void> {
     if (this.db) {
-      await this.connectionDao.close(this.db);
-      this.db = null;
-      this.table = null;
+      try {
+        await this.connectionDao.close(this.db);
+      } finally {
+        this.db = null;
+        this.table = null;
+      }
     }
   }
 
@@ -39,12 +42,20 @@ export class LaCoCoLanceDb {
     await this.embeddingDao.insertBatch(this.table, records);
   }
 
+  async replaceBatch(records: NodeEmbeddingRecord[]): Promise<void> {
+    if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
+    await this.embeddingDao.replaceBatch(this.table, records);
+  }
+
   async search(
     queryEmbedding: Float32Array,
     filter?: string,
     topK = 50
   ): Promise<{ node_id: string; score: number }[]> {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
+    if (filter !== undefined && filter.length === 0) {
+      throw new Error("El filtro de LanceDB no puede ser una cadena vacía");
+    }
     return this.searchDao.search(this.table, queryEmbedding, filter, topK);
   }
 
@@ -65,6 +76,13 @@ export class LaCoCoLanceDb {
 
   async buildIndex(): Promise<void> {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
-    await this.connectionDao.buildIndex(this.table);
+    try {
+      await this.connectionDao.buildIndex(this.table);
+    } catch (err) {
+      console.warn(
+        "[LaCoCo] No se pudo construir el índice HNSW; la indexación queda utilizable sin ANN optimizado:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 }
