@@ -8,6 +8,7 @@ export class ConnectionDao {
   }
 
   close(): void {
+    this.db.pragma("wal_checkpoint(TRUNCATE)");
     this.db.close();
     console.error("[LaCoCo] Conexión SQLite cerrada.");
   }

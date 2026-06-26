@@ -38,24 +38,43 @@ export class NodeDao {
     this.stmtInsertNode.run(node);
   }
 
-  deleteNodesByFile(filepath: string): void {
+  deleteNodesByFile(filepath: string): string[] {
     const nodeIds = (
       this.stmtGetNodeIdsByFile.all(filepath) as { id: string }[]
     ).map((r) => r.id);
 
-    if (nodeIds.length === 0) return;
+    if (nodeIds.length === 0) return [];
 
-    for (const id of nodeIds) {
-      this.stmtDeleteEdgesByTarget.run(id);
-    }
+    this.db.transaction(() => {
+      for (const id of nodeIds) {
+        this.stmtDeleteEdgesByTarget.run(id);
+      }
+      this.stmtDeleteNodesByFile.run(filepath);
+    })();
 
-    this.stmtDeleteNodesByFile.run(filepath);
+    return nodeIds;
   }
 
   getNodesByFile(filepath: string): GraphNode[] {
     return this.db
       .prepare(`SELECT * FROM nodes WHERE filepath = ?`)
       .all(filepath) as GraphNode[];
+  }
+
+  getNodeIdsBySymbol(name: string, limit = 10): string[] {
+    const rows = this.db
+      .prepare("SELECT id FROM nodes WHERE name = ? LIMIT ?")
+      .all(name, limit) as { id: string }[];
+    return rows.map((row) => row.id);
+  }
+
+  getExternalLibraryIds(pkg: string, version?: string, limit = 10): string[] {
+    const sql = version
+      ? "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? AND name LIKE ? LIMIT ?"
+      : "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? LIMIT ?";
+    const params = version ? [`%${pkg}%`, `%${version}%`, limit] : [`%${pkg}%`, limit];
+    const rows = this.db.prepare(sql).all(...params) as { id: string }[];
+    return rows.map((row) => row.id);
   }
 
   getNodeSignatures(ids: string[]): Map<string, string> {

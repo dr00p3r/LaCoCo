@@ -56,7 +56,7 @@ export class MigrationDao {
       if (!Number.isInteger(version)) {
         throw new Error(`Nombre de migración inválido: ${file}`);
       }
-      if (version <= this.currentVersion) continue;
+      if (version > 0 && version <= this.currentVersion) continue;
 
       const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
       this.db.transaction(() => {
