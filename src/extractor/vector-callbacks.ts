@@ -1,11 +1,12 @@
 import type { ExtractionCallbacks, NodeRow, EdgeRelation } from "./types.js";
 import type { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import type { NodeEmbeddingRecord } from "../persistence/lacoco-vectors-manager/model/types.js";
+import { KIND_TO_DIM, type Dimension } from "../domain/dimensions.js";
 
-function inferKind(node: NodeRow): "SYS" | "CPG" | "DTG" {
-  if (node.kind === "CLASS" || node.kind === "INTERFACE") return "SYS";
-  if (node.kind === "METHOD" || node.kind === "FUNCTION" || node.kind === "ARROW_FUNCTION") return "CPG";
-  return "DTG";
+type VectorEmbeddingWriter = Pick<LaCoCoLanceDb, "replaceBatch">;
+
+function inferKind(node: NodeRow): Dimension {
+  return KIND_TO_DIM[node.kind] ?? "DTG";
 }
 
 export class VectorCallbacks implements ExtractionCallbacks {
@@ -16,9 +17,9 @@ export class VectorCallbacks implements ExtractionCallbacks {
   nodesWritten = 0;
 
   constructor(
-    private readonly lanceDb: LaCoCoLanceDb,
+    private readonly lanceDb: VectorEmbeddingWriter,
     private readonly generateEmbedding: (text: string) => Promise<Float32Array>,
-    private readonly inferDimension: (node: NodeRow) => "SYS" | "CPG" | "DTG" = inferKind,
+    private readonly inferDimension: (node: NodeRow) => Dimension = inferKind,
     batchSize = 32
   ) {
     this.batchSize = batchSize;
@@ -28,7 +29,12 @@ export class VectorCallbacks implements ExtractionCallbacks {
     this.pending.push(row);
     this.nodesWritten++;
     if (this.pending.length >= this.batchSize) {
-      void this.#scheduleFlush();
+      void this.#scheduleFlush().catch((err: unknown) => {
+        console.error(
+          "[VectorCallbacks] Error en flush programado:",
+          err instanceof Error ? err.message : err,
+        );
+      });
     }
   }
 
@@ -54,6 +60,13 @@ export class VectorCallbacks implements ExtractionCallbacks {
           await this.#flushNow();
         }
       })
+      .catch((err: unknown) => {
+        this.flushChain = Promise.resolve();
+        console.error(
+          "[VectorCallbacks] Error en cadena de flush:",
+          err instanceof Error ? err.message : err,
+        );
+      })
       .finally(() => {
         this.flushScheduled = false;
       });
@@ -66,10 +79,8 @@ export class VectorCallbacks implements ExtractionCallbacks {
 
     for (const node of batch) {
       const text = `${node.name} ${node.signature}`;
-      const [embedding, dimension] = await Promise.all([
-        this.generateEmbedding(text),
-        this.inferDimension(node),
-      ]);
+      const embedding = await this.generateEmbedding(text);
+      const dimension = this.inferDimension(node);
       records.push({
         node_id: node.id,
         embedding,
@@ -79,6 +90,6 @@ export class VectorCallbacks implements ExtractionCallbacks {
       });
     }
 
-    await this.lanceDb.insertBatch(records);
+    await this.lanceDb.replaceBatch(records);
   }
 }

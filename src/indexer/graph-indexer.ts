@@ -21,7 +21,11 @@ export class GraphIndexer {
         const sourceFiles = project.getSourceFiles();
         console.log(`[CLI]/[GraphIndexer] Archivos encontrados: ${sourceFiles.length}`);
 
-        this.#insertIntoDatabase(sourceFiles, codeExtractor, callbacks);
+        try {
+          this.#insertIntoDatabase(sourceFiles, codeExtractor, callbacks);
+        } finally {
+          this.db.close();
+        }
     }
 
     #insertIntoDatabase(
@@ -50,7 +54,5 @@ export class GraphIndexer {
 
         console.log(`[CLI] 🏷️  Poblando metadatos dimensionales...`);
         this.db.populateMetadata();
-
-        this.db.close();
     }
 }

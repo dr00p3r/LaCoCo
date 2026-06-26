@@ -189,7 +189,8 @@ function isTargetableNode(declaration: Node): boolean {
     return false;
   if (Node.isVariableDeclaration(declaration))
     return declaration.getVariableStatement()?.isExported() ?? false;
-  return (declaration as any).isExported?.() ?? false;
+  const exportable = declaration as { isExported?: () => boolean };
+  return exportable.isExported?.() ?? false;
 }
 
 /**

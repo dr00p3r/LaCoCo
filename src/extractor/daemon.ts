@@ -45,6 +45,8 @@ export interface DaemonOptions {
   indexEmbeddings?: boolean;
   /** Ruta al directorio de LanceDB. Default: ./lancedb */
   lanceDbPath?: string;
+  /** Milisegundos de estabilidad antes de procesar eventos del watcher. Default: 80. */
+  watchDebounceMs?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,9 +69,11 @@ export class DaemonManager {
   private readonly verbose: boolean;
   private readonly indexVectors: boolean;
   private readonly lanceDbPath: string;
+  private readonly watchDebounceMs: number;
   private vectorsPromise: Promise<void> | null = null;
   private fileOperationChain: Promise<void> = Promise.resolve();
   private vectorOperationChain: Promise<void> = Promise.resolve();
+  private embeddingsFailed = false;
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
@@ -77,6 +81,7 @@ export class DaemonManager {
     this.verbose = opts.verbose ?? false;
     this.indexVectors = opts.indexEmbeddings ?? true;
     this.lanceDbPath = opts.lanceDbPath ?? "./lancedb";
+    this.watchDebounceMs = opts.watchDebounceMs ?? 80;
 
     const projectRoot = path.dirname(this.tsConfigFilePath);
     this.watchGlob =
@@ -112,27 +117,34 @@ export class DaemonManager {
    *   - Cierra las conexiones LanceDB y SQLite.
    */
   async stop(): Promise<void> {
-    if (this.watcher) {
-      await this.watcher.close();
-      this.watcher = null;
-    }
+    try {
+      if (this.watcher) {
+        await this.watcher.close();
+        this.watcher = null;
+      }
 
-    if (this.vectorsPromise) {
-      await this.vectorsPromise;
-      this.vectorsPromise = null;
-    }
-    await this.fileOperationChain;
-    await this.vectorOperationChain;
-    if (this.vectorCallbacks) {
-      await this.vectorCallbacks.flush();
-    }
-    if (this.lanceDb) {
-      await this.lanceDb.close();
-      this.lanceDb = null;
-    }
+      if (this.vectorsPromise) {
+        await this.vectorsPromise;
+        this.vectorsPromise = null;
+      }
+      await this.fileOperationChain;
+      await this.vectorOperationChain;
+      if (this.vectorCallbacks) {
+        await this.vectorCallbacks.flush();
+      }
+      if (this.lanceDb) {
+        await this.lanceDb.close();
+        this.lanceDb = null;
+      }
 
-    this.db.close();
-    console.log("\n[Daemon] 🛑 Apagado limpio completado.");
+      this.db.close();
+      console.log("\n[Daemon] 🛑 Apagado limpio completado.");
+    } catch (err) {
+      console.error(
+        "\n[Daemon] ❌ Error durante el apagado:",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   /**
@@ -143,6 +155,14 @@ export class DaemonManager {
     if (this.vectorsPromise) {
       await this.vectorsPromise;
     }
+  }
+
+  health(): { ok: boolean; embeddingsFailed: boolean; watcherActive: boolean } {
+    return {
+      ok: !this.embeddingsFailed,
+      embeddingsFailed: this.embeddingsFailed,
+      watcherActive: this.watcher !== null,
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -212,22 +232,24 @@ export class DaemonManager {
         this.#safeProcessFile(this.vectorExtractor, file);
       }
       await this.vectorCallbacks.flush();
+      await this.lanceDb.buildIndex();
       console.timeEnd("[Daemon] Embeddings");
       console.log(`[Daemon] ✅ ${this.vectorCallbacks.nodesWritten} embeddings insertados en LanceDB.`);
     } catch (err) {
+      this.embeddingsFailed = true;
       console.error("[Daemon] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
     }
   }
 
   async #reindexVectors(filePath: string): Promise<void> {
-    if (!this.lanceDb || !this.vectorCallbacks) return;
+    if (!this.lanceDb || !this.vectorCallbacks || !this.vectorExtractor) return;
     await this.lanceDb.deleteByFilePath(filePath);
 
     const sourceFile = this.project.getSourceFile(filePath);
     if (!sourceFile) return;
 
     // Re-generar embeddings
-    this.#safeProcessFile(this.vectorExtractor!, sourceFile);
+    this.#safeProcessFile(this.vectorExtractor, sourceFile);
     await this.vectorCallbacks.flush();
   }
 
@@ -252,7 +274,7 @@ export class DaemonManager {
       ignoreInitial: true,          // El cold start ya procesó el estado inicial
       ignored: (filePath: string) => filePath.includes("node_modules"),  // chokidar v5: usar función, no RegExp
       awaitWriteFinish: {           // Espera a que el archivo deje de cambiar
-        stabilityThreshold: 80,     // ms de silencio antes de disparar el evento
+        stabilityThreshold: this.watchDebounceMs,
         pollInterval: 20,
       },
     });
@@ -342,19 +364,23 @@ export class DaemonManager {
       this.sqliteCallbacks.nodesWritten = 0;
       this.sqliteCallbacks.edgesWritten = 0;
 
+      let allPurgedIds: string[] = [];
+
       this.db.transaction(() => {
         // 3. Purgar el archivo modificado y re-procesarlo con el AST fresco
-        this.#purgeFile(filePath);
+        const purgedIds = this.#purgeFile(filePath);
         this.#safeProcessFile(this.sqliteExtractor, sourceFile);
 
         // 4. Propagar a archivos dependientes
+        allPurgedIds = [...purgedIds];
         for (const dep of filesToPropagate) {
           dep.refreshFromFileSystemSync();
-          this.#purgeFile(dep.getFilePath());
+          const depIds = this.#purgeFile(dep.getFilePath());
+          allPurgedIds.push(...depIds);
           this.#safeProcessFile(this.sqliteExtractor, dep);
         }
       });
-      this.db.populateMetadata();
+      this.db.populateMetadataForNodes(allPurgedIds);
 
       console.log(
         `[Daemon]    ↳ ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas actualizados` +
@@ -409,15 +435,16 @@ export class DaemonManager {
   /**
    * Borra en cascada todos los nodos y aristas asociados a un filepath.
    *
-   * Estrategia sin ON DELETE CASCADE:
+   * Estrategia con ON DELETE CASCADE parcial:
    *   1. Obtener los ids de los nodos del archivo.
-   *   2. Borrar las aristas donde sourceId O targetId pertenece a esos ids.
+   *   2. Borrar las aristas donde targetId pertenece a esos ids
+   *      (sourceId se cubre con ON DELETE CASCADE del schema).
    *   3. Borrar los nodos del archivo.
    *
    * Esto garantiza consistencia aunque el schema no tenga CASCADE configurado.
    */
-  #purgeFile(filePath: string): void {
-    this.db.deleteNodesByFile(filePath);
+  #purgeFile(filePath: string): string[] {
+    return this.db.deleteNodesByFile(filePath);
   }
 
   #enqueueFileOperation(operation: () => Promise<void>): void {
