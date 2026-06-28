@@ -1,0 +1,213 @@
+manifest_version: 1
+kind: retrieval_strategies
+updated_at: "2026-06-28"
+
+comparison_design:
+  purpose: >-
+    Comparar baselines sin contexto, recuperacion hibrida y estrategias
+    multirrelacionales de LaCoCo bajo las mismas consultas y ground truth.
+  deterministic_query_policy:
+    enabled: true
+    description: >-
+      En corridas oficiales, el pipeline debe usar los campos deterministic_input
+      de cada tarea para evitar que el clasificador SLM introduzca variabilidad
+      entre estrategias.
+  ranking_cutoffs:
+    primary_k: 5
+    auxiliary_k:
+      - 10
+      - 20
+      - 50
+  latency_repetitions: 100
+  warmup_repetitions: 5
+  random_seed: 42
+
+strategies:
+  - id: no_context
+    label: "No context baseline"
+    kind: "baseline"
+    enabled: true
+    lacoco_strategy: null
+    requires_lancedb: false
+    requires_ollama: false
+    retrieval_enabled: false
+    generation_enabled: true
+    description: >-
+      Baseline de generacion sin contexto recuperado por LaCoCo. Sirve para
+      estimar la mejora atribuible al contexto inyectado.
+    output_context_policy: "empty"
+    metrics:
+      retrieval:
+        include: false
+        reason: "No produce ranking de nodos."
+      generation:
+        include: true
+
+  - id: hybrid
+    label: "Hybrid BM25 + ANN + RRF"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "hybrid"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline fuerte de recuperacion hibrida. Combina busqueda textual y
+      vectorial, y ordena anclas mediante fusion de ranking.
+    parameters:
+      top_k: 50
+      anchor_limit: 20
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: ictd
+    label: "Intent-Conditioned Tensor Diffusion"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "ictd"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia tensorial que expande anclas hibridas mediante difusion guiada
+      por intencion y dimensiones SYS, CPG y DTG.
+    parameters:
+      top_k: 50
+      anchor_limit: 30
+      max_iterations: 10
+      restart_probability: 0.2
+      max_hops: 2
+    hypothesis: >-
+      Debe mejorar Recall@5 y Multi-hop Dependency Recall frente a hybrid en
+      tareas con dependencias transversales.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: clcr
+    label: "Cross-Layer Context Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "clcr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia de expansion por etapas entre capas del grafo. Se evalua como
+      alternativa estructurada a la difusion tensorial.
+    parameters:
+      top_k: 50
+      anchor_limit: 30
+      primary_hops: 1
+      cascade_hops: 1
+    hypothesis: >-
+      Debe recuperar contexto multicapas con menor ruido que una expansion BFS
+      no diferenciada.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: rpr
+    label: "Relational Path Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "rpr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia basada en enumeracion y puntuacion de caminos relacionales.
+      Es especialmente util para inspeccionar rutas entre nodos, aunque puede
+      ser mas costosa en repositorios grandes.
+    parameters:
+      top_k: 50
+      anchor_limit: 30
+      max_depth: 2
+      max_candidates: 100
+    hypothesis: >-
+      Debe mejorar explicabilidad y recuperacion multi-hop, con posible coste
+      adicional de latencia.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: agentic
+    label: "Agentic local planning"
+    kind: "lacoco"
+    enabled: false
+    lacoco_strategy: "agentic"
+    requires_lancedb: false
+    requires_ollama: true
+    retrieval_enabled: true
+    generation_enabled: false
+    description: >-
+      Estrategia que usa planificacion local mediante LlmClient/Ollama. Se deja
+      desactivada por defecto en la comparacion principal porque introduce otra
+      fuente de variabilidad.
+    parameters:
+      top_k: 50
+      ollama_endpoint_env: "LACOCO_AGENT_ENDPOINT"
+      model_env: "LACOCO_AGENT_MODEL"
+    metrics:
+      retrieval:
+        include: true
+        separate_analysis: true
+      generation:
+        include: false
+        reason: "No mezclar con agentes externos en la corrida base."
+
+execution_matrix:
+  official_retrieval:
+    include_strategy_ids:
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+    exclude_strategy_ids:
+      - no_context
+      - agentic
+  official_generation:
+    include_strategy_ids:
+      - no_context
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+    exclude_strategy_ids:
+      - agentic
+  exploratory:
+    include_strategy_ids:
+      - agentic
+
+output_contract:
+  retrieval_record_fields:
+    - run_id
+    - task_id
+    - repo_id
+    - strategy_id
+    - sanitized_input
+    - ranked_nodes
+    - timings_ms
+    - errors
+  ranked_node_fields:
+    - rank
+    - node_id
+    - score
+    - source
+    - filepath
+    - kind
+    - text
+    - hop_distance_from_anchor
