@@ -11,7 +11,10 @@
     "dev": "tsx src/cli/index.ts",
     "build": "tsc --project tsconfig.json && node scripts/copy-migrations.mjs",
     "start": "node dist/cli/index.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project eval/tsconfig.json",
+    "eval:check-manifests": "node --import tsx eval/scripts/lib/load-manifests.ts",
+    "eval:prepare": "node --import tsx eval/scripts/prepare-repos.ts",
+    "eval:index": "node --import tsx eval/scripts/index-repos.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -40,6 +43,7 @@
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "yaml": "^2.9.0"
   }
 }

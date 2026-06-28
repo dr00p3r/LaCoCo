@@ -1,0 +1,355 @@
+manifest_version: 1
+kind: repositories
+updated_at: "2026-06-28"
+
+selection:
+  description: >-
+    Repositorios open source JavaScript/TypeScript con Node.js usados para
+    evaluar LaCoCo en escenarios de recuperacion y generacion de codigo.
+  inclusion_criteria:
+    - "Open source"
+    - "Ecosistema JavaScript/TypeScript con Node.js"
+    - "Proyecto con pruebas automatizadas"
+    - "Popularidad alta o relevancia tecnica para repos de librerias"
+    - "Tamanos pequeno, mediano y grande"
+  notes:
+    - >-
+      Los valores expected_loc son aproximaciones metodologicas usadas para
+      clasificar el tamano. El pipeline debe calcular LOC reales en cada corrida.
+    - >-
+      Cuando framework_from_plan y framework_verified difieren, prevalece
+      framework_verified para la ejecucion; framework_from_plan conserva la
+      trazabilidad con el documento academico.
+
+defaults:
+  clone:
+    depth: 0
+    fetch_tags: true
+    clean_before_task: true
+    clean_command: "git reset --hard HEAD && git clean -fdx"
+  runtime:
+    node_version: ">=20"
+    env:
+      CI: "true"
+      NO_COLOR: "1"
+  install:
+    timeout_ms: 900000
+  build:
+    timeout_ms: 900000
+    optional: true
+  test:
+    timeout_ms: 900000
+    run_before_generation: true
+    run_after_generation: true
+  lacoco_index:
+    graph_db_name: "tensor.sqlite"
+    vector_dir_name: "lancedb"
+    generate_eval_tsconfig_when_missing: true
+    eval_tsconfig_name: "tsconfig.lacoco-eval.json"
+
+repositories:
+  - id: zod
+    display_name: "zod"
+    url: "https://github.com/colinhacks/zod.git"
+    ref: "v3.25.76"
+    version_label: "v3"
+    size_class: small
+    expected_loc: 8500
+    framework_from_plan: "vitest"
+    framework_verified: "vitest"
+    package_manager: "pnpm"
+    workspace: true
+    install_command: "pnpm install --frozen-lockfile"
+    build_command: "pnpm run build"
+    test_command: "pnpm test"
+    focused_test_command_template: "pnpm vitest run {test_files}"
+    source_roots:
+      - "packages"
+      - "src"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "packages/zod/tsconfig.json"
+      - "packages/zod/src/tsconfig.json"
+    language_scope:
+      - "typescript"
+    index_notes:
+      - "Preferir tsconfig del paquete evaluado si el tsconfig raiz arrastra demasiados paquetes auxiliares."
+    tags:
+      - "schema-validation"
+      - "library"
+      - "pilot"
+
+  - id: inversify
+    display_name: "InversifyJS"
+    url: "https://github.com/inversify/InversifyJS.git"
+    ref: "v7.0.0"
+    version_label: "v7"
+    size_class: medium
+    expected_loc: 14000
+    framework_from_plan: "mocha"
+    framework_verified: "mocha"
+    package_manager: "npm"
+    workspace: false
+    install_command: "npm ci"
+    build_command: "npm run build"
+    test_command: "npm test"
+    focused_test_command_template: "npx mocha {test_files} --require ts-node/register --reporter spec --exit"
+    source_roots:
+      - "src"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "tsconfig.cjs.json"
+    language_scope:
+      - "typescript"
+    tags:
+      - "dependency-injection"
+      - "decorators"
+      - "library"
+
+  - id: rxjs
+    display_name: "RxJS"
+    url: "https://github.com/ReactiveX/rxjs.git"
+    ref: "7.8.2"
+    version_label: "v7"
+    size_class: medium
+    expected_loc: 35000
+    framework_from_plan: "jest"
+    framework_verified: "mocha"
+    package_manager: "npm"
+    workspace: false
+    install_command: "npm ci"
+    build_command: "npm run compile"
+    test_command: "npm test"
+    focused_test_command_template: "npx mocha --config spec/support/.mocharc.js {test_files}"
+    source_roots:
+      - "src"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "src/tsconfig.base.json"
+      - "tsconfig.mocha.json"
+    language_scope:
+      - "typescript"
+    notes:
+      - "El documento academico lo marca como Jest; el package.json verificado de 7.8.2 usa Mocha para npm test."
+    tags:
+      - "reactive-programming"
+      - "operators"
+      - "pilot"
+
+  - id: dayjs
+    display_name: "Day.js"
+    url: "https://github.com/iamkun/dayjs.git"
+    ref: "v1.11.13"
+    version_label: "v1"
+    size_class: small
+    expected_loc: 5000
+    framework_from_plan: "jest"
+    framework_verified: "jest"
+    package_manager: "npm"
+    workspace: false
+    install_command: "npm ci"
+    build_command: "npm run build"
+    test_command: "npm test"
+    focused_test_command_template: "npx jest {test_files} --runInBand --coverage=false"
+    source_roots:
+      - "src"
+      - "test"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "tsconfig.lacoco-eval.json"
+    language_scope:
+      - "javascript"
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        allowJs: true
+        checkJs: false
+        moduleResolution: "node"
+        target: "ES2020"
+        module: "ESNext"
+        skipLibCheck: true
+      include:
+        - "src/**/*.js"
+        - "test/**/*.js"
+    tags:
+      - "date-time"
+      - "plugins"
+      - "javascript"
+
+  - id: class-transformer
+    display_name: "class-transformer"
+    url: "https://github.com/typestack/class-transformer.git"
+    ref: "v0.5.1"
+    version_label: "v0.5"
+    size_class: medium
+    expected_loc: 12000
+    framework_from_plan: "jest"
+    framework_verified: "jest"
+    package_manager: "npm"
+    workspace: false
+    install_command: "npm ci"
+    build_command: "npm run build"
+    test_command: "npm test"
+    focused_test_command_template: "npx jest {test_files} --runInBand --no-cache --coverage=false"
+    source_roots:
+      - "src"
+      - "test"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "tsconfig.prod.cjs.json"
+    language_scope:
+      - "typescript"
+    tags:
+      - "decorators"
+      - "serialization"
+      - "library"
+
+  - id: ts-morph
+    display_name: "ts-morph"
+    url: "https://github.com/dsherret/ts-morph.git"
+    ref: "22.0.0"
+    version_label: "v22"
+    size_class: medium
+    expected_loc: 30000
+    framework_from_plan: "jest"
+    framework_verified: "mocha"
+    package_manager: "npm"
+    workspace: true
+    install_command: "npm ci"
+    build_command: "npm run build"
+    test_command: "npm test"
+    focused_test_command_template: "npx mocha {test_files}"
+    source_roots:
+      - "packages/ts-morph/src"
+      - "packages"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "packages/ts-morph/tsconfig.json"
+    language_scope:
+      - "typescript"
+    notes:
+      - "Confirmar ref exacto antes de corrida oficial; si no existe, usar repos.lock.json con commit resuelto manualmente."
+    tags:
+      - "ast"
+      - "static-analysis"
+      - "library"
+
+  - id: fp-ts
+    display_name: "fp-ts"
+    url: "https://github.com/gcanti/fp-ts.git"
+    ref: "2.16.11"
+    version_label: "v2"
+    size_class: medium
+    expected_loc: 25000
+    framework_from_plan: "jest"
+    framework_verified: "jest"
+    package_manager: "yarn"
+    workspace: false
+    install_command: "yarn install --frozen-lockfile"
+    build_command: "yarn build"
+    test_command: "yarn test"
+    focused_test_command_template: "yarn jest {test_files} --runInBand"
+    source_roots:
+      - "src"
+      - "test"
+    tsconfig_candidates:
+      - "tsconfig.json"
+    language_scope:
+      - "typescript"
+    verification_status: "pending_package_json_check"
+    tags:
+      - "functional-programming"
+      - "types"
+      - "library"
+
+  - id: typeorm
+    display_name: "TypeORM"
+    url: "https://github.com/typeorm/typeorm.git"
+    ref: "0.3.20"
+    version_label: "v0.3"
+    size_class: large
+    expected_loc: 90000
+    framework_from_plan: "jest"
+    framework_verified: "mocha"
+    package_manager: "npm"
+    workspace: false
+    install_command: "npm ci"
+    build_command: "npm run compile"
+    test_command: "npm test"
+    focused_test_command_template: "npm run compile && npm run test-fast -- {test_files}"
+    source_roots:
+      - "src"
+      - "test"
+    tsconfig_candidates:
+      - "tsconfig.json"
+    language_scope:
+      - "typescript"
+    test_notes:
+      - "Suite completa puede requerir drivers/servicios externos; para M1 usar pruebas focalizadas que no dependan de infraestructura externa."
+    tags:
+      - "orm"
+      - "database"
+      - "large"
+      - "pilot"
+
+  - id: nestjs-core
+    display_name: "@nestjs/core"
+    url: "https://github.com/nestjs/nest.git"
+    ref: "v10.4.20"
+    version_label: "v10"
+    size_class: large
+    expected_loc: 50000
+    framework_from_plan: "jest"
+    framework_verified: "mocha"
+    package_manager: "npm"
+    workspace: true
+    install_command: "npm ci"
+    build_command: "npm run build"
+    test_command: "npm test"
+    focused_test_command_template: "npx mocha {test_files}"
+    source_roots:
+      - "packages/core"
+      - "packages/common"
+      - "packages/microservices"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "packages/core/tsconfig.json"
+    language_scope:
+      - "typescript"
+    test_notes:
+      - "Priorizar pruebas unitarias bajo packages/core para evitar integraciones pesadas."
+    tags:
+      - "framework"
+      - "dependency-injection"
+      - "large"
+
+  - id: mikro-orm
+    display_name: "MikroORM core"
+    url: "https://github.com/mikro-orm/mikro-orm.git"
+    ref: "v6.4.16"
+    version_label: "v6"
+    size_class: large
+    expected_loc: 70000
+    framework_from_plan: "jest"
+    framework_verified: "jest"
+    package_manager: "yarn"
+    workspace: true
+    install_command: "yarn install --immutable"
+    build_command: "yarn build"
+    test_command: "yarn test"
+    focused_test_command_template: "yarn jest {test_files} --runInBand"
+    source_roots:
+      - "packages/core/src"
+      - "packages"
+      - "tests"
+    tsconfig_candidates:
+      - "tsconfig.json"
+      - "packages/core/tsconfig.json"
+      - "tests/tsconfig.json"
+    language_scope:
+      - "typescript"
+    test_notes:
+      - "Evitar pruebas que requieran servicios externos salvo que el runner levante contenedores controlados."
+    tags:
+      - "orm"
+      - "database"
+      - "large"

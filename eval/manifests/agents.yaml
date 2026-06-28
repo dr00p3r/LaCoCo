@@ -1,0 +1,219 @@
+manifest_version: 1
+kind: coding_agents
+updated_at: "2026-06-28"
+
+defaults:
+  timeout_ms: 1800000
+  capture_git_diff: true
+  capture_stdout: true
+  capture_stderr: true
+  require_clean_worktree_before_run: true
+  require_patch_after_run: true
+  max_changed_files: 20
+  max_diff_bytes: 2000000
+  prompt_language: "es"
+  prompt_contract:
+    must_include:
+      - "task_id"
+      - "repo_id"
+      - "original_prompt"
+      - "retrieved_context"
+      - "constraints"
+      - "test_command"
+    constraints:
+      - "No modificar archivos fuera del alcance de la tarea salvo que sea estrictamente necesario."
+      - "No actualizar dependencias salvo que la tarea lo pida."
+      - "No cambiar snapshots o tests para ocultar fallos."
+      - "Explicar brevemente los archivos tocados si el agente produce resumen."
+
+agents:
+  - id: opencode
+    label: "OpenCode CLI"
+    enabled: true
+    adapter_kind: "cli"
+    command: "opencode"
+    availability_check:
+      command: "opencode --version"
+    invocation:
+      mode: "non_interactive_run"
+      working_directory: "{repo_path}"
+      args:
+        - "run"
+        - "--dir"
+        - "{repo_path}"
+        - "--model"
+        - "{model}"
+        - "--agent"
+        - "{agent_profile}"
+        - "--format"
+        - "json"
+        - "--file"
+        - "{prompt_file}"
+        - "Implementa la tarea descrita en el archivo adjunto. Usa el contexto de LaCoCo incluido en el prompt y deja el repositorio listo para ejecutar las pruebas indicadas."
+      optional_args:
+        attach_server:
+          enabled: false
+          args:
+            - "--attach"
+            - "{attach_url}"
+        skip_permissions:
+          enabled: false
+          args:
+            - "--dangerously-skip-permissions"
+    model:
+      default: "anthropic/claude-sonnet-4-5"
+      env: "LACOCO_EVAL_OPENCODE_MODEL"
+    agent_profile:
+      default: "build"
+      env: "LACOCO_EVAL_OPENCODE_AGENT"
+    credentials:
+      required: true
+      notes:
+        - "Configurar proveedores con opencode auth login o variables de entorno del proveedor."
+    safety:
+      allow_network: false
+      allow_shell: true
+      allow_edit: true
+      dangerous_skip_permissions_default: false
+    outputs:
+      session_json: "agent.session.jsonl"
+      stdout_log: "agent.stdout.log"
+      stderr_log: "agent.stderr.log"
+      patch_file: "patch.diff"
+
+  - id: codex-cli
+    label: "Codex CLI"
+    enabled: false
+    adapter_kind: "cli"
+    command: "codex"
+    availability_check:
+      command: "codex --version"
+    invocation:
+      mode: "non_interactive_exec"
+      working_directory: "{repo_path}"
+      args:
+        - "exec"
+        - "--cd"
+        - "{repo_path}"
+        - "--model"
+        - "{model}"
+        - "--full-auto"
+        - "{prompt_text}"
+    model:
+      default: "gpt-5.5-codex"
+      env: "LACOCO_EVAL_CODEX_MODEL"
+    credentials:
+      required: true
+      notes:
+        - "Revisar el contrato local de la version instalada antes de activar."
+    safety:
+      allow_network: false
+      allow_shell: true
+      allow_edit: true
+    outputs:
+      stdout_log: "agent.stdout.log"
+      stderr_log: "agent.stderr.log"
+      patch_file: "patch.diff"
+
+  - id: claude-code
+    label: "Claude Code"
+    enabled: false
+    adapter_kind: "cli"
+    command: "claude"
+    availability_check:
+      command: "claude --version"
+    invocation:
+      mode: "non_interactive_print"
+      working_directory: "{repo_path}"
+      args:
+        - "--print"
+        - "--model"
+        - "{model}"
+        - "{prompt_text}"
+    model:
+      default: "sonnet"
+      env: "LACOCO_EVAL_CLAUDE_MODEL"
+    credentials:
+      required: true
+      notes:
+        - "Revisar flags de permisos de la version instalada antes de activar."
+    safety:
+      allow_network: false
+      allow_shell: true
+      allow_edit: true
+    outputs:
+      stdout_log: "agent.stdout.log"
+      stderr_log: "agent.stderr.log"
+      patch_file: "patch.diff"
+
+  - id: dry-run
+    label: "Dry run"
+    enabled: true
+    adapter_kind: "internal"
+    command: null
+    invocation:
+      mode: "no_edit"
+      description: >-
+        No invoca un agente ni modifica el repositorio. Solo materializa prompts,
+        contextos y metadatos para inspeccion manual.
+    credentials:
+      required: false
+    safety:
+      allow_network: false
+      allow_shell: false
+      allow_edit: false
+    outputs:
+      prompt_file: "prompt.md"
+      context_json: "context.json"
+      context_markdown: "context.md"
+
+  - id: manual
+    label: "Manual patch"
+    enabled: false
+    adapter_kind: "manual"
+    command: null
+    invocation:
+      mode: "manual_patch_import"
+      description: >-
+        Permite importar un patch generado manualmente o por una herramienta no
+        integrada. Util para depurar tareas antes de incluir un agente automatico.
+    credentials:
+      required: false
+    safety:
+      allow_network: false
+      allow_shell: false
+      allow_edit: false
+    inputs:
+      patch_file: "manual.patch.diff"
+
+execution_policy:
+  official_generation_agent: "opencode"
+  exploratory_agents:
+    - "codex-cli"
+    - "claude-code"
+    - "manual"
+  disabled_by_default_reason: >-
+    Codex CLI y Claude Code se dejan desactivados hasta verificar localmente su
+    contrato de flags, permisos, autenticacion y formato de salida en la maquina
+    que ejecutara la corrida.
+
+prompt_template:
+  file_name: "prompt.md"
+  sections:
+    - id: task
+      title: "Tarea"
+    - id: repository
+      title: "Repositorio"
+    - id: constraints
+      title: "Restricciones"
+    - id: lacoco_context
+      title: "Contexto recuperado por LaCoCo"
+    - id: expected_tests
+      title: "Pruebas esperadas"
+    - id: output_instructions
+      title: "Instrucciones de salida"
+  output_instructions:
+    - "Realiza los cambios directamente en el repositorio."
+    - "No modifiques tests salvo que el task lo autorice."
+    - "No agregues dependencias nuevas."
+    - "El resultado debe poder validarse con el comando de prueba indicado."

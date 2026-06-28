@@ -1,0 +1,196 @@
+manifest_version: 1
+kind: run_configuration
+updated_at: "2026-06-28"
+
+run:
+  default_id_template: "{date_yyyy_mm_dd}-{git_short_sha}-{label}"
+  label: "pilot"
+  mode: "pilot"
+  official: false
+  random_seed: 42
+  timezone: "America/Guayaquil"
+
+paths:
+  root: "eval"
+  manifests: "eval/manifests"
+  workdir: "eval/workdir"
+  repos: "eval/workdir/repos"
+  indexes: "eval/workdir/indexes"
+  runs: "eval/runs"
+  artifacts: "eval/runs/{run_id}/artifacts"
+  lock_file: "eval/runs/{run_id}/repos.lock.json"
+
+inputs:
+  repos_manifest: "eval/manifests/repos.yaml"
+  strategies_manifest: "eval/manifests/strategies.yaml"
+  agents_manifest: "eval/manifests/agents.yaml"
+  metrics_manifest: "eval/manifests/metrics.yaml"
+  tasks_manifest: "eval/manifests/tasks.yaml"
+
+phases:
+  prepare_repos:
+    enabled: true
+    write_lock_file: true
+    verify_refs: true
+    verify_package_manager: true
+    install_dependencies: true
+    run_baseline_tests: true
+    fail_on_baseline_test_failure: true
+
+  index_repos:
+    enabled: true
+    force_reindex: false
+    graph: true
+    vectors: true
+    commands:
+      init_template: "npm run dev -- init {repo_path}"
+      index_graph_template: "npm run dev -- index_graph {tsconfig} --db {db_path}"
+      index_vectors_template: "npm run dev -- index_vectors --tsconfig {tsconfig} --lancedb {lancedb_path}"
+
+  retrieval:
+    enabled: true
+    require_gold_for_metrics: false
+    save_context_markdown: true
+    save_context_json: true
+    top_k: 50
+    repetitions_for_latency: 100
+    warmup_repetitions: 5
+    timeout_ms: 120000
+    use_deterministic_sanitizer: true
+    include_strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+    exploratory_strategies:
+      - "agentic"
+
+  generation:
+    enabled: false
+    agent_id: "opencode"
+    include_strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+    timeout_ms: 1800000
+    apply_patch_mode: "agent_modifies_worktree"
+    reset_repo_before_each_task: true
+    save_patch: true
+    save_prompt: true
+    save_agent_logs: true
+    run_tests_after_generation: true
+
+  hallucination_detection:
+    enabled: false
+    analyzer: "typescript-language-service"
+    analyze_only_changed_files: true
+    include_unknown_calls: true
+    timeout_ms: 300000
+
+  report:
+    enabled: true
+    formats:
+      - "jsonl"
+      - "csv"
+      - "markdown"
+    generate_thesis_tables: true
+
+splits:
+  pilot:
+    description: "Corrida inicial para validar infraestructura."
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "typeorm"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "typeorm-001"
+      - "typeorm-002"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+    agents:
+      - "dry-run"
+
+  retrieval_official:
+    description: "Recuperacion sobre tareas con gold listo."
+    require_gold_status: "ready"
+    min_tasks: 20
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+
+  generation_official:
+    description: "Generacion con agente externo y pruebas focalizadas."
+    require_gold_status: "ready"
+    require_target_tests: true
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+    agents:
+      - "opencode"
+
+resource_limits:
+  max_parallel_repos: 1
+  max_parallel_tasks: 1
+  max_parallel_agents: 1
+  max_repo_disk_mb: 5000
+  max_run_disk_mb: 30000
+  kill_process_tree_on_timeout: true
+
+reproducibility:
+  record:
+    - "lacoco_git_sha"
+    - "node_version"
+    - "npm_version"
+    - "pnpm_version"
+    - "yarn_version"
+    - "os"
+    - "cpu"
+    - "memory_total"
+    - "repo_commit_sha"
+    - "agent_versions"
+    - "environment_variables_allowlist"
+  environment_variables_allowlist:
+    - "CI"
+    - "LACOCO_AGENT_ENDPOINT"
+    - "LACOCO_AGENT_MODEL"
+    - "LACOCO_EVAL_OPENCODE_MODEL"
+    - "LACOCO_EVAL_OPENCODE_AGENT"
+    - "OPENCODE_SERVER_PASSWORD"
+
+failure_policy:
+  continue_on_task_failure: true
+  continue_on_strategy_failure: true
+  continue_on_repo_prepare_failure: false
+  mark_generation_timeout_as_pass_fail: true
+  write_error_records: true
+
+jsonl_schema_versions:
+  retrieval: 1
+  generation: 1
+  hallucination: 1
+
+artifact_naming:
+  task_dir_template: "{task_id}/{strategy_id}/{agent_id}"
+  files:
+    context_json: "context.json"
+    context_markdown: "context.md"
+    prompt: "prompt.md"
+    patch: "patch.diff"
+    tests_log: "tests.log"
+    agent_stdout: "agent.stdout.log"
+    agent_stderr: "agent.stderr.log"
+    hallucinations: "hallucinations.json"
