@@ -170,15 +170,22 @@ async function indexRepository(
 }
 
 export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
-  const options = parseEvalCliOptions(argv);
+  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id"]);
   const manifests = loadManifests();
   const settings = readSettings(manifests.repos, manifests.run);
+  const repositories = options.repoId === undefined
+    ? manifests.repos.repositories
+    : manifests.repos.repositories.filter(({ id }) => id === options.repoId);
+  if (repositories.length === 0) {
+    throw new Error(`repository filter matched no entries: ${String(options.repoId)}`);
+  }
   const layout = resolveEvalLayout(manifests.run, options.runId);
 
   console.log(`Run: ${layout.runId}`);
   console.log(`Lock: ${layout.lockFile}`);
   console.log(`Indexes: ${layout.indexesDirectory}`);
   console.log(`Logs: ${layout.indexLogsDirectory}`);
+  console.log(`Selected repositories (${repositories.length}): ${repositories.map(({ id }) => id).join(", ")}`);
   if (!settings.enabled) {
     console.log("Index phase is disabled by run.yaml.");
     return;
@@ -193,7 +200,7 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
     lockedRepositories = lock.repositories;
   } else if (options.dryRun) {
     console.log("Dry run: lock file is absent; planning with manifest repository paths.");
-    lockedRepositories = manifests.repos.repositories.map((repository) => ({
+    lockedRepositories = repositories.map((repository) => ({
       id: repository.id,
       url: repository.url,
       requestedRef: repository.ref,
@@ -208,7 +215,7 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
 
   const lockedById = new Map(lockedRepositories.map((repository) => [repository.id, repository]));
   const failures: string[] = [];
-  for (const repository of manifests.repos.repositories) {
+  for (const repository of repositories) {
     const locked = lockedById.get(repository.id);
     if (locked === undefined) {
       const message = `${repository.id}: repository is missing from ${layout.lockFile}`;

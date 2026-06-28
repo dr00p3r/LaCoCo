@@ -1,0 +1,37 @@
+{
+  "synthetic_fixture_only": true,
+  "cases": [
+    {
+      "task_id": "fixture-ready",
+      "gold": {
+        "status": "ready",
+        "relevant_nodes": ["src/foo.ts#Foo", "src/bar.ts#Bar"],
+        "multihop_nodes": ["src/bar.ts#Bar"]
+      }
+    },
+    {
+      "task_id": "fixture-pending",
+      "gold": {
+        "status": "pending_manual_annotation",
+        "relevant_nodes": [],
+        "multihop_nodes": []
+      }
+    },
+    {
+      "task_id": "fixture-ready-without-multihop",
+      "gold": {
+        "status": "ready",
+        "relevant_nodes": ["src/foo.ts#Foo"],
+        "multihop_nodes": []
+      }
+    },
+    {
+      "task_id": "fixture-failed",
+      "gold": {
+        "status": "ready",
+        "relevant_nodes": ["src/foo.ts#Foo"],
+        "multihop_nodes": ["src/bar.ts#Bar"]
+      }
+    }
+  ]
+}

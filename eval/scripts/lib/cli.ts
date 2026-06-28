@@ -4,31 +4,63 @@ import { pathToFileURL } from "node:url";
 export interface EvalCliOptions {
   dryRun: boolean;
   runId?: string;
+  runDir?: string;
+  repoId?: string;
+  taskId?: string;
+  strategyId?: string;
+  split?: string;
 }
 
-export function parseEvalCliOptions(argv: string[]): EvalCliOptions {
+export type EvalCliFlag =
+  | "--dry-run"
+  | "--run-id"
+  | "--run-dir"
+  | "--repo-id"
+  | "--task-id"
+  | "--strategy-id"
+  | "--split";
+
+const VALUE_FLAGS = {
+  "--run-id": "runId",
+  "--run-dir": "runDir",
+  "--repo-id": "repoId",
+  "--task-id": "taskId",
+  "--strategy-id": "strategyId",
+  "--split": "split",
+} as const;
+
+export function parseEvalCliOptions(
+  argv: string[],
+  allowedFlags: readonly EvalCliFlag[] = ["--dry-run", "--run-id"],
+): EvalCliOptions {
   let dryRun = false;
-  let runId: string | undefined;
+  const values: Partial<Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>> = {};
+  const allowed = new Set(allowedFlags);
+  const seen = new Set<string>();
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    if (!allowed.has(argument as EvalCliFlag)) {
+      throw new Error(`unknown argument: ${String(argument)}`);
+    }
+    if (seen.has(argument!)) {
+      throw new Error(`duplicate argument: ${String(argument)}`);
+    }
+    seen.add(argument!);
     if (argument === "--dry-run") {
       dryRun = true;
       continue;
     }
-    if (argument === "--run-id") {
-      const value = argv[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        throw new Error("--run-id requires a value");
-      }
-      runId = value;
-      index += 1;
-      continue;
+    const property = VALUE_FLAGS[argument as keyof typeof VALUE_FLAGS];
+    const value = argv[index + 1];
+    if (property === undefined || value === undefined || value.startsWith("--")) {
+      throw new Error(`${String(argument)} requires a value`);
     }
-    throw new Error(`unknown argument: ${argument}`);
+    values[property] = value;
+    index += 1;
   }
 
-  return runId === undefined ? { dryRun } : { dryRun, runId };
+  return { dryRun, ...values };
 }
 
 export function isEntrypoint(moduleUrl: string): boolean {

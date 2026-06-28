@@ -227,15 +227,22 @@ async function prepareRepository(
 }
 
 export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> {
-  const options = parseEvalCliOptions(argv);
+  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id"]);
   const manifests = loadManifests();
   const settings = readSettings(manifests.repos, manifests.run);
+  const repositories = options.repoId === undefined
+    ? manifests.repos.repositories
+    : manifests.repos.repositories.filter(({ id }) => id === options.repoId);
+  if (repositories.length === 0) {
+    throw new Error(`repository filter matched no entries: ${String(options.repoId)}`);
+  }
   const layout = resolveEvalLayout(manifests.run, options.runId);
 
   console.log(`Run: ${layout.runId}`);
   console.log(`Repositories: ${layout.reposDirectory}`);
   console.log(`Lock: ${layout.lockFile}`);
   console.log(`Logs: ${layout.prepareLogsDirectory}`);
+  console.log(`Selected repositories (${repositories.length}): ${repositories.map(({ id }) => id).join(", ")}`);
   if (!settings.enabled) {
     console.log("Prepare phase is disabled by run.yaml.");
     return;
@@ -248,7 +255,7 @@ export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> 
 
   const lock = createRepositoriesLock(layout.runId);
   const failures: string[] = [];
-  for (const repository of manifests.repos.repositories) {
+  for (const repository of repositories) {
     const repoPath = join(layout.reposDirectory, repository.id);
     const logsDirectory = join(layout.prepareLogsDirectory, repository.id);
     try {

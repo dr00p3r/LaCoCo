@@ -38,3 +38,10 @@ export function asStringRecord(value: unknown, path: string): Record<string, str
     Object.entries(source).map(([key, entry]) => [key, asString(entry, `${path}.${key}`)]),
   );
 }
+
+export function asStringArray(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array`);
+  }
+  return value.map((entry, index) => asString(entry, `${path}[${index}]`));
+}

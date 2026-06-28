@@ -181,10 +181,10 @@ Claves principales:
 |---|---|---|---|
 | `strategy.default` | string | `hybrid` | Estrategia de retrieval por defecto |
 | `agent.endpoint` | string | `http://localhost:11434` | Endpoint de Ollama |
-| `agent.model` | string | `llama3.2` | Modelo de Ollama |
+| `agent.model` | string | `qwen2.5-coder:1.5b` | Modelo de Ollama |
 | `paths.data` | string | `.lacoco` | Directorio de datos (relativo al proyecto) |
-| `timeout.ms` | number | `60000` | Timeout para Ollama |
-| `watcher.debounceMs` | number | `2000` | Debounce del watcher |
+| `timeout.ms` | number | `30000` | Timeout para Ollama |
+| `watcher.debounceMs` | number | `80` | Debounce del watcher |
 
 Precedencia: variable de entorno > `--local` > `--global` > defecto.
 
@@ -193,7 +193,7 @@ Variables de entorno equivalentes:
 ```bash
 LACOCO_STRATEGY=hybrid
 LACOCO_AGENT_ENDPOINT=http://localhost:11434
-LACOCO_AGENT_MODEL=llama3.2
+LACOCO_AGENT_MODEL=qwen2.5-coder:1.5b
 ```
 
 ## Pipeline de consulta

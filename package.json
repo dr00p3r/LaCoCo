@@ -15,6 +15,10 @@
     "eval:check-manifests": "node --import tsx eval/scripts/lib/load-manifests.ts",
     "eval:prepare": "node --import tsx eval/scripts/prepare-repos.ts",
     "eval:index": "node --import tsx eval/scripts/index-repos.ts",
+    "eval:retrieval": "node --import tsx eval/scripts/run-retrieval.ts",
+    "eval:metrics:retrieval": "node --import tsx eval/scripts/compute-retrieval-metrics.ts",
+    "eval:gold:worksheet": "node --import tsx eval/scripts/create-ground-truth-worksheet.ts",
+    "eval:gold:validate": "node --import tsx eval/scripts/validate-ground-truth.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
