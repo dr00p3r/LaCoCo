@@ -1,0 +1,637 @@
+manifest_version: 1
+kind: tasks
+updated_at: "2026-06-28"
+
+annotation_policy:
+  gold_source: "manual"
+  do_not_invent_gold: true
+  ready_status_required_for_m3_m6: true
+  node_id_format: "<filepath>#<symbol_or_node_name>"
+  multihop_definition: "relevant node with shortest graph distance >= 2 from the primary anchor"
+  annotation_steps:
+    - "Leer la tarea y localizar los archivos que un mantenedor tocaria."
+    - "Ejecutar LaCoCo inspect/retrieve para explorar candidatos, sin usarlos como unica verdad."
+    - "Confirmar nodos relevantes mediante lectura manual del codigo y pruebas."
+    - "Marcar multihop_nodes calculando distancia en el grafo LaCoCo."
+    - "Registrar target_tests que validen la tarea."
+
+defaults:
+  enabled: true
+  gold:
+    status: "pending_manual_annotation"
+    relevant_nodes: []
+    multihop_nodes: []
+    annotation_notes: "Pendiente de anotacion manual antes de corrida oficial."
+  generation:
+    allow_test_edits: false
+    allow_dependency_changes: false
+    expected_patch_size: "small_to_medium"
+  retrieval:
+    top_k: 50
+    use_deterministic_input: true
+
+# Estas tareas son semillas experimentales. Sirven para construir prompts,
+# ejecutar dry-runs y guiar la anotacion manual. No deben reportarse como
+# resultados oficiales mientras gold.status no sea ready.
+tasks:
+  - id: zod-001
+    repo_id: zod
+    title: "Rastrear validacion de strings no vacios"
+    type: "feature_or_behavior_change"
+    difficulty: "medium"
+    prompt: >-
+      Implementa una mejora pequena en la validacion de strings para permitir
+      un helper que rechace cadenas vacias luego de aplicar trim, preservando el
+      estilo de APIs existentes y mensajes de error coherentes.
+    deterministic_input:
+      clean_query: "zod string trim nonempty validation helper error message"
+      embedding_input: "Implement helper for trimmed non-empty string validation in Zod v3"
+      intent: "create"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "string schemas"
+      - "error issue construction"
+      - "tests for string parsing"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Localizar nodos de ZodString, checks de string y construccion de issues."
+    tags:
+      - "pilot"
+      - "string"
+      - "validation"
+
+  - id: zod-002
+    repo_id: zod
+    title: "Inspeccionar interaccion entre object shape y strictness"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un comportamiento hipotetico donde la configuracion strict de un
+      objeto no se mantiene correctamente al derivar variantes parciales del
+      schema. Mantener compatibilidad con las pruebas existentes.
+    deterministic_input:
+      clean_query: "zod object strict partial shape unknown keys behavior"
+      embedding_input: "Fix strict object behavior when deriving partial object schemas"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "object schemas"
+      - "unknown keys policy"
+      - "partial/deep partial derivation"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar constructores y metodos de ZodObject relacionados con unknownKeys y partial."
+    tags:
+      - "pilot"
+      - "object"
+      - "bugfix"
+
+  - id: inversify-001
+    repo_id: inversify
+    title: "Resolver flujo de ServiceIdentifier en bindings"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige la validacion de identificadores de servicio para que un binding
+      invalido produzca un error temprano y consistente, sin romper los casos de
+      simbolos, clases y strings ya soportados.
+    deterministic_input:
+      clean_query: "inversify service identifier binding validation symbol class string"
+      embedding_input: "Fix ServiceIdentifier validation in Inversify binding resolution"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+    expected_areas:
+      - "binding API"
+      - "service identifiers"
+      - "container resolution"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Localizar tipos ServiceIdentifier, metodos bind/get y errores de binding."
+    tags:
+      - "dependency-injection"
+      - "binding"
+
+  - id: inversify-002
+    repo_id: inversify
+    title: "Trazar metadata de decoradores en inyeccion"
+    type: "understanding_plus_patch"
+    difficulty: "hard"
+    prompt: >-
+      Ajusta el manejo de metadata de decoradores para que la resolucion de
+      dependencias reporte con claridad cuando falta metadata requerida en un
+      constructor decorado.
+    deterministic_input:
+      clean_query: "inversify decorator metadata constructor injection missing metadata error"
+      embedding_input: "Improve missing decorator metadata error in constructor injection"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "metadata reader"
+      - "injectable decorators"
+      - "constructor injection planning"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Esta tarea deberia requerir dependencias multi-hop entre decoradores, metadata y planner."
+    tags:
+      - "decorators"
+      - "multi-hop"
+
+  - id: rxjs-001
+    repo_id: rxjs
+    title: "Propagacion de error en operador"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un caso de propagacion de error en un operador para que el error
+      del subscriber interno llegue al subscriber externo sin duplicar
+      notificaciones de complete.
+    deterministic_input:
+      clean_query: "rxjs operator inner subscriber error propagation complete notification"
+      embedding_input: "Fix RxJS operator inner subscriber error propagation"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "operators"
+      - "Subscriber"
+      - "error and complete flow"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar operador especifico, Subscriber/OperatorSubscriber y pruebas marble si aplica."
+    tags:
+      - "pilot"
+      - "operator"
+      - "error-flow"
+
+  - id: rxjs-002
+    repo_id: rxjs
+    title: "Scheduler y temporizacion en pruebas"
+    type: "feature_or_behavior_change"
+    difficulty: "hard"
+    prompt: >-
+      Ajusta una ruta de scheduling para que una operacion diferida respete el
+      scheduler recibido por parametro en lugar de caer a la temporizacion por
+      defecto.
+    deterministic_input:
+      clean_query: "rxjs scheduler parameter deferred operation default scheduler test scheduler"
+      embedding_input: "Make deferred RxJS operation respect provided scheduler"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "scheduler utilities"
+      - "observable creation"
+      - "test scheduler specs"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Esperada como tarea multi-hop entre operador, scheduler y pruebas de temporizacion."
+    tags:
+      - "pilot"
+      - "scheduler"
+      - "multi-hop"
+
+  - id: dayjs-001
+    repo_id: dayjs
+    title: "Plugin de zona horaria y locale"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un caso donde una conversion con plugin de timezone pierde el
+      locale configurado al encadenar operaciones de parseo y formato.
+    deterministic_input:
+      clean_query: "dayjs timezone plugin locale parse format chain"
+      embedding_input: "Fix Day.js timezone plugin preserving locale during parse and format chain"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "timezone plugin"
+      - "locale handling"
+      - "formatting"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Repositorio JS; usar tsconfig eval con allowJs para indexacion."
+    tags:
+      - "javascript"
+      - "plugin"
+
+  - id: dayjs-002
+    repo_id: dayjs
+    title: "Duraciones y formato humano"
+    type: "feature_or_behavior_change"
+    difficulty: "medium"
+    prompt: >-
+      Ajusta el plugin de duration para manejar correctamente una unidad limite
+      al generar salida humanizada, manteniendo compatibilidad con locales.
+    deterministic_input:
+      clean_query: "dayjs duration plugin humanize locale boundary unit"
+      embedding_input: "Fix Day.js duration humanize boundary unit with locale support"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "duration plugin"
+      - "relative time"
+      - "locale data"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar dependencias entre duration, relativeTime y locale."
+    tags:
+      - "javascript"
+      - "duration"
+
+  - id: class-transformer-001
+    repo_id: class-transformer
+    title: "Expose/Exclude en serializacion"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un caso donde la combinacion de decoradores Expose y Exclude no
+      respeta la estrategia esperada al serializar una instancia anidada.
+    deterministic_input:
+      clean_query: "class-transformer expose exclude nested instance serialization strategy"
+      embedding_input: "Fix Expose and Exclude behavior for nested instance serialization"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "decorator metadata"
+      - "transform operation executor"
+      - "serialization tests"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Probable tarea multi-hop entre metadata storage, decorators y executor."
+    tags:
+      - "decorators"
+      - "serialization"
+
+  - id: class-transformer-002
+    repo_id: class-transformer
+    title: "plainToInstance con arrays anidados"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige la transformacion de arrays anidados en plainToInstance cuando se
+      usa informacion de tipo explicita, sin romper transformaciones simples.
+    deterministic_input:
+      clean_query: "class-transformer plainToInstance nested arrays type metadata"
+      embedding_input: "Fix plainToInstance nested array transformation using type metadata"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "plainToInstance"
+      - "type metadata"
+      - "array transformation"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar funciones de transformacion y lectura de metadata @Type."
+    tags:
+      - "nested-data"
+      - "metadata"
+
+  - id: ts-morph-001
+    repo_id: ts-morph
+    title: "Manipulacion de SourceFile"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un caso de manipulacion de SourceFile donde una insercion de
+      declaraciones no mantiene el orden esperado de imports y statements.
+    deterministic_input:
+      clean_query: "ts-morph sourcefile insert declarations imports statements order"
+      embedding_input: "Fix SourceFile declaration insertion preserving import and statement order"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "SourceFile wrapper"
+      - "insert statements"
+      - "writer/manipulation utilities"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Localizar APIs de SourceFile e infraestructura de manipulation."
+    tags:
+      - "ast"
+      - "sourcefile"
+
+  - id: ts-morph-002
+    repo_id: ts-morph
+    title: "Resolucion de simbolos"
+    type: "understanding_plus_patch"
+    difficulty: "hard"
+    prompt: >-
+      Mejora el manejo de un caso donde la resolucion de simbolos falla en nodos
+      envueltos y produce un error poco claro para el usuario.
+    deterministic_input:
+      clean_query: "ts-morph symbol resolution wrapped node unclear error"
+      embedding_input: "Improve symbol resolution error for wrapped nodes in ts-morph"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+    expected_areas:
+      - "wrapped nodes"
+      - "compiler symbol APIs"
+      - "errors"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Deberia requerir nodos de wrapper y compiler API bridge."
+    tags:
+      - "ast"
+      - "symbols"
+      - "multi-hop"
+
+  - id: fp-ts-001
+    repo_id: fp-ts
+    title: "Helper pipeable para TaskEither"
+    type: "feature_or_behavior_change"
+    difficulty: "medium"
+    prompt: >-
+      Agrega o ajusta un helper pipeable relacionado con TaskEither siguiendo el
+      estilo de los combinadores existentes y su tipado.
+    deterministic_input:
+      clean_query: "fp-ts TaskEither pipeable helper combinator typing"
+      embedding_input: "Add or adjust pipeable TaskEither helper combinator with correct typing"
+      intent: "create"
+      dimensions:
+        - "SYS"
+        - "CPG"
+    expected_areas:
+      - "TaskEither"
+      - "pipeable combinators"
+      - "type tests"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Confirmar estructura de tests de tipos antes de activar."
+    tags:
+      - "functional-programming"
+      - "types"
+
+  - id: fp-ts-002
+    repo_id: fp-ts
+    title: "ReadonlyArray combinator"
+    type: "bugfix"
+    difficulty: "medium"
+    prompt: >-
+      Corrige un combinador de ReadonlyArray para preservar inferencia de tipos
+      en una composicion con pipe.
+    deterministic_input:
+      clean_query: "fp-ts ReadonlyArray combinator preserve type inference pipe"
+      embedding_input: "Fix ReadonlyArray combinator preserving type inference in pipe composition"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+    expected_areas:
+      - "ReadonlyArray"
+      - "pipe"
+      - "type-level tests"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar nodos de combinador y pruebas de inferencia."
+    tags:
+      - "functional-programming"
+      - "inference"
+
+  - id: typeorm-001
+    repo_id: typeorm
+    title: "FindOptions y carga de relaciones"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige un caso donde FindOptions no carga una relacion anidada esperada
+      al combinar select parcial y relations declaradas.
+    deterministic_input:
+      clean_query: "typeorm FindOptions nested relations partial select load relation"
+      embedding_input: "Fix TypeORM FindOptions nested relation loading with partial select"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "FindOptions"
+      - "relation loader"
+      - "query builder"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Tarea grande para piloto; priorizar prueba focalizada sin DB externa o con SQLite."
+    tags:
+      - "pilot"
+      - "orm"
+      - "relations"
+      - "multi-hop"
+
+  - id: typeorm-002
+    repo_id: typeorm
+    title: "Parametros en QueryBuilder"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige el manejo de parametros en QueryBuilder para evitar colisiones de
+      nombres cuando se combinan condiciones generadas por helpers internos.
+    deterministic_input:
+      clean_query: "typeorm QueryBuilder parameter name collision generated conditions"
+      embedding_input: "Fix TypeORM QueryBuilder parameter name collisions in generated conditions"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "QueryBuilder"
+      - "parameter generation"
+      - "where expressions"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Requiere mapear flujo de parametros y llamadas entre builders."
+    tags:
+      - "pilot"
+      - "query-builder"
+
+  - id: nestjs-core-001
+    repo_id: nestjs-core
+    title: "Resolucion de providers en modulo"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige un caso donde la resolucion de providers importados desde un
+      modulo relacionado produce un mensaje de error ambiguo.
+    deterministic_input:
+      clean_query: "nestjs core module scanner provider resolution imported module ambiguous error"
+      embedding_input: "Improve NestJS provider resolution error for imported modules"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+    expected_areas:
+      - "module scanner"
+      - "injector"
+      - "instance links"
+      - "errors"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Esperada como tarea multi-hop entre scanner, container e injector."
+    tags:
+      - "framework"
+      - "dependency-injection"
+      - "multi-hop"
+
+  - id: nestjs-core-002
+    repo_id: nestjs-core
+    title: "Lifecycle hooks y zonas de excepcion"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Ajusta el manejo de errores en hooks de ciclo de vida para que una
+      excepcion asincrona se reporte con el contexto correcto del modulo.
+    deterministic_input:
+      clean_query: "nestjs lifecycle hook async exception context module error zone"
+      embedding_input: "Fix NestJS lifecycle hook async exception context reporting"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "lifecycle hooks"
+      - "exception zones"
+      - "module context"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar rutas de propagacion de excepciones y contexto de modulo."
+    tags:
+      - "framework"
+      - "exceptions"
+
+  - id: mikro-orm-001
+    repo_id: mikro-orm
+    title: "UnitOfWork y change set"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige un caso donde UnitOfWork no detecta correctamente un cambio en una
+      entidad anidada cuando se actualiza mediante una coleccion administrada.
+    deterministic_input:
+      clean_query: "mikro orm UnitOfWork change set nested entity managed collection update"
+      embedding_input: "Fix MikroORM UnitOfWork change set detection for nested managed collection updates"
+      intent: "debug"
+      dimensions:
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "UnitOfWork"
+      - "change set computer"
+      - "collections"
+      - "entity helper"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Probable tarea de cobertura multi-hop DTG."
+    tags:
+      - "orm"
+      - "unit-of-work"
+      - "multi-hop"
+
+  - id: mikro-orm-002
+    repo_id: mikro-orm
+    title: "Metadata discovery y entity helper"
+    type: "bugfix"
+    difficulty: "hard"
+    prompt: >-
+      Corrige un caso donde la metadata descubierta para una entidad no se
+      propaga correctamente al helper usado en tiempo de ejecucion.
+    deterministic_input:
+      clean_query: "mikro orm metadata discovery entity helper runtime propagation"
+      embedding_input: "Fix MikroORM metadata discovery propagation to runtime entity helper"
+      intent: "debug"
+      dimensions:
+        - "SYS"
+        - "CPG"
+        - "DTG"
+    expected_areas:
+      - "metadata discovery"
+      - "entity helper"
+      - "runtime metadata"
+    target_tests: []
+    gold:
+      status: "pending_manual_annotation"
+      relevant_nodes: []
+      multihop_nodes: []
+      annotation_notes: "Anotar nodos entre discovery, metadata storage y helper."
+    tags:
+      - "orm"
+      - "metadata"
+      - "multi-hop"
