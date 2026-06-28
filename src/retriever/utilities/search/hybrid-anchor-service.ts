@@ -1,7 +1,7 @@
 import type { LaCoCoDatabase } from "../../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import type { SanitizerOutput } from "../../models/utilities/types.js";
-import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
+import { EmbeddingGenerator } from "../../../embeddings/embedding-generator.js";
 import { Bm25Service } from "./bm25-service.js";
 
 const RRF_K = 60;

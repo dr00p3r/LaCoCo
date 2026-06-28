@@ -21,6 +21,11 @@ prompt original
 
 `AgentIntermediary1` es el único filtro dimensional. No existe ni debe añadirse un componente `DimensionalFilter` separado. Toda transformación semántica del prompt pertenece al SLM: no usar stopwords, extracción de keywords, reglas heurísticas ni fallbacks locales. Si Ollama falla o devuelve un contrato inválido, la consulta debe fallar explícitamente.
 
+`SlmClassifier` solicita un esquema JSON estructurado a Ollama con temperatura
+cero y semilla fija. Toda propuesta `LLM_DIRECT` se somete a una segunda
+verificación del propio SLM antes de omitir retrieval; el código local valida el
+contrato, pero no reemplaza ni corrige semánticamente la decisión.
+
 ## Grafo
 
 El grafo contiene tres dimensiones:
@@ -35,7 +40,11 @@ Los metadatos dimensionales consideran relaciones entrantes y salientes.
 
 ```text
 src/
-  cli/                 comandos y visualización de consultas
+  cli/                 composición de comandos, pipeline, watch e inspect
+    commands/          registro de comandos por dominio y utilidades compartidas
+    inspect/           BFS, carga DAO, tipos, caché y render HTML
+  domain/              tipos canónicos del dominio (dimensiones SYS/CPG/DTG)
+  embeddings/          generación local de embeddings
   extractor/           análisis AST con ts-morph y callbacks de persistencia
   indexer/             indexación independiente de grafo y vectores
   persistence/
@@ -44,8 +53,8 @@ src/
   retriever/
     models/             contratos de estrategias y utilidades
     strategies/         implementaciones seleccionables y clase base AbstractAnchoredStrategy
+      helpers/          pesos por intent y recorridos de grafo compartidos
     utilities/
-      embeddings/       generación local de embeddings
       filters/          agregación e inyección de contexto
       mini-agents/      AgentIntermediary1
       search/           servicios internos de búsqueda
@@ -59,7 +68,10 @@ tests/retrieval/        pruebas Vitest del pipeline de retrieval
 - LanceDB: registros vectoriales con campo `embedding` de 384 dimensiones y metadata para filtros pre-ANN.
 - `GraphIndexer` analiza el AST y escribe nodos/aristas en SQLite.
 - `VectorsIndexer` analiza el AST de forma independiente, genera embeddings por lotes y los escribe en LanceDB.
+- El daemon usa una sola pasada de `CodeExtractor` con `CompositeCallbacks`: persiste el grafo y conserva los nodos que alimentan la indexación vectorial.
 - `VectorCallbacks.flush()` debe esperar todas las escrituras programadas; no se permiten lotes fire-and-forget.
+- `EmbeddingDao.replaceBatch()` usa `mergeInsert` por `node_id`; no reintroducir el ciclo no atómico delete + insert.
+- `LaCoCoLanceDb.health()` expone conexión, estado del índice HNSW y el último error de construcción.
 
 El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. La primera ejecución puede requerir descargar el modelo.
 
@@ -79,9 +91,14 @@ Estrategias CLI válidas:
 
 `hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF, centralizado en `AbstractAnchoredStrategy`. Cada subclase solo implementa `expand()` con su lógica de difusión específica. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
 
+Los pesos por intent y los recorridos BFS compartidos por estrategias viven en
+`src/retriever/strategies/helpers/`; no son estrategias ni utilidades globales
+del retriever.
+
 `AgenticStrategy` y cualquier consumidor de Ollama deben depender de la interfaz
 `LlmClient` (`src/slms/llm-client.ts`), no de la clase concreta `OllamaService`.
 `OllamaService` solo se instancia en puntos de composición (CLI, `inspect.ts`).
+Todo `LlmClient` debe implementar `abort()` para cancelar solicitudes activas.
 
 ## Comandos
 
@@ -98,22 +115,22 @@ npm run dev -- config set <clave> <valor> --global
 npm run dev -- project list
 npm run dev -- project inspect <proyecto>
 npm run dev -- project remove <proyecto>
-npm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid --lancedb <directorio>
+npm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid
 npm run dev -- watch start [proyecto]
 npm run dev -- watch stop [proyecto]
 npm run dev -- watch restart [proyecto]
 npm run dev -- watch status [proyecto]
 npm run dev -- watch list
-npm run dev -- watch <tsconfig> --db <sqlite> --lancedb <directorio>
-npm run dev -- index_graph <tsconfig>
-npm run dev -- index_vectors --tsconfig <tsconfig>
-npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --lancedb <directorio>
-npm run dev -- inspect-query "<consulta>" --strategy hybrid --lancedb <directorio>
+npm run dev -- index_graph <ruta-tsconfig>
+npm run dev -- index_vectors <ruta-tsconfig>
+npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid
+npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
+npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
 ```
 
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
 Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy` u
-`--ollama`, la CLI resuelve `strategy.default` y `agent.endpoint` desde la
+`--ollama`, la CLI resuelve `strategy.default`, `agent.endpoint` y `agent.model` desde la
 configuración persistente, respetando la precedencia env > local > global >
 default. Los flags explícitos siempre tienen prioridad.
 Cuando se omiten `--db` o `--lancedb`, la CLI usa rutas por proyecto bajo
@@ -121,14 +138,24 @@ Cuando se omiten `--db` o `--lancedb`, la CLI usa rutas por proyecto bajo
 explícitas se normalizan a absolutas; las rutas resueltas se guardan en el
 registro de proyectos como `storage.dbPath` y `storage.lanceDbPath`.
 
-`retrieve` y `context export` aceptan un argumento `[proyecto]` opcional que
-resuelve el proyecto desde el registro (por nombre, id o ruta). Si se omite,
-usan `process.cwd()`.
+`retrieve`, `context export` e `inspect-query` aceptan un argumento `[proyecto]`
+opcional que resuelve el proyecto desde el registro (por nombre, id o ruta). Si
+se omite, usan `process.cwd()`. Las rutas de almacenamiento (`db` y `lancedb`)
+se resuelven siempre desde el proyecto registrado; no aceptan flags explícitos.
+
+`retrieve --json` reserva stdout para un unico documento con
+`schemaVersion: 1`. El resultado incluye clasificacion, chunks, prompt
+enriquecido y metadatos de almacenamiento; los errores usan `ok: false` y exit
+code no cero. Logs y diagnosticos deben permanecer en stderr para no romper
+hooks. `retrieve` no genera respuestas finales: su salida está destinada a un
+agente externo.
 
 Los watchers administrados por CLI registran PID, comando y rutas en el registro
 de proyectos, usan locks atómicos por proyecto bajo el estado de LaCoCo y marcan
 `stale` cuando el PID registrado no existe o, en Linux, cuando `/proc/<pid>/cmdline`
 no coincide con el comando watcher esperado.
+`DaemonManager.health()` incluye contadores por ámbito y el último error; los
+consumidores que necesiten observabilidad inmediata pueden pasar `onError`.
 
 ## Convenciones
 
@@ -162,5 +189,4 @@ prueba se omite explícitamente.
 - El intermediario depende obligatoriamente de Ollama; no existe fallback local cuando el modelo no está disponible.
 - La prueba end-to-end del binario CLI se omite en runners que bloquean `spawnSync`.
 - La reindexación vectorial reemplaza lotes por `node_id`; falta una política explícita de compactación/optimización para LanceDB.
-- `EmbeddingDao.replaceBatch` (delete + insert) no es atómico; un crash entre ambas operaciones puede causar pérdida de embeddings hasta la siguiente reindexación.
 - Faltan benchmarks comparables de precisión, latencia y consumo entre estrategias.

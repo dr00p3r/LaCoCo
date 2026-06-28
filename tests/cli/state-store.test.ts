@@ -31,6 +31,7 @@ let previousCwd: string;
 let previousConfigHome: string | undefined;
 let previousStateHome: string | undefined;
 let previousStrategy: string | undefined;
+let previousAgentModel: string | undefined;
 
 beforeEach(() => {
   tempDir = mkdtempSync(path.join(tmpdir(), "lacoco-state-"));
@@ -38,10 +39,12 @@ beforeEach(() => {
   previousConfigHome = process.env.XDG_CONFIG_HOME;
   previousStateHome = process.env.XDG_STATE_HOME;
   previousStrategy = process.env.LACOCO_STRATEGY;
+  previousAgentModel = process.env.LACOCO_AGENT_MODEL;
 
   process.env.XDG_CONFIG_HOME = path.join(tempDir, "config-home");
   process.env.XDG_STATE_HOME = path.join(tempDir, "state-home");
   delete process.env.LACOCO_STRATEGY;
+  delete process.env.LACOCO_AGENT_MODEL;
 });
 
 afterEach(() => {
@@ -49,6 +52,7 @@ afterEach(() => {
   restoreEnv("XDG_CONFIG_HOME", previousConfigHome);
   restoreEnv("XDG_STATE_HOME", previousStateHome);
   restoreEnv("LACOCO_STRATEGY", previousStrategy);
+  restoreEnv("LACOCO_AGENT_MODEL", previousAgentModel);
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -111,6 +115,27 @@ describe("config-store", () => {
         source: "local",
       });
     }
+  });
+
+  it("resuelve agent.model desde archivo y variable de entorno", () => {
+    const projectDir = createProject("app");
+    process.chdir(projectDir);
+
+    expect(resolveConfig("agent.model")).toMatchObject({
+      value: "qwen2.5-coder:1.5b",
+      source: "default",
+    });
+    setConfig("agent.model", "local-model", "local");
+    expect(resolveConfig("agent.model")).toMatchObject({
+      value: "local-model",
+      source: "local",
+    });
+
+    process.env.LACOCO_AGENT_MODEL = "env-model";
+    expect(resolveConfig("agent.model")).toMatchObject({
+      value: "env-model",
+      source: "env",
+    });
   });
 
   it("elimina una propiedad sin destruir el resto del archivo", () => {

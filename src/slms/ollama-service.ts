@@ -4,6 +4,8 @@ import type {
 import type { LlmClient, ChatMessage, ChatOptions } from "./llm-client.js";
 
 export class OllamaService implements LlmClient {
+  private readonly activeControllers = new Set<AbortController>();
+
   constructor(
     private readonly endpoint = "http://localhost:11434",
     private readonly model = "qwen2.5-coder:1.5b",
@@ -11,7 +13,7 @@ export class OllamaService implements LlmClient {
   ) {}
 
   async generate(prompt: string, system?: string): Promise<string> {
-    const res = await fetch(`${this.endpoint}/api/generate`, {
+    const { response, text } = await this.#fetchText(`${this.endpoint}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -20,13 +22,10 @@ export class OllamaService implements LlmClient {
         system,
         stream: false,
       } as OllamaGenerateRequest),
-      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
-    const text = await res.text();
-
-    if (!res.ok) {
-      throw new Error(`Ollama error ${res.status}: ${text}`);
+    if (!response.ok) {
+      throw new Error(`Ollama error ${response.status}: ${text}`);
     }
 
     const data = JSON.parse(text) as Record<string, unknown>;
@@ -40,7 +39,7 @@ export class OllamaService implements LlmClient {
     messages: ChatMessage[],
     options: ChatOptions = {}
   ): Promise<string> {
-    const res = await fetch(`${this.endpoint}/api/chat`, {
+    const { response, text } = await this.#fetchText(`${this.endpoint}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -48,14 +47,12 @@ export class OllamaService implements LlmClient {
         messages,
         stream: false,
         ...(options.format ? { format: options.format } : {}),
+        ...(options.options ? { options: options.options } : {}),
       }),
-      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
-    const text = await res.text();
-
-    if (!res.ok) {
-      throw new Error(`Ollama chat error ${res.status}: ${text}`);
+    if (!response.ok) {
+      throw new Error(`Ollama chat error ${response.status}: ${text}`);
     }
 
     const data = JSON.parse(text) as Record<string, unknown>;
@@ -68,13 +65,35 @@ export class OllamaService implements LlmClient {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.endpoint}/api/tags`, {
+      const { response } = await this.#fetchText(`${this.endpoint}/api/tags`, {
         method: "GET",
-        signal: AbortSignal.timeout(Math.min(this.timeoutMs, 5_000)),
-      });
-      return res.ok;
+      }, Math.min(this.timeoutMs, 5_000));
+      return response.ok;
     } catch {
       return false;
+    }
+  }
+
+  abort(): void {
+    for (const controller of this.activeControllers) controller.abort();
+    this.activeControllers.clear();
+  }
+
+  async #fetchText(
+    input: string,
+    init: RequestInit,
+    timeoutMs = this.timeoutMs,
+  ): Promise<{ response: Response; text: string }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    this.activeControllers.add(controller);
+    try {
+      const response = await fetch(input, { ...init, signal: controller.signal });
+      const text = await response.text();
+      return { response, text };
+    } finally {
+      clearTimeout(timeout);
+      this.activeControllers.delete(controller);
     }
   }
 }

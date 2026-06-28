@@ -102,3 +102,4 @@ function deterministicTestEmbedding(text: string): Float32Array {
   }
   return vector;
 }
+

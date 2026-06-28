@@ -21,6 +21,7 @@ import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lac
 import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
 import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
 import { RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
+import { breadthFirstTraversal } from "./helpers/graph-traversal.js";
 
 type Dim = Dimension;
 
@@ -161,22 +162,12 @@ export class RprStrategy extends AbstractAnchoredStrategy {
       nodeRelevance.set(id, anchorScores.get(id) ?? 0);
     }
 
-    let frontier = new Set(anchorIds);
-    const visited = new Set<string>();
+    const traversal = breadthFirstTraversal(this.db.edgeDao, anchorIds, {
+      maxHops: this.config.subgraphMaxHops,
+      maxNodes: this.config.bfsMaxNodes,
+    });
 
-    for (
-      let hop = 0;
-      hop < this.config.subgraphMaxHops && frontier.size > 0;
-      hop++
-    ) {
-      const frontierArr = Array.from(frontier);
-      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
-        limit: this.config.bfsMaxNodes,
-      });
-
-      const nextFrontier = new Set<string>();
-
-      for (const edge of edges) {
+    for (const edge of traversal.edges) {
         const dim = RELATION_TO_DIM[edge.relation];
         if (!dim) continue;
 
@@ -189,39 +180,15 @@ export class RprStrategy extends AbstractAnchoredStrategy {
           dim,
         });
 
-        const srcKnown = nodeRelevance.has(edge.sourceId);
-        const tgtKnown = nodeRelevance.has(edge.targetId);
-        const decay = this.config.decayPerHop;
+    }
 
-        if (srcKnown && !tgtKnown) {
-          const newRel = (nodeRelevance.get(edge.sourceId) ?? 0) * decay;
-          nodeRelevance.set(
-            edge.targetId,
-            Math.max(nodeRelevance.get(edge.targetId) ?? 0, newRel)
-          );
-          if (!anchorIds.includes(edge.targetId)) {
-            nextFrontier.add(edge.targetId);
-          }
-        }
-
-        if (!srcKnown && tgtKnown) {
-          const newRel = (nodeRelevance.get(edge.targetId) ?? 0) * decay;
-          nodeRelevance.set(
-            edge.sourceId,
-            Math.max(nodeRelevance.get(edge.sourceId) ?? 0, newRel)
-          );
-          if (!anchorIds.includes(edge.sourceId)) {
-            nextFrontier.add(edge.sourceId);
-          }
-        }
-      }
-
-      for (const id of frontierArr) visited.add(id);
-      frontier = new Set(
-        Array.from(nextFrontier).filter((id) => !visited.has(id))
+    for (const discovery of traversal.discoveries) {
+      const relevance = (nodeRelevance.get(discovery.from) ?? 0)
+        * this.config.decayPerHop;
+      nodeRelevance.set(
+        discovery.nodeId,
+        Math.max(nodeRelevance.get(discovery.nodeId) ?? 0, relevance),
       );
-
-      if (nodeRelevance.size + frontier.size > this.config.bfsMaxNodes) break;
     }
 
     for (const id of anchorIds) {

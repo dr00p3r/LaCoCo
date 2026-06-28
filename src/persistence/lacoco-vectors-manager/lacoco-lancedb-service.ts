@@ -6,9 +6,17 @@ import { SearchDao } from "./dao/search-dao.js";
 
 export type { NodeEmbeddingRecord };
 
+export interface LanceDbHealth {
+  connected: boolean;
+  indexBuilt: boolean;
+  lastIndexError: string | null;
+}
+
 export class LaCoCoLanceDb {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
+  private indexBuilt = false;
+  private lastIndexError: string | null = null;
 
   private readonly connectionDao: ConnectionDao;
   private readonly embeddingDao: EmbeddingDao;
@@ -24,6 +32,7 @@ export class LaCoCoLanceDb {
     const { db, table } = await this.connectionDao.connect(this.dbPath);
     this.db = db;
     this.table = table;
+    this.indexBuilt = (await table.listIndices()).some((index) => index.name === "embedding_hnsw");
   }
 
   async close(): Promise<void> {
@@ -64,6 +73,11 @@ export class LaCoCoLanceDb {
     await this.embeddingDao.deleteByNodeId(this.table, nodeId);
   }
 
+  async deleteByNodeIds(nodeIds: string[]): Promise<void> {
+    if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
+    await this.embeddingDao.deleteByNodeIds(this.table, nodeIds);
+  }
+
   async deleteByFilePath(filePath: string): Promise<void> {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
     await this.embeddingDao.deleteByFilePath(this.table, filePath);
@@ -78,11 +92,23 @@ export class LaCoCoLanceDb {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
     try {
       await this.connectionDao.buildIndex(this.table);
+      this.indexBuilt = true;
+      this.lastIndexError = null;
     } catch (err) {
+      this.indexBuilt = false;
+      this.lastIndexError = err instanceof Error ? err.message : String(err);
       console.warn(
         "[LaCoCo] No se pudo construir el índice HNSW; la indexación queda utilizable sin ANN optimizado:",
         err instanceof Error ? err.message : err,
       );
     }
+  }
+
+  health(): LanceDbHealth {
+    return {
+      connected: this.db !== null && this.table !== null,
+      indexBuilt: this.indexBuilt,
+      lastIndexError: this.lastIndexError,
+    };
   }
 }

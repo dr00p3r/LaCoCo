@@ -1,5 +1,11 @@
 import Database from "better-sqlite3";
-import type { GraphNode } from "../model/types.js";
+import {
+  parseGraphNode,
+  requireNumber,
+  requireRecord,
+  requireString,
+  type GraphNode,
+} from "../model/types.js";
 
 export class SearchDao {
   private stmtSearchBM25 : Database.Statement;
@@ -23,16 +29,19 @@ export class SearchDao {
   }
 
   searchBM25(query: string, limit = 10): { node_id: string; score: number }[] {
-    return this.stmtSearchBM25.all(query, limit) as {
-      node_id: string;
-      score: number;
-    }[];
+    return this.stmtSearchBM25.all(query, limit).map((value) => {
+      const row = requireRecord(value, "Bm25Row");
+      return {
+        node_id: requireString(row.node_id, "Bm25Row.node_id"),
+        score: requireNumber(row.score, "Bm25Row.score"),
+      };
+    });
   }
 
   getNodesByDimension(
     dimension: "SYS" | "CPG" | "DTG",
     limit = 100
   ): GraphNode[] {
-    return this.stmtGetNodesByDimension.all(dimension, limit) as GraphNode[];
+    return this.stmtGetNodesByDimension.all(dimension, limit).map(parseGraphNode);
   }
 }

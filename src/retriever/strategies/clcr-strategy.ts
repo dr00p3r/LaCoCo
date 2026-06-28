@@ -16,12 +16,14 @@
  */
 
 import type { ContextChunk } from "../models/strategies/types.js";
-import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
 import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
 import { DIMENSIONS, RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
+import { getDominantDimension } from "./helpers/intent-weights.js";
+import { breadthFirstTraversal } from "./helpers/graph-traversal.js";
 
 type Dim = Dimension;
 const ALL_DIMS: Dim[] = [...DIMENSIONS];
@@ -33,15 +35,6 @@ const DIM_RELATIONS = Object.entries(RELATION_TO_DIM).reduce<Record<Dim, string[
   },
   { SYS: [], CPG: [], DTG: [] },
 );
-
-const INTENT_WEIGHTS: Record<IntentTag, { SYS: number; CPG: number; DTG: number }> = {
-  debug:      { SYS: 0.30, CPG: 0.40, DTG: 0.30 },
-  refactor:   { SYS: 0.40, CPG: 0.40, DTG: 0.20 },
-  create:     { SYS: 0.50, CPG: 0.30, DTG: 0.20 },
-  integrate:  { SYS: 0.30, CPG: 0.20, DTG: 0.50 },
-  understand: { SYS: 0.35, CPG: 0.35, DTG: 0.30 },
-  unknown:    { SYS: 0.34, CPG: 0.33, DTG: 0.33 },
-};
 
 export interface ClcrConfig {
   anchorLimit: number;
@@ -61,12 +54,6 @@ const DEFAULT_CONFIG: ClcrConfig = {
   lambda: 0.25,
 };
 
-interface Edge {
-  sourceId: string;
-  targetId: string;
-  relation: string;
-}
-
 export class ClcrStrategy extends AbstractAnchoredStrategy {
   private readonly config: ClcrConfig;
 
@@ -84,7 +71,7 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
   }
 
   protected async expand(anchorResults: HybridAnchor[], query: SanitizerOutput): Promise<ContextChunk[]> {
-    const dominant = this.#computeDominant(query.intent, query.dimensions);
+    const dominant = getDominantDimension(query.intent, query.dimensions);
     const cascadeDims = ALL_DIMS.filter((d) => d !== dominant);
 
     const baseScore = new Map<string, number>();
@@ -96,41 +83,19 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
 
     const anchorIds = Array.from(anchorSet);
 
-    const primarySet = new Set(anchorIds);
-    let frontier = new Set(anchorIds);
-
-    for (let hop = 0; hop < this.config.primaryHops && frontier.size > 0; hop++) {
-      const relations = DIM_RELATIONS[dominant];
-      const frontierArr = Array.from(frontier);
-      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
-        limit: this.config.bfsMaxNodes,
-        relations,
-      }) as Edge[];
-
-      const nextFrontier = new Set<string>();
-      for (const edge of edges) {
-        const otherId = frontier.has(edge.sourceId)
-          ? edge.targetId
-          : edge.sourceId;
-        if (primarySet.has(otherId)) continue;
-
-        primarySet.add(otherId);
-        nextFrontier.add(otherId);
-
-        const srcScore = baseScore.get(
-          frontier.has(edge.sourceId) ? edge.sourceId : edge.targetId
-        ) ?? 0;
-        const decay = Math.pow(0.5, hop + 1);
-        const propagated = srcScore * decay;
-        baseScore.set(
-          otherId,
-          Math.max(baseScore.get(otherId) ?? 0, propagated)
-        );
-      }
-
-      frontier = nextFrontier;
-
-      if (primarySet.size + nextFrontier.size > this.config.bfsMaxNodes) break;
+    const primary = breadthFirstTraversal(this.db.edgeDao, anchorIds, {
+      maxHops: this.config.primaryHops,
+      maxNodes: this.config.bfsMaxNodes,
+      relations: DIM_RELATIONS[dominant],
+    });
+    const primarySet = primary.visited;
+    for (const discovery of primary.discoveries) {
+      const propagated = (baseScore.get(discovery.from) ?? 0)
+        * Math.pow(0.5, discovery.depth);
+      baseScore.set(
+        discovery.nodeId,
+        Math.max(baseScore.get(discovery.nodeId) ?? 0, propagated),
+      );
     }
 
     if (primarySet.size === 0) {
@@ -145,49 +110,21 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
     }
 
     for (const cascadeDim of cascadeDims) {
-      frontier = primarySet;
-      for (
-        let hop = 0;
-        hop < this.config.cascadeHops && frontier.size > 0;
-        hop++
-      ) {
-        const relations = DIM_RELATIONS[cascadeDim];
-        const frontierArr = Array.from(frontier);
-        const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
-          limit: this.config.bfsMaxNodes,
-          relations,
-        }) as Edge[];
-
-        const nextFrontier = new Set<string>();
-        for (const edge of edges) {
-          const otherId = frontier.has(edge.sourceId)
-            ? edge.targetId
-            : edge.sourceId;
-
-          if (!reachedBy.has(otherId)) {
-            reachedBy.set(otherId, new Set());
-          }
-          reachedBy.get(otherId)!.add(cascadeDim);
-
-          if (!primarySet.has(otherId) && !nextFrontier.has(otherId)) {
-            nextFrontier.add(otherId);
-          }
-
-          if (!baseScore.has(otherId)) {
-            const srcScore = baseScore.get(
-              frontier.has(edge.sourceId) ? edge.sourceId : edge.targetId
-            ) ?? 0;
-            baseScore.set(otherId, Math.max(baseScore.get(otherId) ?? 0, srcScore * 0.7));
-          }
+      const cascade = breadthFirstTraversal(this.db.edgeDao, [...primarySet], {
+        maxHops: this.config.cascadeHops,
+        maxNodes: this.config.bfsMaxNodes,
+        relations: DIM_RELATIONS[cascadeDim],
+      });
+      for (const edge of cascade.edges) {
+        for (const nodeId of [edge.sourceId, edge.targetId]) {
+          if (!reachedBy.has(nodeId)) reachedBy.set(nodeId, new Set());
+          reachedBy.get(nodeId)!.add(cascadeDim);
         }
-
-        frontier = nextFrontier;
-
-        if (
-          primarySet.size + reachedBy.size + nextFrontier.size >
-          this.config.bfsMaxNodes
-        )
-          break;
+      }
+      for (const discovery of cascade.discoveries) {
+        if (!baseScore.has(discovery.nodeId)) {
+          baseScore.set(discovery.nodeId, (baseScore.get(discovery.from) ?? 0) * 0.7);
+        }
       }
     }
 
@@ -245,26 +182,4 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
     });
   }
 
-  #computeDominant(
-    intent: IntentTag,
-    dimensions: ("SYS" | "CPG" | "DTG")[]
-  ): Dim {
-    const base = { ...INTENT_WEIGHTS[intent] };
-
-    if (dimensions.length > 0 && dimensions.length < 3) {
-      for (const dim of dimensions) {
-        base[dim] *= 1.5;
-      }
-    }
-
-    let best: Dim = "CPG";
-    let bestVal = 0;
-    for (const dim of ALL_DIMS) {
-      if (base[dim] > bestVal) {
-        bestVal = base[dim];
-        best = dim;
-      }
-    }
-    return best;
-  }
 }

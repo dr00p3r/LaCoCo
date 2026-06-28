@@ -14,7 +14,11 @@ export interface ConfigEntry {
 
 interface ConfigFile {
   version: 1;
-  values: Record<string, unknown>;
+  values: ConfigTreeNode;
+}
+
+export interface ConfigTreeNode {
+  [key: string]: ConfigValue | ConfigTreeNode;
 }
 
 type ConfigType = "string" | "number" | "boolean";
@@ -41,6 +45,15 @@ const CONFIG_DEFINITIONS = {
       typeof value === "string" && value.trim().length > 0
         ? null
         : "agent.endpoint debe ser una URL no vacía",
+  },
+  "agent.model": {
+    type: "string",
+    defaultValue: "qwen2.5-coder:1.5b",
+    env: "LACOCO_AGENT_MODEL",
+    validate: (value) =>
+      typeof value === "string" && value.trim().length > 0
+        ? null
+        : "agent.model debe ser un nombre no vacío",
   },
   "strategy.default": {
     type: "string",
@@ -213,16 +226,16 @@ function localConfigPath(): string {
   return path.join(process.cwd(), ".lacoco", "config.json");
 }
 
-function getNested(values: Record<string, unknown>, key: string): unknown {
-  let current: unknown = values;
+function getNested(values: ConfigTreeNode, key: string): ConfigValue | ConfigTreeNode | undefined {
+  let current: ConfigValue | ConfigTreeNode | undefined = values;
   for (const part of key.split(".")) {
-    if (typeof current !== "object" || current === null) return undefined;
-    current = (current as Record<string, unknown>)[part];
+    if (!isConfigTreeNode(current)) return undefined;
+    current = current[part];
   }
   return current;
 }
 
-function setNested(values: Record<string, unknown>, key: string, value: ConfigValue): void {
+function setNested(values: ConfigTreeNode, key: string, value: ConfigValue): void {
   const parts = key.split(".");
   let current = values;
   for (const part of parts.slice(0, -1)) {
@@ -230,18 +243,22 @@ function setNested(values: Record<string, unknown>, key: string, value: ConfigVa
     if (typeof child !== "object" || child === null || Array.isArray(child)) {
       current[part] = {};
     }
-    current = current[part] as Record<string, unknown>;
+    current = current[part] as ConfigTreeNode;
   }
   current[parts[parts.length - 1]!] = value;
 }
 
-function unsetNested(values: Record<string, unknown>, key: string): void {
+function unsetNested(values: ConfigTreeNode, key: string): void {
   const parts = key.split(".");
   let current = values;
   for (const part of parts.slice(0, -1)) {
     const child = current[part];
     if (typeof child !== "object" || child === null || Array.isArray(child)) return;
-    current = child as Record<string, unknown>;
+    current = child as ConfigTreeNode;
   }
   delete current[parts[parts.length - 1]!];
+}
+
+function isConfigTreeNode(value: unknown): value is ConfigTreeNode {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

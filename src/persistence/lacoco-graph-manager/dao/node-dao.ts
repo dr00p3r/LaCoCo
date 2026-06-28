@@ -1,5 +1,11 @@
 import Database from "better-sqlite3";
-import type { GraphNode } from "../model/types.js";
+import {
+  parseGraphNode,
+  requireRecord,
+  requireString,
+  type GraphNode,
+  type GraphNodeWithMetadata,
+} from "../model/types.js";
 
 export class NodeDao {
   private stmtInsertNode: Database.Statement;
@@ -38,10 +44,15 @@ export class NodeDao {
     this.stmtInsertNode.run(node);
   }
 
+  clearAll(): void {
+    this.db.prepare("DELETE FROM nodes").run();
+  }
+
   deleteNodesByFile(filepath: string): string[] {
-    const nodeIds = (
-      this.stmtGetNodeIdsByFile.all(filepath) as { id: string }[]
-    ).map((r) => r.id);
+    const nodeIds = this.stmtGetNodeIdsByFile.all(filepath).map((value) => {
+      const row = requireRecord(value, "NodeIdRow");
+      return requireString(row.id, "NodeIdRow.id");
+    });
 
     if (nodeIds.length === 0) return [];
 
@@ -58,14 +69,18 @@ export class NodeDao {
   getNodesByFile(filepath: string): GraphNode[] {
     return this.db
       .prepare(`SELECT * FROM nodes WHERE filepath = ?`)
-      .all(filepath) as GraphNode[];
+      .all(filepath)
+      .map(parseGraphNode);
   }
 
   getNodeIdsBySymbol(name: string, limit = 10): string[] {
     const rows = this.db
       .prepare("SELECT id FROM nodes WHERE name = ? LIMIT ?")
-      .all(name, limit) as { id: string }[];
-    return rows.map((row) => row.id);
+      .all(name, limit);
+    return rows.map((value) => {
+      const row = requireRecord(value, "NodeIdRow");
+      return requireString(row.id, "NodeIdRow.id");
+    });
   }
 
   getExternalLibraryIds(pkg: string, version?: string, limit = 10): string[] {
@@ -73,8 +88,11 @@ export class NodeDao {
       ? "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? AND name LIKE ? LIMIT ?"
       : "SELECT id FROM nodes WHERE kind = 'EXTERNAL_LIB' AND name LIKE ? LIMIT ?";
     const params = version ? [`%${pkg}%`, `%${version}%`, limit] : [`%${pkg}%`, limit];
-    const rows = this.db.prepare(sql).all(...params) as { id: string }[];
-    return rows.map((row) => row.id);
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.map((value) => {
+      const row = requireRecord(value, "ExternalLibraryRow");
+      return requireString(row.id, "ExternalLibraryRow.id");
+    });
   }
 
   getNodeSignatures(ids: string[]): Map<string, string> {
@@ -82,11 +100,37 @@ export class NodeDao {
     const placeholders = ids.map(() => "?").join(",");
     const rows = this.db
       .prepare(`SELECT id, COALESCE(signature, name) AS text FROM nodes WHERE id IN (${placeholders})`)
-      .all(...ids) as { id: string; text: string }[];
+      .all(...ids);
     const map = new Map<string, string>();
-    for (const r of rows) {
-      map.set(r.id, r.text);
+    for (const value of rows) {
+      const row = requireRecord(value, "NodeSignatureRow");
+      map.set(
+        requireString(row.id, "NodeSignatureRow.id"),
+        requireString(row.text, "NodeSignatureRow.text"),
+      );
     }
     return map;
+  }
+
+  loadNodesByIds(ids: readonly string[]): GraphNodeWithMetadata[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    return this.db.prepare(
+      `SELECT n.id, n.kind, n.name, n.filepath,
+              COALESCE(n.signature, '') AS signature, n.isDeprecated,
+              m.dimension AS dim, m.sub_type
+       FROM nodes n
+       LEFT JOIN node_metadata m ON n.id = m.node_id
+       WHERE n.id IN (${placeholders})`,
+    ).all(...ids).map((value) => {
+      const row = requireRecord(value, "GraphNodeWithMetadata");
+      return {
+        ...parseGraphNode(row),
+        dim: row.dim === null ? null : requireString(row.dim, "GraphNodeWithMetadata.dim"),
+        sub_type: row.sub_type === null
+          ? null
+          : requireString(row.sub_type, "GraphNodeWithMetadata.sub_type"),
+      };
+    });
   }
 }

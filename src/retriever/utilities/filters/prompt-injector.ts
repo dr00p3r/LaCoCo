@@ -18,7 +18,8 @@ const TEMPLATES: Record<string, (chunks: ContextChunk[]) => string> = {
     return `### Contexto del Proyecto (recuperado automáticamente)
 Los siguientes fragmentos de código fueron recuperados del repositorio actual
 como contexto para tu consulta. Úsalos como referencia absoluta de firmas,
-tipos y dependencias locales. No inventes símbolos que no aparezcan aquí.
+tipos y dependencias locales, y sobre todo, como ubicación de archivos. 
+No inventes símbolos que no aparezcan aquí.
 
 ${blocks}
 

@@ -4,7 +4,7 @@ import type { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/
 import type { LaCoCoLanceDb } from "../../src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { createGraphDb, makeQuery } from "./test-helpers.js";
 
-vi.mock("../../src/retriever/utilities/embeddings/embedding-generator.js", () => {
+vi.mock("../../src/embeddings/embedding-generator.js", () => {
   class MockEmbeddingGenerator {
     generate = vi.fn().mockResolvedValue(new Float32Array(384));
   }

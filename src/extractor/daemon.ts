@@ -23,7 +23,8 @@ import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lanc
 import { CodeExtractor } from "./code-extractor.js";
 import { SqliteCallbacks } from "./sqlite-callbacks.js";
 import { VectorCallbacks } from "./vector-callbacks.js";
-import { EmbeddingGenerator } from "../retriever/utilities/embeddings/embedding-generator.js";
+import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
+import { CompositeCallbacks, SourceNodeBuffer } from "./composite-callbacks.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos auxiliares
@@ -47,6 +48,23 @@ export interface DaemonOptions {
   lanceDbPath?: string;
   /** Milisegundos de estabilidad antes de procesar eventos del watcher. Default: 80. */
   watchDebounceMs?: number;
+  /** Recibe errores operativos sin detener las colas del daemon. */
+  onError?: (event: DaemonErrorEvent) => void;
+}
+
+export type DaemonErrorScope = "watcher" | "file-queue" | "vector-queue" | "embeddings" | "extractor";
+
+export interface DaemonErrorEvent {
+  scope: DaemonErrorScope;
+  error: Error;
+  timestamp: string;
+}
+
+export interface DaemonHealth {
+  ok: boolean;
+  watcherActive: boolean;
+  failures: Record<DaemonErrorScope, number>;
+  lastError: DaemonErrorEvent | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,11 +74,11 @@ export interface DaemonOptions {
 export class DaemonManager {
   private readonly project: Project;
   private readonly sqliteCallbacks: SqliteCallbacks;
-  private readonly sqliteExtractor: CodeExtractor;
+  private readonly extractor: CodeExtractor;
+  private readonly vectorNodeBuffer = new SourceNodeBuffer();
   private readonly embedGen: EmbeddingGenerator;
   private lanceDb: LaCoCoLanceDb | null = null;
   private vectorCallbacks: VectorCallbacks | null = null;
-  private vectorExtractor: CodeExtractor | null = null;
   private watcher: FSWatcher | null = null;
 
   private readonly tsConfigFilePath: string;
@@ -73,7 +91,16 @@ export class DaemonManager {
   private vectorsPromise: Promise<void> | null = null;
   private fileOperationChain: Promise<void> = Promise.resolve();
   private vectorOperationChain: Promise<void> = Promise.resolve();
-  private embeddingsFailed = false;
+  private readonly onError: ((event: DaemonErrorEvent) => void) | undefined;
+  private readonly failures: Record<DaemonErrorScope, number> = {
+    watcher: 0,
+    "file-queue": 0,
+    "vector-queue": 0,
+    embeddings: 0,
+    extractor: 0,
+  };
+  private lastError: DaemonErrorEvent | null = null;
+  private readonly pendingVectorDeletes = new Map<string, Set<string>>();
 
   constructor(opts: DaemonOptions) {
     this.tsConfigFilePath = path.resolve(opts.tsConfigFilePath);
@@ -82,6 +109,7 @@ export class DaemonManager {
     this.indexVectors = opts.indexEmbeddings ?? true;
     this.lanceDbPath = opts.lanceDbPath ?? "./lancedb";
     this.watchDebounceMs = opts.watchDebounceMs ?? 80;
+    this.onError = opts.onError;
 
     const projectRoot = path.dirname(this.tsConfigFilePath);
     this.watchGlob =
@@ -92,7 +120,9 @@ export class DaemonManager {
     });
 
     this.sqliteCallbacks = new SqliteCallbacks(this.db.getRawDb());
-    this.sqliteExtractor = new CodeExtractor(this.sqliteCallbacks);
+    this.extractor = new CodeExtractor(
+      new CompositeCallbacks([this.sqliteCallbacks, this.vectorNodeBuffer]),
+    );
     this.embedGen = new EmbeddingGenerator();
   }
 
@@ -157,11 +187,12 @@ export class DaemonManager {
     }
   }
 
-  health(): { ok: boolean; embeddingsFailed: boolean; watcherActive: boolean } {
+  health(): DaemonHealth {
     return {
-      ok: !this.embeddingsFailed,
-      embeddingsFailed: this.embeddingsFailed,
+      ok: Object.values(this.failures).every((count) => count === 0),
       watcherActive: this.watcher !== null,
+      failures: { ...this.failures },
+      lastError: this.lastError,
     };
   }
 
@@ -192,11 +223,12 @@ export class DaemonManager {
 
     this.db.transaction(() => {
       this.db.clearGraph();
+      this.vectorNodeBuffer.clear();
       for (const file of sourceFiles) {
         if (this.verbose) {
           console.log(`[Daemon]    ✍  ${file.getFilePath()}`);
         }
-        this.#safeProcessFile(this.sqliteExtractor, file);
+        this.#safeProcessFile(file);
       }
     });
     this.db.populateMetadata();
@@ -207,11 +239,11 @@ export class DaemonManager {
     );
 
     if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0) {
-      this.vectorsPromise = this.#generateEmbeddings(sourceFiles);
+      this.vectorsPromise = this.#generateEmbeddings();
     }
   }
 
-  async #generateEmbeddings(sourceFiles: ReturnType<Project["getSourceFiles"]>): Promise<void> {
+  async #generateEmbeddings(): Promise<void> {
     console.log("[Daemon] 🧠 Generando embeddings semánticos...");
     console.time("[Daemon] Embeddings");
 
@@ -223,33 +255,24 @@ export class DaemonManager {
         this.lanceDb,
         (t) => this.embedGen.generate(t),
       );
-      this.vectorExtractor = new CodeExtractor(this.vectorCallbacks);
-
-      for (const file of sourceFiles) {
-        if (this.verbose) {
-          console.log(`[Daemon]    🧠  ${file.getFilePath()}`);
-        }
-        this.#safeProcessFile(this.vectorExtractor, file);
-      }
+      for (const row of this.vectorNodeBuffer.all()) this.vectorCallbacks.insertNode(row);
       await this.vectorCallbacks.flush();
       await this.lanceDb.buildIndex();
       console.timeEnd("[Daemon] Embeddings");
       console.log(`[Daemon] ✅ ${this.vectorCallbacks.nodesWritten} embeddings insertados en LanceDB.`);
     } catch (err) {
-      this.embeddingsFailed = true;
-      console.error("[Daemon] ❌ Error generando embeddings:", err instanceof Error ? err.message : err);
+      this.#recordError("embeddings", err);
     }
   }
 
   async #reindexVectors(filePath: string): Promise<void> {
-    if (!this.lanceDb || !this.vectorCallbacks || !this.vectorExtractor) return;
-    await this.lanceDb.deleteByFilePath(filePath);
-
-    const sourceFile = this.project.getSourceFile(filePath);
-    if (!sourceFile) return;
-
-    // Re-generar embeddings
-    this.#safeProcessFile(this.vectorExtractor, sourceFile);
+    if (!this.lanceDb || !this.vectorCallbacks) return;
+    const deletedIds = [...(this.pendingVectorDeletes.get(filePath) ?? [])];
+    this.pendingVectorDeletes.delete(filePath);
+    if (deletedIds.length > 0) await this.lanceDb.deleteByNodeIds(deletedIds);
+    for (const row of this.vectorNodeBuffer.get(filePath)) {
+      this.vectorCallbacks.insertNode(row);
+    }
     await this.vectorCallbacks.flush();
   }
 
@@ -292,7 +315,7 @@ export class DaemonManager {
     });
 
     this.watcher.on("error", (error) => {
-      console.error("[Daemon] ❌ Error en el watcher:", error);
+      this.#recordError("watcher", error);
     });
   }
 
@@ -369,7 +392,7 @@ export class DaemonManager {
       this.db.transaction(() => {
         // 3. Purgar el archivo modificado y re-procesarlo con el AST fresco
         const purgedIds = this.#purgeFile(filePath);
-        this.#safeProcessFile(this.sqliteExtractor, sourceFile);
+        this.#safeProcessFile(sourceFile);
 
         // 4. Propagar a archivos dependientes
         allPurgedIds = [...purgedIds];
@@ -377,10 +400,17 @@ export class DaemonManager {
           dep.refreshFromFileSystemSync();
           const depIds = this.#purgeFile(dep.getFilePath());
           allPurgedIds.push(...depIds);
-          this.#safeProcessFile(this.sqliteExtractor, dep);
+          this.#safeProcessFile(dep);
         }
       });
-      this.db.populateMetadataForNodes(allPurgedIds);
+      const updatedSourcePaths = [
+        filePath,
+        ...filesToPropagate.map((dep) => dep.getFilePath()),
+      ];
+      const newNodeIds = updatedSourcePaths.flatMap((sourcePath) =>
+        this.vectorNodeBuffer.get(sourcePath).map((row) => row.id)
+      );
+      this.db.populateMetadataForNodes([...new Set([...allPurgedIds, ...newNodeIds])]);
 
       console.log(
         `[Daemon]    ↳ ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas actualizados` +
@@ -397,9 +427,9 @@ export class DaemonManager {
         ]);
       }
     } catch (err) {
-      console.error(
-        `[Daemon] ❌ Error procesando ${filePath}:`,
-        err instanceof Error ? err.message : err
+      this.#recordError(
+        "file-queue",
+        new Error(`Error procesando ${filePath}`, { cause: err }),
       );
     } finally {
       // Garantiza que el timer siempre cierra, incluso si hay excepción temprana
@@ -421,9 +451,9 @@ export class DaemonManager {
       if (this.indexVectors) this.#enqueueVectorUpdates([filePath]);
       console.log(`[Daemon]    ↳ Registros del archivo purgados de SQLite.`);
     } catch (err) {
-      console.error(
-        `[Daemon] ❌ Error purgando registros de ${relativePath}:`,
-        err instanceof Error ? err.message : err
+      this.#recordError(
+        "file-queue",
+        new Error(`Error purgando registros de ${relativePath}`, { cause: err }),
       );
     }
   }
@@ -444,17 +474,21 @@ export class DaemonManager {
    * Esto garantiza consistencia aunque el schema no tenga CASCADE configurado.
    */
   #purgeFile(filePath: string): string[] {
-    return this.db.deleteNodesByFile(filePath);
+    const bufferedIds = this.vectorNodeBuffer.remove(filePath).map((row) => row.id);
+    const deletedIds = new Set([...bufferedIds, ...this.db.deleteNodesByFile(filePath)]);
+    if (deletedIds.size > 0) {
+      const pending = this.pendingVectorDeletes.get(filePath) ?? new Set<string>();
+      for (const nodeId of deletedIds) pending.add(nodeId);
+      this.pendingVectorDeletes.set(filePath, pending);
+    }
+    return [...deletedIds];
   }
 
   #enqueueFileOperation(operation: () => Promise<void>): void {
     this.fileOperationChain = this.fileOperationChain
       .then(operation)
       .catch((err: unknown) => {
-        console.error(
-          "[Daemon] Error en cola de archivos:",
-          err instanceof Error ? err.message : err
-        );
+        this.#recordError("file-queue", err);
       });
   }
 
@@ -467,10 +501,7 @@ export class DaemonManager {
         }
       })
       .catch((err: unknown) => {
-        console.error(
-          "[Daemon] Error en cola vectorial:",
-          err instanceof Error ? err.message : err
-        );
+        this.#recordError("vector-queue", err);
       });
   }
 
@@ -478,13 +509,38 @@ export class DaemonManager {
    * Envuelve `parser.processFile` con manejo de errores para que un archivo
    * malformado no detenga el análisis del resto del proyecto.
    */
-  #safeProcessFile(extractor: CodeExtractor, sourceFile: SourceFile): void {
+  #safeProcessFile(sourceFile: SourceFile): void {
+    const sourceFilePath = sourceFile.getFilePath();
+    const previousRows = this.vectorNodeBuffer.begin(sourceFilePath);
     try {
-      extractor.processFile(sourceFile);
+      this.extractor.processFile(sourceFile);
     } catch (err) {
+      this.vectorNodeBuffer.restore(sourceFilePath, previousRows);
+      this.#recordError(
+        "extractor",
+        new Error(`Error analizando ${sourceFilePath}`, { cause: err }),
+      );
+    } finally {
+      this.vectorNodeBuffer.end();
+    }
+  }
+
+  #recordError(scope: DaemonErrorScope, value: unknown): void {
+    const error = value instanceof Error ? value : new Error(String(value));
+    const event: DaemonErrorEvent = {
+      scope,
+      error,
+      timestamp: new Date().toISOString(),
+    };
+    this.failures[scope]++;
+    this.lastError = event;
+    console.error(`[Daemon] ${scope}:`, error.message);
+    try {
+      this.onError?.(event);
+    } catch (callbackError) {
       console.error(
-        `[Daemon] ⚠  Error analizando ${sourceFile.getFilePath()}:`,
-        err instanceof Error ? err.message : err
+        "[Daemon] onError callback:",
+        callbackError instanceof Error ? callbackError.message : callbackError,
       );
     }
   }

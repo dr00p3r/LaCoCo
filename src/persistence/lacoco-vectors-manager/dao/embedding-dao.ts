@@ -11,8 +11,11 @@ export class EmbeddingDao {
     const uniqueRecords = this.#deduplicateByNodeId(records);
     if (uniqueRecords.length === 0) return;
 
-    await this.deleteByNodeIds(table, uniqueRecords.map((record) => record.node_id));
-    await this.insertBatch(table, uniqueRecords);
+    await table
+      .mergeInsert("node_id")
+      .whenMatchedUpdateAll()
+      .whenNotMatchedInsertAll()
+      .execute(uniqueRecords as unknown as Record<string, unknown>[]);
   }
 
   async deleteByNodeId(table: lancedb.Table, nodeId: string): Promise<void> {

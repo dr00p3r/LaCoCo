@@ -20,7 +20,7 @@ describe("lacoco CLI E2E", () => {
 
       runCli(["init", projectDir], stateHome);
       runCli(["index_graph", path.join(projectDir, "tsconfig.json")], stateHome);
-      runCli(["index_vectors", "--tsconfig", path.join(projectDir, "tsconfig.json")], stateHome, {
+      runCli(["index_vectors", path.join(projectDir, "tsconfig.json")], stateHome, {
         LACOCO_TEST_EMBEDDINGS: "1",
       });
 

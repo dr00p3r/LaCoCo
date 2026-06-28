@@ -96,7 +96,60 @@ describe("SlmClassifier", () => {
 
     await expect(classifier.classify("explica hybrid strategy")).resolves.toEqual(valid);
     expect(chat).toHaveBeenCalledTimes(2);
-    expect(chat).toHaveBeenNthCalledWith(1, expect.any(Array), { format: "json" });
-    expect(chat).toHaveBeenNthCalledWith(2, expect.any(Array), { format: "json" });
+    expect(chat).toHaveBeenNthCalledWith(1, expect.any(Array), structuredOptions());
+    expect(chat).toHaveBeenNthCalledWith(2, expect.any(Array), structuredOptions());
+  });
+
+  it("pide al SLM verificar cualquier decisión LLM_DIRECT", async () => {
+    const direct = {
+      route: "LLM_DIRECT",
+      clean_query: "",
+      embedding_input: "Modify hybrid recovery chunks",
+      dimensions: [],
+      intent: "refactor",
+      confidence: 0.98,
+    };
+    const corrected = {
+      route: "RAG",
+      clean_query: '"recovery chunks" OR "hybrid" OR "strategies"',
+      embedding_input: "Modify hybrid-based recovery strategies to return only 20 chunks",
+      dimensions: ["CPG"],
+      intent: "refactor",
+      confidence: 0.99,
+    };
+    const { classifier, chat } = createRetryingClassifier(
+      JSON.stringify(direct),
+      JSON.stringify(corrected),
+    );
+
+    await expect(classifier.classify(
+      "modify the recovery chunks of the strategies based on hybrid to be only 20",
+    )).resolves.toEqual(corrected);
+
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(chat.mock.calls[1]?.[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Verifica de forma independiente"),
+      }),
+    ]));
   });
 });
+
+function structuredOptions(): ReturnType<typeof expect.objectContaining> {
+  return expect.objectContaining({
+    format: expect.objectContaining({
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "route",
+        "clean_query",
+        "embedding_input",
+        "dimensions",
+        "intent",
+        "confidence",
+      ],
+    }),
+    options: { temperature: 0, seed: 42, num_predict: 256 },
+  });
+}

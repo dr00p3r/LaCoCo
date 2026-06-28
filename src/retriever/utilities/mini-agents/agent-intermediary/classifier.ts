@@ -1,4 +1,4 @@
-import type { LlmClient } from "../../../../slms/llm-client.js";
+import type { ChatMessage, ChatOptions, LlmClient } from "../../../../slms/llm-client.js";
 import { DIMENSIONS } from "../../../../domain/dimensions.js";
 import type { IntentTag } from "../../../models/utilities/types.js";
 import type { ClassificationResult } from "./types.js";
@@ -12,6 +12,35 @@ const INTENTS: IntentTag[] = [
   "integrate",
   "unknown",
 ];
+const CLASSIFICATION_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    route: { type: "string", enum: [...ROUTES] },
+    clean_query: { type: "string" },
+    embedding_input: { type: "string", minLength: 1 },
+    dimensions: {
+      type: "array",
+      items: { type: "string", enum: [...DIMENSIONS] },
+      uniqueItems: true,
+      maxItems: DIMENSIONS.length,
+    },
+    intent: { type: "string", enum: INTENTS },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: [
+    "route",
+    "clean_query",
+    "embedding_input",
+    "dimensions",
+    "intent",
+    "confidence",
+  ],
+};
+const CLASSIFICATION_OPTIONS: ChatOptions = {
+  format: CLASSIFICATION_SCHEMA,
+  options: { temperature: 0, seed: 42, num_predict: 256 },
+};
 const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 
 Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: tu salida será utilizada directamente para búsqueda FTS5, embeddings y selección dimensional.
@@ -31,7 +60,10 @@ Responsabilidad de cada campo:
 
 1. route
    - RAG cuando la petición depende del repositorio actual o pretende leer, explicar, crear, modificar, depurar o integrar código en él.
+   - Toda orden de cambiar implementación, límites, configuración, estrategias, pruebas, comandos o documentación del proyecto es RAG, aunque no mencione un archivo concreto.
+   - Referencias como "the strategies", "hybrid", "recovery chunks", "the project" o equivalentes describen artefactos del repositorio y requieren RAG.
    - LLM_DIRECT solo para conversación o conocimiento genérico que no necesita el proyecto.
+   - No elijas LLM_DIRECT para una solicitud de refactorización del proyecto ni porque la instrucción sea breve o de alto nivel.
    - Si existe duda, elige RAG.
 
 2. clean_query
@@ -66,54 +98,70 @@ Salida: {"route":"RAG","clean_query":"\"OrderService\" OR \"async\" OR \"await\"
 Prompt: por qué save falla al persistir CreateOrderDto
 Salida: {"route":"RAG","clean_query":"\"save\" OR \"CreateOrderDto\"","embedding_input":"Depurar por qué save falla al persistir CreateOrderDto","dimensions":["CPG","DTG"],"intent":"debug","confidence":0.94}
 
+Prompt: modify the recovery chunks of the strategies based on hybrid to be only 20
+Salida: {"route":"RAG","clean_query":"\"recovery chunks\" OR \"hybrid\" OR \"strategies\"","embedding_input":"Modify hybrid-based recovery strategies to return only 20 chunks","dimensions":["CPG"],"intent":"refactor","confidence":0.98}
+
 Prompt: qué es TypeScript
-Salida: {"route":"LLM_DIRECT","clean_query":"","embedding_input":"Explicar qué es TypeScript","dimensions":[],"intent":"understand","confidence":0.99}`;
+Salida: {"route":"LLM_DIRECT","clean_query":"","embedding_input":"Explicar qué es TypeScript","dimensions":[],"intent":"understand","confidence":0.99}
+
+Esquema JSON obligatorio:
+${JSON.stringify(CLASSIFICATION_SCHEMA)}`;
 
 export class SlmClassifier {
 
   constructor(private readonly ollama: LlmClient) {}
 
   async classify(prompt: string): Promise<ClassificationResult> {
-
-    const messages = [
+    const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: `Prompt: ${JSON.stringify(prompt)}\nSalida:` },
-    ] as const;
+    ];
+    const initial = await this.#classifyWithRepair(prompt, messages);
 
-    const response = await this.ollama.chat([...messages], { format: "json" });
+    if (initial.route !== "LLM_DIRECT") return initial;
+
+    return this.#classifyWithRepair(prompt, [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content:
+          "Verifica de forma independiente una propuesta LLM_DIRECT. " +
+          "LLM_DIRECT omite todo acceso al repositorio, por lo que solo es correcto si la petición puede resolverse completamente sin leer ni modificar el proyecto actual. " +
+          "Devuelve el objeto completo corregido, no una explicación.\n" +
+          `Prompt original: ${JSON.stringify(prompt)}\n` +
+          `Propuesta a verificar: ${JSON.stringify(initial)}\nSalida final:`,
+      },
+    ]);
+  }
+
+  async #classifyWithRepair(
+    prompt: string,
+    messages: ChatMessage[],
+  ): Promise<ClassificationResult> {
+    const response = await this.ollama.chat(messages, CLASSIFICATION_OPTIONS);
 
     try {
-
       return this.#parseResponse(response);
-
     } catch (firstError) {
-
-      const repairedResponse = await this.ollama.chat(
-        [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content:
-              `Prompt original: ${JSON.stringify(prompt)}\n` +
-              "Tu respuesta anterior no fue JSON válido o incumplió el contrato. " +
-              "Genera nuevamente el objeto completo.\n" +
-              `Respuesta inválida: ${JSON.stringify(response)}\nSalida:`,
-          },
-        ],
-        { format: "json" }
-      );
+      const repairedResponse = await this.ollama.chat([
+        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "user",
+          content:
+            `Prompt original: ${JSON.stringify(prompt)}\n` +
+            "Tu respuesta anterior no fue JSON válido o incumplió el contrato. " +
+            "Genera nuevamente el objeto completo conforme al esquema.\n" +
+            `Respuesta inválida: ${JSON.stringify(response)}\nSalida:`,
+        },
+      ], CLASSIFICATION_OPTIONS);
 
       try {
-
         return this.#parseResponse(repairedResponse);
-
       } catch (secondError) {
-        
         throw new Error(
           "El SLM no produjo una salida JSON válida después de dos intentos",
-          { cause: secondError instanceof Error ? secondError : firstError }
+          { cause: secondError instanceof Error ? secondError : firstError },
         );
-
       }
     }
   }

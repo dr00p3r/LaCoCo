@@ -21,5 +21,7 @@ export interface OllamaChatRequest {
   model: string;
   messages: OllamaChatMessage[];
   stream?: boolean;
+  format?: "json" | Record<string, unknown>;
+  options?: Record<string, string | number | boolean>;
   tools?: unknown[];
 }

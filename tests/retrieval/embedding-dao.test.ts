@@ -32,9 +32,12 @@ describe("EmbeddingDao", () => {
   });
 
   it("reemplaza lotes de forma idempotente por node_id", async () => {
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const whenNotMatchedInsertAll = vi.fn().mockReturnValue({ execute });
+    const whenMatchedUpdateAll = vi.fn().mockReturnValue({ whenNotMatchedInsertAll });
+    const mergeInsert = vi.fn().mockReturnValue({ whenMatchedUpdateAll });
     const table = {
-      add: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
+      mergeInsert,
     } as unknown as lancedb.Table;
     const dao = new EmbeddingDao();
 
@@ -44,8 +47,10 @@ describe("EmbeddingDao", () => {
       record("file#A", "current"),
     ]);
 
-    expect(table.delete).toHaveBeenCalledWith("node_id IN ('file#A', 'file#B')");
-    expect(table.add).toHaveBeenCalledWith([
+    expect(mergeInsert).toHaveBeenCalledWith("node_id");
+    expect(whenMatchedUpdateAll).toHaveBeenCalledOnce();
+    expect(whenNotMatchedInsertAll).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith([
       expect.objectContaining({ node_id: "file#A", file_path: "current" }),
       expect.objectContaining({ node_id: "file#B", file_path: "current" }),
     ]);

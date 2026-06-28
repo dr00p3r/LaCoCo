@@ -11,9 +11,13 @@ import {
   type CliStreams,
   type ContextExportCliOptions,
   type RetrieveCliOptions,
+  type RetrieveJsonResult,
   type RetrieveRuntime,
 } from "../../src/cli/index.js";
-import { configureProjectStorage } from "../../src/cli/state/project-registry.js";
+import {
+  configureProjectStorage,
+  type ProjectRecord,
+} from "../../src/cli/state/project-registry.js";
 
 interface CliResult {
   code: number;
@@ -91,7 +95,7 @@ describe("lacoco retrieve CLI", () => {
     const temp = createTempIndexedDb();
     const output = path.join(temp.dir, "contexto.md");
     try {
-      const result = await runContextExportWithFakes("OrderService(save)", temp.dbPath, output);
+      const result = await runContextExportWithFakes("OrderService(save)", temp.dbPath, output, temp.project.id);
       const markdown = readFileSync(output, "utf-8");
 
       expect(result.code).toBe(0);
@@ -127,9 +131,6 @@ describe("lacoco retrieve CLI", () => {
       const code = await runRetrieve(
         "OrderService",
         {
-          db: temp.dbPath,
-          lancedb: "./lancedb",
-          llm: false,
           verbose: false,
         },
         streams,
@@ -150,26 +151,15 @@ describe("lacoco retrieve CLI", () => {
 
   it("usa rutas de almacenamiento registradas cuando retrieve no recibe --db", async () => {
     const temp = createTempIndexedDb();
-    const previousCwd = process.cwd();
-    const previousStateHome = process.env.XDG_STATE_HOME;
     const capture: RuntimeCapture = {
       ollamaEndpoints: [],
     };
 
     try {
-      mkdirSync(path.join(temp.dir, ".git"));
-      process.env.XDG_STATE_HOME = path.join(temp.dir, "state-home");
-      process.chdir(temp.dir);
-      configureProjectStorage(temp.dir, {
-        dbPath: temp.dbPath,
-        lanceDbPath: path.join(temp.dir, ".lacoco", "lancedb"),
-      });
-
       const { streams, read } = createCapturedStreams();
       const code = await runRetrieve(
         "OrderService",
         {
-          llm: false,
           verbose: false,
         },
         streams,
@@ -181,8 +171,105 @@ describe("lacoco retrieve CLI", () => {
       expect(capture.dbPath).toBe(temp.dbPath);
       expect(capture.lanceDbPath).toBe(path.join(temp.dir, ".lacoco", "lancedb"));
     } finally {
-      process.chdir(previousCwd);
-      restoreEnv("XDG_STATE_HOME", previousStateHome);
+      temp.cleanup();
+    }
+  });
+
+  it("devuelve un único documento JSON con contexto para hooks", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        {
+          strategy: "agentic",
+          verbose: false,
+          json: true,
+        },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(0);
+      expect(result).toMatchObject({
+        schemaVersion: 1,
+        ok: true,
+        query: "OrderService",
+        strategy: "agentic",
+        route: "RAG",
+        classification: {
+          intent: "understand",
+          dimensions: ["CPG"],
+          cleanQuery: "OrderService",
+        },
+      });
+      if (result.ok) {
+        expect(result.retrieval.chunkCount).toBe(result.retrieval.chunks.length);
+        expect(result.retrieval.chunkCount).toBeGreaterThan(0);
+        expect(result.retrieval.chunks[0]?.nodeId).toBe("file1#OrderService");
+      }
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("devuelve errores JSON parseables y mantiene exit code distinto de cero", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "   ",
+        { strategy: "agentic", verbose: false, json: true },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const output = read();
+      const result = JSON.parse(output.stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(1);
+      expect(result).toEqual({
+        schemaVersion: 1,
+        ok: false,
+        error: {
+          stage: "intermediario",
+          message: "El prompt no puede estar vacío",
+        },
+      });
+      expect(output.stderr).toContain("Error en pipeline RAG (intermediario)");
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("usa el proyecto explícito para resolver rutas en context export", async () => {
+    const temp = createTempIndexedDb();
+    const output = path.join(temp.dir, "project-context.md");
+    const lanceDbPath = path.join(temp.dir, ".lacoco", "lancedb");
+    const capture: RuntimeCapture = { ollamaEndpoints: [] };
+
+    try {
+      const { streams } = createCapturedStreams();
+
+      const code = await runContextExport(
+        "OrderService",
+        {
+          verbose: false,
+          json: false,
+          output,
+        },
+        streams,
+        createFakeRuntime(capture),
+        temp.project.id,
+      );
+
+      expect(code).toBe(0);
+      expect(capture.dbPath).toBe(temp.dbPath);
+      expect(capture.lanceDbPath).toBe(lanceDbPath);
+      expect(readFileSync(output, "utf-8")).toContain("file1#OrderService");
+    } finally {
       temp.cleanup();
     }
   });
@@ -191,11 +278,7 @@ describe("lacoco retrieve CLI", () => {
 async function runRetrieveWithFakes(query: string, dbPath: string): Promise<CliResult> {
   const { streams, read } = createCapturedStreams();
   const options: RetrieveCliOptions = {
-    db: dbPath,
-    lancedb: "./lancedb",
     strategy: "agentic",
-    ollama: "http://localhost:11434",
-    llm: false,
     verbose: false,
   };
 
@@ -207,19 +290,17 @@ async function runContextExportWithFakes(
   query: string,
   dbPath: string,
   output: string,
+  projectId: string,
 ): Promise<CliResult> {
   const { streams, read } = createCapturedStreams();
   const options: ContextExportCliOptions = {
-    db: dbPath,
-    lancedb: "./lancedb",
     strategy: "agentic",
-    ollama: "http://localhost:11434",
     verbose: false,
     json: false,
     output,
   };
 
-  const code = await runContextExport(query, options, streams, createFakeRuntime());
+  const code = await runContextExport(query, options, streams, createFakeRuntime(), projectId);
   return { code, ...read() };
 }
 
@@ -269,8 +350,10 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
       return {
         isAvailable: async () => false,
         generate: async () => {
-          throw new Error("No debe llamarse al LLM final en --no-llm");
+          throw new Error("No debe generarse una respuesta final desde retrieve");
         },
+        chat: async () => "",
+        abort: () => undefined,
       };
     },
     createIntermediary: () => ({
@@ -310,9 +393,23 @@ function createBm25Strategy(db: LaCoCoDatabase): RecoveryStrategy {
   };
 }
 
-function createTempIndexedDb(): { dir: string; dbPath: string; cleanup: () => void } {
+function createTempIndexedDb(): {
+  dir: string;
+  dbPath: string;
+  project: ProjectRecord;
+  cleanup: () => void;
+} {
+  const previousCwd = process.cwd();
+  const previousStateHome = process.env.XDG_STATE_HOME;
   const dir = mkdtempSync(path.join(tmpdir(), "lacoco-cli-"));
   const dbPath = path.join(dir, "tensor.sqlite");
+  mkdirSync(path.join(dir, ".git"));
+  process.env.XDG_STATE_HOME = path.join(dir, "state-home");
+  process.chdir(dir);
+
+  const lanceDbPath = path.join(dir, ".lacoco", "lancedb");
+  const project = configureProjectStorage(dir, { dbPath, lanceDbPath });
+
   const db = new LaCoCoDatabase(dbPath);
 
   db.insertNode({
@@ -355,7 +452,12 @@ function createTempIndexedDb(): { dir: string; dbPath: string; cleanup: () => vo
   return {
     dir,
     dbPath,
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    project,
+    cleanup: () => {
+      process.chdir(previousCwd);
+      restoreEnv("XDG_STATE_HOME", previousStateHome);
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 }
 

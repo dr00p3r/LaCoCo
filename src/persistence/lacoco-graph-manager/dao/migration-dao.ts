@@ -51,6 +51,7 @@ export class MigrationDao {
       .filter((f) => f.endsWith(".sql"))
       .sort();
 
+    let applied = 0;
     for (const file of files) {
       const version = Number.parseInt(file.split("_")[0] ?? "", 10);
       if (!Number.isInteger(version)) {
@@ -61,10 +62,18 @@ export class MigrationDao {
       const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
       this.db.transaction(() => {
         this.db.exec(sql);
-        this.db.pragma(`user_version = ${version}`);
+        if (version > 0) {
+          this.db.pragma(`user_version = ${version}`);
+        }
       })();
-      console.error(`[LaCoCo] Migración aplicada: ${file}`);
-      this.currentVersion = version;
+      if (version > 0) {
+        console.error(`[LaCoCo] Migración aplicada: ${file}`);
+        applied++;
+        this.currentVersion = version;
+      }
+    }
+    if (applied === 0 && this.currentVersion > 0) {
+      console.error(`[LaCoCo] Migraciones al día (v${this.currentVersion})`);
     }
   }
 }

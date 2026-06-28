@@ -2,7 +2,7 @@ import { Project } from "ts-morph";
 import { CodeExtractor } from "../extractor/code-extractor.js";
 import { VectorCallbacks } from "../extractor/vector-callbacks.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { EmbeddingGenerator } from "../retriever/utilities/embeddings/embedding-generator.js";
+import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
 
 type VectorStore = Pick<LaCoCoLanceDb, "buildIndex" | "clear" | "close" | "connect" | "replaceBatch">;
 

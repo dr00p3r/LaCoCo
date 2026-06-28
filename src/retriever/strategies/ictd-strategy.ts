@@ -15,21 +15,14 @@
  */
 
 import type { ContextChunk } from "../models/strategies/types.js";
-import type { SanitizerOutput, IntentTag } from "../models/utilities/types.js";
+import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { AbstractAnchoredStrategy } from "./abstract-anchored-strategy.js";
 import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
 import { RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
-
-const INTENT_WEIGHTS: Record<IntentTag, { SYS: number; CPG: number; DTG: number }> = {
-  debug:      { SYS: 0.30, CPG: 0.40, DTG: 0.30 },
-  refactor:   { SYS: 0.40, CPG: 0.40, DTG: 0.20 },
-  create:     { SYS: 0.50, CPG: 0.30, DTG: 0.20 },
-  integrate:  { SYS: 0.30, CPG: 0.20, DTG: 0.50 },
-  understand: { SYS: 0.35, CPG: 0.35, DTG: 0.30 },
-  unknown:    { SYS: 0.34, CPG: 0.33, DTG: 0.33 },
-};
+import { getIntentWeights } from "./helpers/intent-weights.js";
+import { breadthFirstTraversal } from "./helpers/graph-traversal.js";
 
 export interface IctdConfig {
   anchorLimit: number;
@@ -80,7 +73,7 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
   }
 
   protected async expand(anchorResults: HybridAnchor[], query: SanitizerOutput): Promise<ContextChunk[]> {
-    const weights = this.#computeWeights(query.intent, query.dimensions);
+    const weights = getIntentWeights(query.intent, query.dimensions);
 
     const anchorIds = new Set<string>();
     const anchorHeat = new Map<string, number>();
@@ -164,28 +157,6 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
     }));
   }
 
-  #computeWeights(
-    intent: IntentTag,
-    dimensions: ("SYS" | "CPG" | "DTG")[]
-  ): { SYS: number; CPG: number; DTG: number } {
-    const base = { ...INTENT_WEIGHTS[intent] };
-
-    if (dimensions.length > 0 && dimensions.length < 3) {
-      for (const dim of dimensions) {
-        base[dim] *= 1.5;
-      }
-    }
-
-    const total = base.SYS + base.CPG + base.DTG;
-    if (total > 0) {
-      base.SYS /= total;
-      base.CPG /= total;
-      base.DTG /= total;
-    }
-
-    return base;
-  }
-
   #buildSubgraph(
     anchorIds: string[]
   ): {
@@ -195,18 +166,12 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
     const outAdj = new Map<string, DimNeighbors>();
     const inDeg = new Map<string, { SYS: number; CPG: number; DTG: number }>();
 
-    let frontier = new Set(anchorIds);
-    const visited = new Set<string>();
+    const traversal = breadthFirstTraversal(this.db.edgeDao, anchorIds, {
+      maxHops: this.config.maxHops,
+      maxNodes: this.config.bfsMaxNodes,
+    });
 
-    for (let hop = 0; hop < this.config.maxHops && frontier.size > 0; hop++) {
-      const frontierArr = Array.from(frontier);
-      const edges = this.db.edgeDao.getNeighborhood(frontierArr, {
-        limit: this.config.bfsMaxNodes,
-      });
-
-      const nextFrontier = new Set<string>();
-
-      for (const edge of edges) {
+    for (const edge of traversal.edges) {
         const dim = RELATION_TO_DIM[edge.relation];
         if (!dim) continue;
 
@@ -219,23 +184,9 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
         currentIn[dim]++;
         inDeg.set(edge.targetId, currentIn);
 
-        if (!anchorIds.includes(edge.sourceId) && !visited.has(edge.sourceId)) {
-          nextFrontier.add(edge.sourceId);
-        }
-        if (!anchorIds.includes(edge.targetId) && !visited.has(edge.targetId)) {
-          nextFrontier.add(edge.targetId);
-        }
-      }
-
-      for (const id of frontierArr) visited.add(id);
-      frontier = new Set(
-        Array.from(nextFrontier).filter((id) => !visited.has(id))
-      );
-
-      if (outAdj.size + frontier.size > this.config.bfsMaxNodes) break;
     }
 
-    for (const id of anchorIds) {
+    for (const id of traversal.visited) {
       if (!outAdj.has(id)) {
         outAdj.set(id, emptyNeighbors());
       }
