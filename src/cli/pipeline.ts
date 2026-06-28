@@ -4,9 +4,18 @@ import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlit
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
+import {
+  ContextAggregator,
+  DEFAULT_CONTEXT_MAX_TOKENS,
+} from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
-import { getStrategyEntry, STRATEGY_NAMES } from "../retriever/strategies/registry.js";
+import {
+  getEffectiveStrategyParameters,
+  getStrategyEntry,
+  STRATEGY_NAMES,
+  type StrategyParameters,
+  type StrategyRuntimeOptions,
+} from "../retriever/strategies/registry.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import type { SanitizerOutput } from "../retriever/models/utilities/types.js";
 import type { LlmClient } from "../slms/llm-client.js";
@@ -23,6 +32,8 @@ export interface RetrieveCliOptions {
   ollama?: string;
   verbose: boolean;
   json?: boolean;
+  chunks?: number;
+  maxTokens?: number;
 }
 
 export interface ContextExportCliOptions extends Omit<RetrieveCliOptions, "json">, JsonOption {
@@ -34,6 +45,7 @@ type ResolvedRetrieveCliOptions = RetrieveCliOptions & {
   lancedb: string;
   strategy: string;
   ollama: string;
+  maxTokens: number;
 };
 
 export interface CliStreams {
@@ -56,6 +68,7 @@ export interface RetrieveRuntime {
     ollamaEndpoint: string,
     ollamaTimeoutMs?: number,
     ollama?: LlmClient,
+    strategyOptions?: StrategyRuntimeOptions,
   ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }>;
 }
 
@@ -68,6 +81,8 @@ interface RetrievedContext {
     db: string;
     lancedb: string;
     ollama: string;
+    strategyParameters: StrategyParameters;
+    maxTokens: number;
   };
   sanitized: SanitizerOutput;
   chunks: ReturnType<ContextAggregator["aggregate"]>;
@@ -92,6 +107,8 @@ export interface RetrieveJsonSuccess {
   retrieval: {
     chunkCount: number;
     chunks: RetrievedContext["chunks"];
+    strategyParameters: StrategyParameters;
+    maxTokens: number;
   };
   storage: {
     sqlite: string;
@@ -182,6 +199,8 @@ function createRetrieveJsonSuccess(
     retrieval: {
       chunkCount: context.chunks.length,
       chunks: context.chunks,
+      strategyParameters: context.options.strategyParameters,
+      maxTokens: context.options.maxTokens,
     },
     storage: {
       sqlite: context.options.db,
@@ -242,12 +261,20 @@ export async function runContextExport(
 
 function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): ResolvedRetrieveCliOptions {
   const projectPath = resolveRetrieveProjectPath(project);
+  const entry = getStrategyEntry(options.strategy ?? resolveStringConfig("strategy.default"));
+  const strategyOptions = options.chunks === undefined ? {} : { chunks: options.chunks };
+  getEffectiveStrategyParameters(entry.name, strategyOptions);
+  const maxTokens = options.maxTokens ?? DEFAULT_CONTEXT_MAX_TOKENS;
+  if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
+    throw new Error("maxTokens debe ser un entero positivo");
+  }
   return {
     ...options,
     db: resolveDbPath(projectPath),
     lancedb: resolveLanceDbPath(projectPath),
-    strategy: options.strategy ?? resolveStringConfig("strategy.default"),
+    strategy: entry.name,
     ollama: options.ollama ?? resolveStringConfig("agent.endpoint"),
+    maxTokens,
   };
 }
 
@@ -323,6 +350,7 @@ async function retrieveContext(
       options.ollama,
       resolveNumberConfig("timeout.ms"),
       ollama,
+      options.chunks === undefined ? {} : { chunks: options.chunks },
     );
     lanceDb = created.connectedLanceDb;
 
@@ -331,7 +359,7 @@ async function retrieveContext(
 
     stage = "agregación";
     const aggregator = new ContextAggregator();
-    const aggregated = aggregator.aggregate(chunks);
+    const aggregated = aggregator.aggregate(chunks, options.maxTokens);
     verbose(`[CLI] chunks recuperados: ${aggregated.length}`);
 
     const injector = new PromptInjector();
@@ -374,6 +402,11 @@ function createRetrievedContext(
       db: options.db,
       lancedb: options.lancedb,
       ollama: options.ollama,
+      strategyParameters: getEffectiveStrategyParameters(
+        options.strategy as (typeof STRATEGY_NAMES)[number],
+        options.chunks === undefined ? {} : { chunks: options.chunks },
+      ),
+      maxTokens: options.maxTokens,
     },
     sanitized,
     chunks,
@@ -394,6 +427,8 @@ function renderContextMarkdown(context: RetrievedContext): string {
     `confidence: ${context.sanitized.confidence}`,
     `dimensions: [${context.sanitized.dimensions.map(yamlString).join(", ")}]`,
     `chunks: ${context.chunks.length}`,
+    `max_tokens: ${context.options.maxTokens}`,
+    `strategy_parameters: ${yamlString(JSON.stringify(context.options.strategyParameters))}`,
     "---",
     "",
   ].join("\n");
@@ -426,6 +461,8 @@ ${context.originalQuery}
 | Intent | \`${context.sanitized.intent}\` |
 | Confidence | \`${context.sanitized.confidence.toFixed(2)}\` |
 | Dimensions | ${context.sanitized.dimensions.length > 0 ? context.sanitized.dimensions.map((dim) => `\`${dim}\``).join(", ") : "-"} |
+| Strategy parameters | \`${JSON.stringify(context.options.strategyParameters)}\` |
+| Max tokens | \`${context.options.maxTokens}\` |
 | SQLite | \`${context.options.db}\` |
 | LanceDB | \`${context.options.lancedb}\` |
 
@@ -480,6 +517,7 @@ async function createRecoveryStrategy(
   ollamaEndpoint: string,
   ollamaTimeoutMs?: number,
   ollama?: LlmClient,
+  strategyOptions: StrategyRuntimeOptions = {},
 ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }> {
   let lanceDb: LaCoCoLanceDb | undefined;
 
@@ -500,7 +538,7 @@ async function createRecoveryStrategy(
     };
 
     return {
-      strategy: entry.create(deps),
+      strategy: entry.create(deps, strategyOptions),
       ...(lanceDb ? { connectedLanceDb: lanceDb } : {}),
     };
   } catch (error) {

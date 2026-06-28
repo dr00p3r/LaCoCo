@@ -56,7 +56,6 @@ strategies:
       Baseline fuerte de recuperacion hibrida. Combina busqueda textual y
       vectorial, y ordena anclas mediante fusion de ranking.
     parameters:
-      top_k: 50
       anchor_limit: 20
     metrics:
       retrieval:
@@ -77,10 +76,12 @@ strategies:
       Estrategia tensorial que expande anclas hibridas mediante difusion guiada
       por intencion y dimensiones SYS, CPG y DTG.
     parameters:
-      top_k: 50
       anchor_limit: 30
       max_iterations: 10
-      restart_probability: 0.2
+      restart_prob: 0.2
+      epsilon: 0.000001
+      chunk_limit: 50
+      bfs_max_nodes: 5000
       max_hops: 2
     hypothesis: >-
       Debe mejorar Recall@5 y Multi-hop Dependency Recall frente a hybrid en
@@ -104,10 +105,14 @@ strategies:
       Estrategia de expansion por etapas entre capas del grafo. Se evalua como
       alternativa estructurada a la difusion tensorial.
     parameters:
-      top_k: 50
       anchor_limit: 30
-      primary_hops: 1
+      primary_hops: 2
       cascade_hops: 1
+      chunk_limit: 50
+      bfs_max_nodes: 5000
+      lambda: 0.25
+      primary_decay: 0.5
+      cascade_decay: 0.7
     hypothesis: >-
       Debe recuperar contexto multicapas con menor ruido que una expansion BFS
       no diferenciada.
@@ -131,10 +136,13 @@ strategies:
       Es especialmente util para inspeccionar rutas entre nodos, aunque puede
       ser mas costosa en repositorios grandes.
     parameters:
-      top_k: 50
       anchor_limit: 30
-      max_depth: 2
-      max_candidates: 100
+      subgraph_max_hops: 2
+      bfs_max_nodes: 5000
+      max_depth: 3
+      max_candidates: 5000
+      chunk_limit: 50
+      decay_per_hop: 0.5
     hypothesis: >-
       Debe mejorar explicabilidad y recuperacion multi-hop, con posible coste
       adicional de latencia.
@@ -158,9 +166,13 @@ strategies:
       desactivada por defecto en la comparacion principal porque introduce otra
       fuente de variabilidad.
     parameters:
-      top_k: 50
-      ollama_endpoint_env: "LACOCO_AGENT_ENDPOINT"
-      model_env: "LACOCO_AGENT_MODEL"
+      max_iterations: 3
+      seed_limit: 5
+      chunk_limit: 50
+      neighborhood_limit: 100
+      symbol_limit: 10
+      dependency_limit: 10
+      planner_attempts: 2
     metrics:
       retrieval:
         include: true
@@ -204,6 +216,7 @@ output_contract:
     - errors
   ranked_node_fields:
     - rank
+    - chunk_id
     - node_id
     - score
     - source

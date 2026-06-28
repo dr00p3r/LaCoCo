@@ -73,6 +73,8 @@ agente externo mediante hooks; no genera una respuesta final.
 
 Opciones:
 - `-s, --strategy <name>` — estrategia (defecto: `strategy.default` de config)
+- `--chunks <number>` — máximo de chunks producido por la estrategia
+- `--max-tokens <number>` — presupuesto del agregador (defecto: 4000)
 - `--ollama <url>` — endpoint de Ollama (defecto: `agent.endpoint` de config)
 - `--json` — devuelve un unico documento JSON estructurado para hooks
 - `-v, --verbose` — diagnostico del pipeline en stderr
@@ -85,7 +87,7 @@ lacoco retrieve extractor "<consulta>" --strategy hybrid --json \
 ```
 
 El contrato JSON usa `schemaVersion: 1` e incluye clasificacion, chunks,
-almacenamiento y prompt enriquecido. Los diagnosticos se escriben en stderr,
+parametros efectivos de estrategia, `maxTokens`, almacenamiento y prompt enriquecido. Los diagnosticos se escriben en stderr,
 por lo que stdout permanece parseable. En errores retorna `ok: false` y
 mantiene un exit code distinto de cero.
 
@@ -100,6 +102,8 @@ Exporta los chunks recuperados como archivo Markdown con front-matter YAML ident
 Opciones:
 - `-o, --output <path>` — archivo de salida (requerido)
 - `-s, --strategy <name>` — estrategia
+- `--chunks <number>` — máximo de chunks producido por la estrategia
+- `--max-tokens <number>` — presupuesto del agregador (defecto: 4000)
 - `--ollama <url>` — endpoint de Ollama
 - `--json` — imprime metadatos JSON
 - `-v, --verbose` — diagnostico
@@ -129,6 +133,7 @@ Ejecuta el pipeline RAG completo y visualiza el subgrafo de los chunks recuperad
 Opciones:
 - `-b, --budget <num>` — maximo de nodos (defecto: 75)
 - `-s, --strategy <name>` — estrategia
+- `--chunks <number>` — máximo de chunks producido por la estrategia
 - `-m, --mode <mode>` — modo de visualizacion: default, tensor, scores (defecto: default)
 - `-o, --output <path>` — archivo HTML (defecto: inspect-query.html)
 - `--cdn` — usar CDN para Cytoscape.js
@@ -139,10 +144,14 @@ Opciones:
 | Estrategia | Descripcion |
 |---|---|
 | `hybrid` | BM25 + ANN + Reciprocal Rank Fusion. Default. No usa expansion de grafo. |
-| `agentic` | Semillas BM25 + planificacion local con Ollama (max 3 iteraciones). Requiere Ollama. |
+| `agentic` | Semillas BM25 + planificacion estructurada local con Ollama (max 3 iteraciones y 2 intentos por decisión). Requiere Ollama y falla explícitamente si no está disponible. |
 | `ictd` | Anclas hibridas + difusion tensorial guiada por intent y dimension. |
 | `clcr` | Anclas hibridas + recuperacion por etapas entre capas dimensionales. |
 | `rpr` | Anclas hibridas + enumeracion y puntuacion de caminos relacionales. |
+
+`--chunks` controla `anchorLimit` en `hybrid` y `chunkLimit` en las demás
+estrategias. Es un límite previo al agregador; `--max-tokens` puede reducir aún
+más la cantidad finalmente inyectada.
 
 ## Watcher
 

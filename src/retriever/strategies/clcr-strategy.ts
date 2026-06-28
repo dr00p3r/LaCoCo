@@ -24,6 +24,7 @@ import type { HybridAnchor } from "../utilities/search/hybrid-anchor-service.js"
 import { DIMENSIONS, RELATION_TO_DIM, type Dimension } from "../../domain/dimensions.js";
 import { getDominantDimension } from "./helpers/intent-weights.js";
 import { breadthFirstTraversal } from "./helpers/graph-traversal.js";
+import { decayScore } from "./helpers/score-decay.js";
 
 type Dim = Dimension;
 const ALL_DIMS: Dim[] = [...DIMENSIONS];
@@ -43,16 +44,20 @@ export interface ClcrConfig {
   chunkLimit: number;
   bfsMaxNodes: number;
   lambda: number;
+  primaryDecay: number;
+  cascadeDecay: number;
 }
 
-const DEFAULT_CONFIG: ClcrConfig = {
+export const CLCR_DEFAULT_CONFIG: Readonly<ClcrConfig> = Object.freeze({
   anchorLimit: 30,
   primaryHops: 2,
   cascadeHops: 1,
   chunkLimit: 50,
   bfsMaxNodes: 5000,
   lambda: 0.25,
-};
+  primaryDecay: 0.5,
+  cascadeDecay: 0.7,
+});
 
 export class ClcrStrategy extends AbstractAnchoredStrategy {
   private readonly config: ClcrConfig;
@@ -63,7 +68,7 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
     config?: Partial<ClcrConfig>
   ) {
     super(db, lanceDb);
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...CLCR_DEFAULT_CONFIG, ...config };
   }
 
   protected getAnchorLimit(): number {
@@ -90,8 +95,8 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
     });
     const primarySet = primary.visited;
     for (const discovery of primary.discoveries) {
-      const propagated = (baseScore.get(discovery.from) ?? 0)
-        * Math.pow(0.5, discovery.depth);
+      const parentScore = baseScore.get(discovery.from) ?? 0;
+      const propagated = decayScore(parentScore, this.config.primaryDecay, 1);
       baseScore.set(
         discovery.nodeId,
         Math.max(baseScore.get(discovery.nodeId) ?? 0, propagated),
@@ -123,7 +128,10 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
       }
       for (const discovery of cascade.discoveries) {
         if (!baseScore.has(discovery.nodeId)) {
-          baseScore.set(discovery.nodeId, (baseScore.get(discovery.from) ?? 0) * 0.7);
+          baseScore.set(
+            discovery.nodeId,
+            decayScore(baseScore.get(discovery.from) ?? 0, this.config.cascadeDecay, 1),
+          );
         }
       }
     }
@@ -174,6 +182,7 @@ export class ClcrStrategy extends AbstractAnchoredStrategy {
       const layers = layerCounts.get(id) ?? 1;
       const boost = 1 + this.config.lambda * (layers - 1);
       return {
+        chunkId: id,
         nodeId: id,
         score: raw * boost,
         text: sigs.get(id) ?? id,

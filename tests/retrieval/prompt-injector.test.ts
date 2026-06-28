@@ -6,7 +6,7 @@ describe("PromptInjector", () => {
   const injector = new PromptInjector();
 
   function chunk(nodeId: string, score: number, text: string, source = "BM25"): ContextChunk {
-    return { nodeId, score, text, source };
+    return { chunkId: nodeId, nodeId, score, text, source };
   }
 
   describe("inject", () => {

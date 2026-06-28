@@ -4,193 +4,307 @@ import {
 } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import type { LaCoCoDatabase } from "../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import type { LlmClient } from "../../slms/llm-client.js";
+import type { ChatOptions, LlmClient } from "../../slms/llm-client.js";
 import { Bm25Service } from "../utilities/search/bm25-service.js";
 
-interface Tool {
-  name: "get_neighbors" | "get_node_by_symbol" | "get_dependencies";
-  params: Record<string, string | number>;
+type ToolCall =
+  | { name: "get_neighbors"; params: { node_id: string } }
+  | { name: "get_node_by_symbol"; params: { name: string } }
+  | { name: "get_dependencies"; params: { package: string; version?: string } };
+
+type PlannerOutput =
+  | { action: "done" }
+  | { action: "get_neighbors"; node_id: string }
+  | { action: "get_node_by_symbol"; name: string }
+  | { action: "get_dependencies"; package: string; version?: string };
+
+export interface AgenticConfig {
+  maxIterations: number;
+  seedLimit: number;
+  chunkLimit: number;
+  neighborhoodLimit: number;
+  symbolLimit: number;
+  dependencyLimit: number;
+  plannerAttempts: number;
 }
+
+export const AGENTIC_DEFAULT_CONFIG: Readonly<AgenticConfig> = Object.freeze({
+  maxIterations: 3,
+  seedLimit: 5,
+  chunkLimit: 50,
+  neighborhoodLimit: 100,
+  symbolLimit: 10,
+  dependencyLimit: 10,
+  plannerAttempts: 2,
+});
+
+const PLANNER_SCHEMA: Record<string, unknown> = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: { action: { const: "done" } },
+      required: ["action"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: { const: "get_neighbors" },
+        node_id: { type: "string", minLength: 1 },
+      },
+      required: ["action", "node_id"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: { const: "get_node_by_symbol" },
+        name: { type: "string", minLength: 1 },
+      },
+      required: ["action", "name"],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        action: { const: "get_dependencies" },
+        package: { type: "string", minLength: 1 },
+        version: { type: "string", minLength: 1 },
+      },
+      required: ["action", "package"],
+    },
+  ],
+};
+
+const PLANNER_OPTIONS: ChatOptions = {
+  format: PLANNER_SCHEMA,
+  options: { temperature: 0, seed: 42, num_predict: 128 },
+};
+
+export class AgenticPlanningError extends Error {}
 
 export class AgenticStrategy implements RecoveryStrategy {
   private readonly bm25: Bm25Service;
-  private readonly maxIterations = 3;
+  private readonly config: AgenticConfig;
 
   constructor(
     private readonly db: LaCoCoDatabase,
     private readonly ollama: LlmClient,
+    config?: Partial<AgenticConfig>,
   ) {
     this.bm25 = new Bm25Service(db);
+    this.config = { ...AGENTIC_DEFAULT_CONFIG, ...config };
+    validateConfig(this.config);
   }
 
   /**
-   * Recupera contexto mediante un ciclo agente-executor.
+   * Recupera contexto mediante un planificador local con contrato estructurado.
    *
-   * @param query Salida sanitizada del intermediario
-   * @returns Chunks recuperados tras max 3 iteraciones
+   * @param query Salida sanitizada del intermediario.
+   * @returns Como máximo `chunkLimit` chunks recuperados.
    */
   async retrieve(query: SanitizerOutput): Promise<ContextChunk[]> {
-    // Fase 1: recuperar símbolos semilla por BM25
-    const seedResults = this.bm25.search(query.clean_query, 5);
+    if (!await this.ollama.isAvailable()) {
+      throw new AgenticPlanningError("Ollama no disponible para AgenticStrategy");
+    }
+
     const collected = new Map<string, ContextChunk>();
+    this.#collect(collected, this.bm25.toChunks(
+      this.bm25.search(query.clean_query, this.config.seedLimit),
+      "AGENTIC",
+    ));
 
-    for (const hit of seedResults) {
-      collected.set(hit.nodeId, {
-        nodeId: hit.nodeId,
-        score: hit.score,
-        text: hit.text,
-        source: "AGENTIC",
-      });
+    const history: string[] = [];
+    for (
+      let iteration = 0;
+      iteration < this.config.maxIterations && collected.size < this.config.chunkLimit;
+      iteration++
+    ) {
+      const currentIds = [...collected.keys()];
+      const toolCall = await this.#planTool(query, currentIds, history);
+      if (!toolCall) break;
+
+      const remaining = this.config.chunkLimit - collected.size;
+      const results = this.#executeTool(toolCall, remaining);
+      const added = this.#collect(collected, results);
+      history.push(
+        `Tool: ${toolCall.name}(${JSON.stringify(toolCall.params)}) -> ${added} nuevos`,
+      );
+      if (added === 0) break;
     }
 
-    // Fase 2: ciclo agente-executor con SLM (Ollama)
-    if (await this.ollama.isAvailable()) {
-      const contextHistory: string[] = [];
-
-      for (let i = 0; i < this.maxIterations && collected.size < 50; i++) {
-        const toolCall = await this.#planTool(query, Array.from(collected.keys()), contextHistory);
-        if (!toolCall) break;
-
-        const results = this.#executeTool(toolCall);
-        if (results.length === 0) break;
-
-        for (const chunk of results) {
-          if (!collected.has(chunk.nodeId)) {
-            collected.set(chunk.nodeId, chunk);
-          }
-        }
-
-        contextHistory.push(`Tool: ${toolCall.name}(${JSON.stringify(toolCall.params)}) → ${results.length} resultados`);
-      }
-    } else {
-      // Fallback determinístico: expansión por vecindad pura
-      for (let i = 0; i < this.maxIterations && collected.size < 50; i++) {
-        const currentIds = Array.from(collected.keys());
-        const neighbors = this.#getNeighbors(currentIds);
-        for (const n of neighbors) {
-          if (!collected.has(n.nodeId)) {
-            collected.set(n.nodeId, n);
-          }
-        }
-      }
-    }
-
-    return Array.from(collected.values()).sort((a, b) => b.score - a.score);
+    return [...collected.values()]
+      .sort((left, right) => right.score - left.score)
+      .slice(0, this.config.chunkLimit);
   }
-
-  // ── Planificador SLM ─────────────────────────────────────────────────
 
   async #planTool(
     query: SanitizerOutput,
     currentIds: string[],
-    history: string[]
-  ): Promise<Tool | null> {
-    const systemPrompt = `Eres un planificador de recuperación de código. Tienes estas herramientas:
-- get_neighbors(node_id): recupera nodos conectados por aristas.
-- get_node_by_symbol(name): busca un nodo por nombre de símbolo.
-- get_dependencies(package, version): busca dependencias externas.
+    history: string[],
+  ): Promise<ToolCall | null> {
+    const systemPrompt = `Eres un planificador de recuperacion de codigo.
+Acciones disponibles:
+- get_neighbors: requiere node_id y solo puede usar uno de los nodos actuales.
+- get_node_by_symbol: requiere name.
+- get_dependencies: requiere package y admite version opcional.
+- done: termina cuando el contexto ya es suficiente.
 
-Usa herramientas solo cuando aporten contexto adicional concreto. Si los nodos actuales ya cubren la consulta,
-responde {"done": true}. No inventes nombres de nodos, paquetes ni versiones.
+No inventes identificadores, simbolos, paquetes ni versiones. Devuelve solo el objeto JSON requerido.`;
+    const prompt = `Consulta: ${JSON.stringify(query.embedding_input)}
+Nodos actuales: ${JSON.stringify(currentIds)}
+Historial: ${history.length === 0 ? "ninguno" : history.join("; ")}`;
 
-Responde SOLO con un JSON de la forma: {"name": "...", "params": {...}}.
-Si no necesitas más herramientas, responde: {"done": true}.`;
-
-    const prompt = `Consulta: "${query.embedding_input}"\nNodos actuales: [${currentIds.join(", ")}]\nHistorial: ${history.join("; ") || "ninguno"}`;
-
-    try {
-      const response = await this.ollama.chat(
-        [
+    let lastError: unknown;
+    for (let attempt = 0; attempt < this.config.plannerAttempts; attempt++) {
+      try {
+        const response = await this.ollama.chat([
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
-        ]
-      );
+        ], PLANNER_OPTIONS);
+        return this.#parsePlannerOutput(response, currentIds);
+      } catch (error) {
+        lastError = error;
+      }
+    }
 
-      if (response.includes('"done"')) return null;
+    throw new AgenticPlanningError(
+      `El planificador agentic incumplió el contrato después de ${this.config.plannerAttempts} intentos`,
+      { cause: lastError },
+    );
+  }
 
-      // Extraer JSON de la respuesta (puede venir con markdown)
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return null;
+  #parsePlannerOutput(response: string, currentIds: string[]): ToolCall | null {
+    const parsed = JSON.parse(response) as unknown;
+    if (!isRecord(parsed) || typeof parsed.action !== "string") {
+      throw new Error("Salida agentic inválida");
+    }
 
-      const parsed = JSON.parse(jsonMatch[0]) as { name: string; params: Record<string, unknown> };
-      if (["get_neighbors", "get_node_by_symbol", "get_dependencies"].includes(parsed.name)) {
+    switch (parsed.action) {
+      case "done":
+        assertExactKeys(parsed, ["action"]);
+        return null;
+      case "get_neighbors": {
+        assertExactKeys(parsed, ["action", "node_id"]);
+        const nodeId = requireNonEmptyString(parsed.node_id, "node_id");
+        if (!currentIds.includes(nodeId)) {
+          throw new Error("get_neighbors.node_id debe pertenecer a los nodos actuales");
+        }
+        return { name: "get_neighbors", params: { node_id: nodeId } };
+      }
+      case "get_node_by_symbol":
+        assertExactKeys(parsed, ["action", "name"]);
         return {
-          name: parsed.name as Tool["name"],
-          params: Object.fromEntries(
-            Object.entries(parsed.params).map(([k, v]) => [k, String(v)])
-          ),
+          name: "get_node_by_symbol",
+          params: { name: requireNonEmptyString(parsed.name, "name") },
+        };
+      case "get_dependencies": {
+        assertExactKeys(parsed, ["action", "package", "version"]);
+        const packageName = requireNonEmptyString(parsed.package, "package");
+        const version = parsed.version === undefined
+          ? undefined
+          : requireNonEmptyString(parsed.version, "version");
+        return {
+          name: "get_dependencies",
+          params: {
+            package: packageName,
+            ...(version === undefined ? {} : { version }),
+          },
         };
       }
-    } catch (err) {
-      console.warn(
-        "[AgenticStrategy] ⚠️  SLM falló en planTool:",
-        err instanceof Error ? err.message : String(err)
-      );
+      default:
+        throw new Error(`Acción agentic no soportada: ${parsed.action}`);
     }
-    return null;
   }
 
-  // ── Ejecutor determinístico ─────────────────────────────────────────
-
-  #executeTool(tool: Tool): ContextChunk[] {
+  #executeTool(tool: ToolCall, remaining: number): ContextChunk[] {
     switch (tool.name) {
       case "get_neighbors":
-        return this.#getNeighbors([tool.params.node_id as string]);
+        return this.#getNeighbors(tool.params.node_id, remaining);
       case "get_node_by_symbol":
-        return this.#getNodeBySymbol(tool.params.name as string);
+        return this.#getNodeBySymbol(tool.params.name, remaining);
       case "get_dependencies":
-        return this.#getDependencies(tool.params.package as string, tool.params.version as string);
-      default:
-        return [];
+        return this.#getDependencies(tool.params.package, tool.params.version, remaining);
     }
   }
 
-  #getNodeBySymbol(name: string): ContextChunk[] {
-    const ids = this.db.nodeDao.getNodeIdsBySymbol(name, 10);
-    const sigs = this.db.getNodeSignatures(ids);
-    return ids.map((id) => ({
-      nodeId: id,
-      score: 0.7,
-      text: sigs.get(id) ?? id,
-      source: "AGENTIC",
-    }));
+  #getNodeBySymbol(name: string, remaining: number): ContextChunk[] {
+    const limit = Math.min(this.config.symbolLimit, remaining);
+    const ids = this.db.nodeDao.getNodeIdsBySymbol(name, limit);
+    return this.#nodeChunks(ids, 0.7);
   }
 
-  #getDependencies(pkg: string, version?: string): ContextChunk[] {
-    const ids = this.db.nodeDao.getExternalLibraryIds(pkg, version, 10);
-    const sigs = this.db.getNodeSignatures(ids);
-    return ids.map((id) => ({
-      nodeId: id,
-      score: 0.6,
-      text: sigs.get(id) ?? id,
-      source: "AGENTIC",
-    }));
+  #getDependencies(pkg: string, version: string | undefined, remaining: number): ContextChunk[] {
+    const limit = Math.min(this.config.dependencyLimit, remaining);
+    const ids = this.db.nodeDao.getExternalLibraryIds(pkg, version, limit);
+    return this.#nodeChunks(ids, 0.6);
   }
 
-  // ── Motor determinístico de herramientas ─────────────────────────
-
-  /** get_neighbors: recupera nodos conectados por aristas a los ids dados. */
-  #getNeighbors(nodeIds: string[]): ContextChunk[] {
-    if (nodeIds.length === 0) return [];
-
-    const rows = this.db.edgeDao.getNeighborhood(nodeIds, { limit: 100 });
-
-    const chunks: ContextChunk[] = [];
+  #getNeighbors(nodeId: string, remaining: number): ContextChunk[] {
+    if (remaining <= 0) return [];
+    const limit = Math.min(this.config.neighborhoodLimit, remaining);
+    const rows = this.db.edgeDao.getNeighborhood([nodeId], { limit });
     const neighborIds = new Set<string>();
     for (const row of rows) {
-      const otherId = nodeIds.includes(row.sourceId) ? row.targetId : row.sourceId;
-      neighborIds.add(otherId);
+      neighborIds.add(row.sourceId === nodeId ? row.targetId : row.sourceId);
+      if (neighborIds.size >= limit) break;
     }
+    return this.#nodeChunks([...neighborIds], 0.5);
+  }
 
-    const sigs = this.db.getNodeSignatures(Array.from(neighborIds));
-    for (const id of neighborIds) {
-      chunks.push({
-        nodeId: id,
-        score: 0.5,
-        text: sigs.get(id) ?? id,
-        source: "AGENTIC",
-      });
+  #nodeChunks(ids: string[], score: number): ContextChunk[] {
+    const signatures = this.db.getNodeSignatures(ids);
+    return ids.map((id) => ({
+      chunkId: id,
+      nodeId: id,
+      score,
+      text: signatures.get(id) ?? id,
+      source: "AGENTIC",
+    }));
+  }
+
+  #collect(collected: Map<string, ContextChunk>, chunks: ContextChunk[]): number {
+    let added = 0;
+    for (const chunk of chunks) {
+      if (collected.size >= this.config.chunkLimit) break;
+      if (collected.has(chunk.chunkId)) continue;
+      collected.set(chunk.chunkId, chunk);
+      added++;
     }
-    return chunks;
+    return added;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireNonEmptyString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} debe ser un string no vacío`);
+  }
+  return value;
+}
+
+function assertExactKeys(value: Record<string, unknown>, allowed: string[]): void {
+  const allowedKeys = new Set(allowed);
+  const unexpected = Object.keys(value).filter((key) => !allowedKeys.has(key));
+  if (unexpected.length > 0) {
+    throw new Error(`Propiedades agentic no soportadas: ${unexpected.join(", ")}`);
+  }
+}
+
+function validateConfig(config: AgenticConfig): void {
+  for (const [key, value] of Object.entries(config)) {
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(`AgenticConfig.${key} debe ser un entero positivo`);
+    }
+  }
+  if (config.maxIterations > AGENTIC_DEFAULT_CONFIG.maxIterations) {
+    throw new Error(`AgenticConfig.maxIterations no puede superar ${AGENTIC_DEFAULT_CONFIG.maxIterations}`);
+  }
+  if (config.plannerAttempts > AGENTIC_DEFAULT_CONFIG.plannerAttempts) {
+    throw new Error(`AgenticConfig.plannerAttempts no puede superar ${AGENTIC_DEFAULT_CONFIG.plannerAttempts}`);
   }
 }

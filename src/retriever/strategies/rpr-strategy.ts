@@ -52,7 +52,7 @@ export interface RprConfig {
   decayPerHop: number;
 }
 
-const DEFAULT_CONFIG: RprConfig = {
+export const RPR_DEFAULT_CONFIG: Readonly<RprConfig> = Object.freeze({
   anchorLimit: 30,
   subgraphMaxHops: 2,
   bfsMaxNodes: 5000,
@@ -60,7 +60,7 @@ const DEFAULT_CONFIG: RprConfig = {
   maxCandidates: 5000,
   chunkLimit: 50,
   decayPerHop: 0.5,
-};
+});
 
 export class RprStrategy extends AbstractAnchoredStrategy {
   private readonly config: RprConfig;
@@ -71,7 +71,7 @@ export class RprStrategy extends AbstractAnchoredStrategy {
     config?: Partial<RprConfig>
   ) {
     super(db, lanceDb);
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...RPR_DEFAULT_CONFIG, ...config };
   }
 
   protected getAnchorLimit(): number {
@@ -140,10 +140,16 @@ export class RprStrategy extends AbstractAnchoredStrategy {
         : "";
 
       return {
+        chunkId: `RPR:${p.hash}`,
         nodeId: p.nodes[p.nodes.length - 1]!,
         score: p.score,
         text: parts.join("") + dimStr + relStr,
         source: "RPR",
+        path: {
+          nodes: [...p.nodes],
+          relations: [...p.relations],
+          dimensions: [...p.dims],
+        },
       };
     });
   }

@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { InvalidArgumentError, type Command } from "commander";
 import { inspect, inspectQuery } from "../inspect.js";
 import {
   runContextExport,
@@ -28,6 +28,8 @@ function registerContextExport(program: Command): void {
     .description("Recupera contexto y lo exporta como Markdown identificable por pregunta.")
     .requiredOption("-o, --output <path>", "Archivo Markdown de salida")
     .option("-s, --strategy <name>", strategyHelp())
+    .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
+    .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
     .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
     .option("--json", "Imprime JSON válido", false)
@@ -42,6 +44,8 @@ function registerRetrieve(program: Command): void {
     .command("retrieve [project] <query>")
     .description("Recupera contexto del proyecto y devuelve un prompt enriquecido para hooks.")
     .option("-s, --strategy <name>", strategyHelp())
+    .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
+    .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
     .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
     .option("--json", "Imprime un resultado JSON estructurado para hooks", false)
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
@@ -82,6 +86,7 @@ function registerInspectQuery(program: Command): void {
     .description("Pipeline RAG completo → visualización del subgrafo recuperado para un prompt.")
     .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
     .option("-s, --strategy <name>", strategyHelp())
+    .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
     .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
     .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
@@ -106,6 +111,7 @@ function registerInspectQuery(program: Command): void {
         ollama: ollamaEndpoint,
         model: resolveStringConfig("agent.model"),
         timeoutMs: resolveNumberConfig("timeout.ms"),
+        ...(options.chunks === undefined ? {} : { chunks: options.chunks }),
       });
     });
 }
@@ -118,6 +124,14 @@ function parseBudget(value: string): number | null {
     return null;
   }
   return budget;
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InvalidArgumentError("debe ser un entero positivo");
+  }
+  return parsed;
 }
 
 interface InspectCliOptions {
@@ -134,6 +148,7 @@ interface InspectQueryCliOptions {
   output: string;
   cdn: boolean;
   ollama?: string;
+  chunks?: number;
 }
 
 function resolveInspectQueryProjectPath(project?: string): string {

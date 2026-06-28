@@ -140,6 +140,7 @@ export class Bm25Service {
    */
   toChunks(hits: Bm25Hit[], source = "BM25"): ContextChunk[] {
     return hits.map((hit) => ({
+      chunkId: hit.nodeId,
       nodeId: hit.nodeId,
       score: hit.score,
       text: hit.text,

@@ -7,7 +7,9 @@ describe("parseRetrievalJson", () => {
       schemaVersion: 1,
       ok: true,
       retrieval: {
+        strategyParameters: { anchorLimit: 20 },
         chunks: [{
+          chunkId: "src/order.ts#OrderService",
           nodeId: "src/order.ts#OrderService",
           score: 0.75,
           source: "HYBRID",
@@ -21,6 +23,7 @@ describe("parseRetrievalJson", () => {
     expect(parsed).toEqual({
       rankedNodes: [{
         rank: 1,
+        chunk_id: "src/order.ts#OrderService",
         node_id: "src/order.ts#OrderService",
         score: 0.75,
         source: "HYBRID",
@@ -28,6 +31,7 @@ describe("parseRetrievalJson", () => {
         filepath: "src/order.ts",
         kind: "class",
       }],
+      effectiveParameters: { anchorLimit: 20 },
       error: null,
     });
   });
@@ -45,5 +49,6 @@ describe("parseRetrievalJson", () => {
       message: "failed",
     });
     expect(parsed.rankedNodes).toEqual([]);
+    expect(parsed.effectiveParameters).toBeNull();
   });
 });

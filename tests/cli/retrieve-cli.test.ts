@@ -204,6 +204,10 @@ describe("lacoco retrieve CLI", () => {
           dimensions: ["CPG"],
           cleanQuery: "OrderService",
         },
+        retrieval: {
+          strategyParameters: { chunkLimit: 50 },
+          maxTokens: 4000,
+        },
       });
       if (result.ok) {
         expect(result.retrieval.chunkCount).toBe(result.retrieval.chunks.length);
@@ -213,6 +217,65 @@ describe("lacoco retrieve CLI", () => {
     } finally {
       temp.cleanup();
     }
+  });
+
+  it("aplica --chunks y reporta el parámetro efectivo", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        { strategy: "agentic", verbose: false, json: true, chunks: 1 },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(0);
+      expect(result.ok && result.retrieval.chunkCount).toBe(1);
+      expect(result.ok && result.retrieval.strategyParameters.chunkLimit).toBe(1);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("aplica --max-tokens al ContextAggregator", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        { strategy: "agentic", verbose: false, json: true, maxTokens: 1 },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(0);
+      expect(result.ok && result.retrieval.chunkCount).toBe(0);
+      expect(result.ok && result.retrieval.maxTokens).toBe(1);
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it.each([
+    ["chunks", { chunks: 0 }, "chunks debe ser un entero positivo"],
+    ["maxTokens", { maxTokens: 1.5 }, "maxTokens debe ser un entero positivo"],
+  ])("rechaza %s inválido antes de ejecutar el pipeline", async (_name, invalid, message) => {
+    const { streams, read } = createCapturedStreams();
+    const runtime = createFakeRuntime();
+    const code = await runRetrieve(
+      "OrderService",
+      { strategy: "agentic", verbose: false, json: true, ...invalid },
+      streams,
+      runtime,
+    );
+
+    expect(code).toBe(1);
+    expect(read().stderr).toContain(message);
   });
 
   it("devuelve errores JSON parseables y mantiene exit code distinto de cero", async () => {
@@ -337,6 +400,7 @@ interface RuntimeCapture {
   lanceDbPath?: string;
   strategyName?: string;
   strategyOllamaEndpoint?: string;
+  strategyOptions?: { chunks?: number };
 }
 
 function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
@@ -371,14 +435,30 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
         };
       },
     }),
-    createStrategy: async (strategyName, db, _lanceDbPath, ollamaEndpoint) => {
+    createStrategy: async (
+      strategyName,
+      db,
+      _lanceDbPath,
+      ollamaEndpoint,
+      _ollamaTimeoutMs,
+      _ollama,
+      strategyOptions,
+    ) => {
       if (capture) {
         capture.strategyName = strategyName;
         capture.lanceDbPath = _lanceDbPath;
         capture.strategyOllamaEndpoint = ollamaEndpoint;
+        capture.strategyOptions = strategyOptions;
       }
+      const strategy = createBm25Strategy(db);
       return {
-        strategy: createBm25Strategy(db),
+        strategy: strategyOptions?.chunks === undefined
+          ? strategy
+          : {
+              async retrieve(query) {
+                return (await strategy.retrieve(query)).slice(0, strategyOptions.chunks);
+              },
+            },
       };
     },
   };

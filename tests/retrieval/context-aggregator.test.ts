@@ -5,8 +5,14 @@ import type { ContextChunk } from "../../src/retriever/models/strategies/types.j
 describe("ContextAggregator", () => {
   const aggregator = new ContextAggregator();
 
-  function chunk(nodeId: string, score: number, text: string, source = "BM25"): ContextChunk {
-    return { nodeId, score, text, source };
+  function chunk(
+    nodeId: string,
+    score: number,
+    text: string,
+    source = "BM25",
+    chunkId = nodeId,
+  ): ContextChunk {
+    return { chunkId, nodeId, score, text, source };
   }
 
   describe("deduplicación", () => {
@@ -31,6 +37,15 @@ describe("ContextAggregator", () => {
 
       const result = aggregator.aggregate(chunks);
       expect(result[0]!.score).toBe(0.9);
+    });
+
+    it("preserva caminos RPR distintos que terminan en el mismo nodo", () => {
+      const chunks = [
+        chunk("target", 0.9, "A --CALLS--> target", "RPR", "RPR:A>target"),
+        chunk("target", 0.8, "B --CALLS--> target", "RPR", "RPR:B>target"),
+      ];
+
+      expect(aggregator.aggregate(chunks)).toHaveLength(2);
     });
   });
 
