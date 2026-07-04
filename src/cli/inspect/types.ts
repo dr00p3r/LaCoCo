@@ -26,6 +26,7 @@ export interface InspectQueryOptions {
   ollama: string;
   model: string;
   timeoutMs?: number;
+  chunks?: number;
 }
 
 export interface InspectStats {

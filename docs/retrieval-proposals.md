@@ -77,22 +77,25 @@ Toda estrategia devuelve:
 
 ```ts
 interface ContextChunk {
+  chunkId: string;
   nodeId: string;
   score: number;
   text: string;
   source: string;
+  path?: { nodes: string[]; relations: string[]; dimensions: string[] };
 }
 ```
 
 Después del retrieval, `ContextAggregator`:
 
-1. deduplica por `nodeId`, conservando el mayor score;
+1. deduplica por `chunkId`, conservando el mayor score;
 2. filtra por score mínimo, cuyo valor predeterminado es cero;
 3. ordena por score descendente;
 4. limita el contexto a una estimación predeterminada de 4000 tokens.
 
-Los límites propios de cada estrategia son, por tanto, máximos previos a la
-agregación; no garantizan el número final de chunks inyectados.
+Los límites propios de cada estrategia son máximos previos a la agregación y se
+pueden cambiar con `--chunks`. `--max-tokens` controla el presupuesto final;
+ninguno garantiza por sí solo el número de chunks inyectados.
 
 ## Familia de anclaje híbrido
 
@@ -239,12 +242,12 @@ Implementación: `src/retriever/strategies/clcr-strategy.ts`.
 2. Calcular los pesos por intent y elegir la dimensión de mayor peso.
 3. Ejecutar un BFS bidireccional de dos saltos usando solo relaciones de la
    dimensión dominante.
-4. Propagar un score base a cada descubrimiento. El código actual multiplica el
-   score del padre por `0.5 ^ discovery.depth`.
+4. Propagar un score base por salto: `childScore = parentScore * 0.5`. Por tanto,
+   a profundidad `h`, `score = anchorScore * 0.5^h`.
 5. Desde todos los nodos de la capa primaria, ejecutar una cascada de un salto
    para cada dimensión no dominante.
 6. Asignar a un nodo nuevo de cascada el score de su padre multiplicado por
-   `0.7`.
+   `0.7` por cada salto de cascada.
 7. Consultar las relaciones incidentes de los candidatos y contar en cuántas
    dimensiones participa cada nodo.
 8. Aplicar el boost:
@@ -374,7 +377,8 @@ OrderController.create --CALLS--> PaymentService.process --PRODUCES--> PaymentRe
 
 `nodeId` se fija actualmente al último nodo del camino. `text` conserva la
 secuencia completa, las dimensiones únicas en orden de aparición y las
-relaciones únicas.
+relaciones únicas. `chunkId` incorpora el hash de nodos y relaciones, y `path`
+expone la trayectoria como metadata estructurada.
 
 ### Configuración
 
@@ -388,7 +392,8 @@ relaciones únicas.
 | `chunkLimit` | 50 | Caminos máximos antes de agregación |
 | `decayPerHop` | 0.5 | Decaimiento aplicado a cada descubrimiento |
 
-Los parámetros son configurables por constructor, pero no por CLI.
+Los parámetros son configurables por constructor; `--chunks` permite cambiar
+`chunkLimit` desde CLI.
 
 ### Comportamiento límite
 
@@ -399,7 +404,7 @@ Los parámetros son configurables por constructor, pero no por CLI.
 | Un camino volvería a un nodo ya incluido | Se descarta para evitar ciclos |
 | Se alcanzan 5000 candidatos | La enumeración termina sin warning |
 | Dos enumeraciones producen el mismo camino | Se conserva una por hash |
-| Dos caminos distintos terminan en el mismo nodo | RPR los crea, pero el agregador puede conservar solo uno |
+| Dos caminos distintos terminan en el mismo nodo | Se conservan como evidencias distintas mediante `chunkId=RPR:<path-hash>` |
 
 ### Fortalezas y costes
 
@@ -407,8 +412,7 @@ Los parámetros son configurables por constructor, pero no por CLI.
 - Puede capturar dependencias multi-hop de forma explícita.
 - DFS puede crecer combinatoriamente en subgrafos densos.
 - El multiplicador 1/2/3 aún no está justificado por benchmarks.
-- La identidad nodal del chunk entra en conflicto con la deduplicación posterior
-  cuando varios caminos terminan en el mismo nodo.
+- El camino se conserva además como metadata estructurada en el chunk.
 
 ### Decisiones que deben validarse con datos
 
@@ -437,16 +441,16 @@ grafo de la mejora ya obtenida al combinar búsqueda léxica y semántica.
 
 1. recupera cinco semillas BM25;
 2. consulta disponibilidad de Ollama;
-3. si está disponible, permite hasta tres decisiones entre
+3. permite hasta tres decisiones estructuradas entre
    `get_neighbors`, `get_node_by_symbol`, `get_dependencies` y `done`;
-4. si no está disponible, expande vecindad de forma determinística hasta tres
-   iteraciones;
-5. deduplica nodos y ordena por score.
+4. valida tipos, propiedades permitidas e identificadores de vecindad;
+5. falla explícitamente si Ollama no está disponible o incumple el contrato tras
+   dos intentos;
+6. deduplica nodos, ordena por score y aplica el límite final configurado.
 
 Los scores fijos de herramientas son 0.7 para símbolos, 0.6 para dependencias y
-0.5 para vecinos. El ciclo deja de iniciar iteraciones cuando ya existen 50
-nodos, pero una ejecución de herramienta puede añadir hasta 100 vecinos; por
-eso 50 no es un límite final estricto.
+0.5 para vecinos. El límite predeterminado es 50 y puede cambiarse con
+`--chunks`; cada herramienta recibe únicamente la capacidad restante.
 
 Esta estrategia se mantiene fuera de la comparación principal del benchmark
 porque añade variabilidad del planificador local. Sí es útil como análisis
@@ -469,6 +473,20 @@ La cobertura actual prueba integración funcional y contratos básicos. No prueb
 todavía calidad de ranking sobre un corpus etiquetado ni complejidad en grafos
 grandes; esas conclusiones pertenecen al benchmark, no a los tests unitarios.
 
+## Decisiones operativas cerradas
+
+- Los defaults de estrategias son metadata inmutable del registro. El loader de
+  manifiestos exige igualdad exacta y el runner contrasta los parámetros
+  efectivos devueltos por cada ejecución antes de aceptar el registro.
+- CLCR usa decaimiento por salto: 0.5 en la capa primaria y 0.7 en cascada.
+- RPR usa identidad de evidencia por hash de camino; el agregador deduplica por
+  `chunkId`, no por nodo terminal.
+- Agentic usa tool calls estructurados, máximo 3 iteraciones, 2 intentos por
+  decisión y límite final estricto.
+- LanceDB optimiza con umbrales de escrituras, filas modificadas, fragmentos y
+  filas sin indexar; conserva siete días de versiones y reporta mantenimiento
+  mediante `health()`.
+
 ## Backlog vigente
 
 ### Alta: completar la validación experimental
@@ -485,64 +503,6 @@ pero no existe aún evidencia oficial comparable:
 
 Criterio de cierre: publicar una corrida reproducible con commits fijados,
 ground truth manual, M3-M7 para retrieval y, si se evalúa generación, M1-M2.
-
-### Alta: alinear el manifiesto experimental con parámetros ejecutables
-
-`eval/manifests/strategies.yaml` declara algunos parámetros diferentes de los
-defaults del código, por ejemplo `clcr.primary_hops=1` frente a 2 y
-`rpr.max_depth=2`/`max_candidates=100` frente a 3/5000. La CLI no expone esos
-parámetros, de modo que el runner no puede aplicar los valores del manifiesto.
-
-Criterio de cierre: o bien el manifiesto registra exactamente los defaults
-ejecutados, o bien la CLI/runtime acepta una configuración explícita y cada
-registro experimental persiste los valores efectivos.
-
-### Alta: decidir el decaimiento primario de CLCR
-
-El código usa `parentScore * 0.5 ^ absoluteDepth`. Como el score del padre ya
-está decaído, una cadena de dos saltos queda en `anchor * 0.5 * 0.25`, no en
-`anchor * 0.5^2`. Puede ser intencional, pero la fórmula anterior documentaba
-decaimiento por hop y no esta composición.
-
-Criterio de cierre: definir la fórmula deseada, cubrir profundidades 1, 2 y 3
-con pruebas y usar esa misma definición en el benchmark.
-
-### Alta: preservar la identidad de caminos RPR en agregación
-
-RPR deduplica caminos internamente, pero luego asigna como `nodeId` el nodo
-terminal. `ContextAggregator` deduplica por `nodeId`; dos caminos distintos con
-el mismo destino pueden colapsar.
-
-Criterio de cierre: definir una identidad de chunk compatible con caminos o una
-política de agregación por tipo de estrategia, con una prueba que conserve dos
-trayectorias relevantes hacia el mismo nodo.
-
-### Media: endurecer el contrato de AgenticStrategy
-
-El planificador extrae JSON libre, convierte todos los parámetros a string y no
-impone un límite final estricto de chunks. Un resultado de vecindad puede superar
-50 nodos y faltan validaciones específicas por herramienta.
-
-Criterio de cierre: esquema estructurado de tool calls, validación de parámetros,
-cap final explícito y pruebas para payloads incompletos o mal tipados.
-
-### Media: definir mantenimiento de LanceDB
-
-`replaceBatch()` ya es atómico por `node_id` y HNSW tiene health observable, pero
-no existe una política explícita de compactación u optimización después de
-muchas reindexaciones incrementales.
-
-Criterio de cierre: medir crecimiento y degradación, decidir el trigger de
-compactación y exponer su estado o ejecución de forma operable.
-
-### Media: hacer verificable esta documentación
-
-Los parámetros están definidos en constantes privadas de cada estrategia y la
-documentación puede volver a divergir.
-
-Criterio de cierre: exponer defaults inmutables o metadata del registro y añadir
-una prueba que contraste nombres, requisitos y parámetros documentados o que
-genere automáticamente la tabla de referencia.
 
 ### Baja: exponer tuning solo después del benchmark
 

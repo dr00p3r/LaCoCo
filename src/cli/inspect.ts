@@ -69,7 +69,7 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
       ollama,
       ...(options.timeoutMs !== undefined ? { ollamaTimeoutMs: options.timeoutMs } : {}),
       ...(lanceDb ? { lanceDb } : {}),
-    });
+    }, options.chunks === undefined ? {} : { chunks: options.chunks });
     const chunks = await strategy.retrieve(sanitized);
     if (chunks.length === 0) {
       throw new Error("La estrategia no recuperó ningún chunk");

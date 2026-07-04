@@ -1,15 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { AgenticStrategy } from "../../src/retriever/strategies/agentic-strategy.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  AgenticPlanningError,
+  AgenticStrategy,
+} from "../../src/retriever/strategies/agentic-strategy.js";
 import type { LlmClient } from "../../src/slms/llm-client.js";
 import { createGraphDb, makeQuery } from "./test-helpers.js";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 
 function createFakeLlm(chatResponses: string[] = []): LlmClient & { chat: ReturnType<typeof vi.fn> } {
   const chat = vi.fn();
-  for (const r of chatResponses) {
-    chat.mockResolvedValueOnce(r);
-  }
+  for (const response of chatResponses) chat.mockResolvedValueOnce(response);
   return {
+    abort: vi.fn(),
     isAvailable: vi.fn().mockResolvedValue(true),
     generate: vi.fn(),
     chat,
@@ -27,103 +29,103 @@ describe("AgenticStrategy", () => {
     db.close();
   });
 
-  it("usa el fallback deterministico cuando Ollama no esta disponible", async () => {
+  it("falla explícitamente cuando Ollama no está disponible", async () => {
     const ollama = createFakeLlm();
     ollama.isAvailable = vi.fn().mockResolvedValue(false);
 
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
-    expect(chunks.length).toBeGreaterThan(0);
-    expect(chunks.every((c) => c.source === "AGENTIC")).toBe(true);
-    expect(ollama.isAvailable).toHaveBeenCalledOnce();
+    await expect(
+      new AgenticStrategy(db, ollama).retrieve(makeQuery("OrderService", ["CPG"])),
+    ).rejects.toThrow("Ollama no disponible");
     expect(ollama.chat).not.toHaveBeenCalled();
   });
 
-  it("recupera semillas BM25 y vecinos en modo determinista", async () => {
-    const ollama = createFakeLlm();
-    ollama.isAvailable = vi.fn().mockResolvedValue(false);
-
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
-    const nodeIds = chunks.map((c) => c.nodeId);
-    expect(nodeIds).toContain("file1#OrderService");
-    expect(nodeIds.length).toBeGreaterThan(1);
-  });
-
-  it("no duplica nodos entre iteraciones del fallback", async () => {
-    const ollama = createFakeLlm();
-    ollama.isAvailable = vi.fn().mockResolvedValue(false);
-
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
-    const ids = chunks.map((c) => c.nodeId);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it("planea herramientas con el SLM y ejecuta get_neighbors", async () => {
-    const ollama = createFakeLlm([
-      JSON.stringify({ name: "get_neighbors", params: { node_id: "file1#OrderService" } }),
-      JSON.stringify({ name: "get_neighbors", params: { node_id: "file1#OrderService.createOrder" } }),
-      JSON.stringify({ done: true }),
-    ]);
-
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
+  it("acepta done y conserva las semillas BM25", async () => {
+    const ollama = createFakeLlm([JSON.stringify({ action: "done" })]);
+    const chunks = await new AgenticStrategy(db, ollama)
+      .retrieve(makeQuery("OrderService", ["CPG"]));
 
     expect(chunks.length).toBeGreaterThan(0);
-    expect(chunks.every((c) => c.source === "AGENTIC")).toBe(true);
-    expect(ollama.chat).toHaveBeenCalled();
-  });
-
-  it("planea herramientas con el SLM y ejecuta get_node_by_symbol", async () => {
-    const ollama = createFakeLlm([
-      JSON.stringify({ name: "get_node_by_symbol", params: { name: "OrderService" } }),
-      JSON.stringify({ done: true }),
-    ]);
-
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
-    expect(chunks.some((c) => c.nodeId === "file1#OrderService")).toBe(true);
-  });
-
-  it("detiene el ciclo cuando el SLM devuelve done", async () => {
-    const ollama = createFakeLlm([
-      JSON.stringify({ done: true }),
-    ]);
-
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
+    expect(chunks.every((chunk) => chunk.source === "AGENTIC")).toBe(true);
     expect(ollama.chat).toHaveBeenCalledTimes(1);
-    expect(chunks.length).toBeGreaterThan(0);
+    expect(ollama.chat).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({
+      format: expect.objectContaining({ oneOf: expect.any(Array) }),
+      options: { temperature: 0, seed: 42, num_predict: 128 },
+    }));
   });
 
-  it("maneja respuestas SLM invalidas sin crashear", async () => {
+  it("valida y ejecuta get_neighbors sobre un nodo conocido", async () => {
     const ollama = createFakeLlm([
-      "respuesta invalida sin JSON",
-      JSON.stringify({ done: true }),
+      JSON.stringify({ action: "get_neighbors", node_id: "file1#OrderService" }),
+      JSON.stringify({ action: "done" }),
+    ]);
+    const chunks = await new AgenticStrategy(db, ollama)
+      .retrieve(makeQuery("OrderService", ["CPG"]));
+
+    expect(chunks.some((chunk) => chunk.nodeId === "file1#OrderService.createOrder")).toBe(true);
+  });
+
+  it("valida y ejecuta get_node_by_symbol", async () => {
+    const ollama = createFakeLlm([
+      JSON.stringify({ action: "get_node_by_symbol", name: "CreateOrderDto" }),
+      JSON.stringify({ action: "done" }),
+    ]);
+    const chunks = await new AgenticStrategy(db, ollama)
+      .retrieve(makeQuery("OrderService", ["CPG"]));
+
+    expect(chunks.some((chunk) => chunk.nodeId === "file1#CreateOrderDto")).toBe(true);
+  });
+
+  it("rechaza parámetros incompletos o mal tipados después del reintento", async () => {
+    const ollama = createFakeLlm([
+      JSON.stringify({ action: "get_neighbors", node_id: 42 }),
+      JSON.stringify({ action: "get_neighbors" }),
     ]);
 
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
+    await expect(
+      new AgenticStrategy(db, ollama).retrieve(makeQuery("OrderService", ["CPG"])),
+    ).rejects.toBeInstanceOf(AgenticPlanningError);
+    expect(ollama.chat).toHaveBeenCalledTimes(2);
+  });
 
-    expect(ollama.chat).toHaveBeenCalledOnce();
-    expect(chunks.length).toBeGreaterThan(0);
+  it("rechaza identificadores inventados por el planificador", async () => {
+    const response = JSON.stringify({ action: "get_neighbors", node_id: "inventado" });
+    const ollama = createFakeLlm([response, response]);
+
+    await expect(
+      new AgenticStrategy(db, ollama).retrieve(makeQuery("OrderService", ["CPG"])),
+    ).rejects.toThrow("incumplió el contrato");
+  });
+
+  it("rechaza propiedades adicionales aunque Ollama ignore el esquema", async () => {
+    const response = JSON.stringify({ action: "done", explanation: "enough" });
+    const ollama = createFakeLlm([response, response]);
+
+    await expect(
+      new AgenticStrategy(db, ollama).retrieve(makeQuery("OrderService", ["CPG"])),
+    ).rejects.toBeInstanceOf(AgenticPlanningError);
+  });
+
+  it("no permite ampliar el máximo de iteraciones del contrato", () => {
+    expect(() => new AgenticStrategy(db, createFakeLlm(), { maxIterations: 4 }))
+      .toThrow("maxIterations no puede superar 3");
+  });
+
+  it("aplica un límite final estricto de chunks", async () => {
+    const ollama = createFakeLlm();
+    const chunks = await new AgenticStrategy(db, ollama, { chunkLimit: 1 })
+      .retrieve(makeQuery("OrderService", ["CPG"]));
+
+    expect(chunks).toHaveLength(1);
+    expect(ollama.chat).not.toHaveBeenCalled();
   });
 
   it("ordena chunks por score descendente", async () => {
-    const ollama = createFakeLlm();
-    ollama.isAvailable = vi.fn().mockResolvedValue(false);
+    const ollama = createFakeLlm([JSON.stringify({ action: "done" })]);
+    const chunks = await new AgenticStrategy(db, ollama)
+      .retrieve(makeQuery("OrderService", ["CPG"]));
 
-    const strategy = new AgenticStrategy(db, ollama);
-    const chunks = await strategy.retrieve(makeQuery("OrderService", ["CPG"]));
-
-    for (let i = 1; i < chunks.length; i++) {
-      expect(chunks[i - 1]!.score).toBeGreaterThanOrEqual(chunks[i]!.score);
+    for (let index = 1; index < chunks.length; index++) {
+      expect(chunks[index - 1]!.score).toBeGreaterThanOrEqual(chunks[index]!.score);
     }
   });
 });

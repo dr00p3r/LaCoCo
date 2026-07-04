@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
+import {
+  isStrategyName,
+  STRATEGY_REGISTRY,
+} from "../../../src/retriever/strategies/registry.js";
 import { getManifestPaths, MANIFESTS_DIR } from "./paths.js";
 import type {
   AgentDefinition,
@@ -76,6 +80,14 @@ function nullableString(value: unknown, file: string, path: string): string | nu
   return value === null ? null : string(value, file, path);
 }
 
+function numericRecord(value: unknown, file: string, path: string): Record<string, number> {
+  if (value === undefined) return {};
+  const result = record(value, file, path);
+  return Object.fromEntries(
+    Object.entries(result).map(([key, entry]) => [key, number(entry, file, `${path}.${key}`)]),
+  );
+}
+
 function header(value: unknown, file: string, kind: string): UnknownRecord {
   const result = record(value, file, "document");
   const version = number(result.manifest_version, file, "manifest_version");
@@ -138,10 +150,47 @@ function validateStrategies(value: unknown, file: string): StrategiesManifest {
       requires_ollama: boolean(item.requires_ollama, file, `${path}.requires_ollama`),
       retrieval_enabled: boolean(item.retrieval_enabled, file, `${path}.retrieval_enabled`),
       generation_enabled: boolean(item.generation_enabled, file, `${path}.generation_enabled`),
+      parameters: numericRecord(item.parameters, file, `${path}.parameters`),
     } satisfies StrategyDefinition;
   });
   assertUniqueIds(strategies, file, "strategies");
+  for (const [index, strategy] of strategies.entries()) {
+    if (strategy.lacoco_strategy === null) continue;
+    if (!isStrategyName(strategy.lacoco_strategy)) {
+      throw new ManifestValidationError(
+        file,
+        `strategies[${index}].lacoco_strategy is not registered: ${strategy.lacoco_strategy}`,
+      );
+    }
+    const expected = toSnakeCaseRecord(
+      STRATEGY_REGISTRY[strategy.lacoco_strategy].defaultParameters,
+    );
+    if (!sameNumericRecord(strategy.parameters, expected)) {
+      throw new ManifestValidationError(
+        file,
+        `strategies[${index}].parameters does not match runtime defaults; ` +
+          `expected ${JSON.stringify(expected)}`,
+      );
+    }
+  }
   return { ...root, kind: "retrieval_strategies", strategies } as StrategiesManifest;
+}
+
+function toSnakeCaseRecord(values: Readonly<Record<string, number>>): Record<string, number> {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => [
+    key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+    value,
+  ]));
+}
+
+function sameNumericRecord(
+  left: Record<string, number>,
+  right: Record<string, number>,
+): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
 }
 
 function validateAgents(value: unknown, file: string): AgentsManifest {

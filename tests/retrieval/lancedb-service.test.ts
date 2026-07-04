@@ -6,6 +6,11 @@ import { LaCoCoLanceDb } from "../../src/persistence/lacoco-vectors-manager/laco
 import type { NodeEmbeddingRecord } from "../../src/persistence/lacoco-vectors-manager/model/types.js";
 
 describe("LaCoCoLanceDb", () => {
+  it("rechaza políticas de mantenimiento inválidas", () => {
+    expect(() => new LaCoCoLanceDb("./unused", { writeOperations: 0 }))
+      .toThrow("writeOperations debe ser un entero positivo");
+  });
+
   it("propaga errores de conexión y conserva el estado desconectado", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "lacoco-lancedb-failure-"));
     const invalidPath = path.join(dir, "file");
@@ -14,10 +19,11 @@ describe("LaCoCoLanceDb", () => {
 
     try {
       await expect(db.connect()).rejects.toThrow();
-      expect(db.health()).toEqual({
+      expect(db.health()).toMatchObject({
         connected: false,
         indexBuilt: false,
         lastIndexError: null,
+        maintenance: { needed: false, writeOperations: 0, rowsModified: 0 },
       });
     } finally {
       await db.close();
@@ -93,10 +99,11 @@ describe("LaCoCoLanceDb", () => {
       );
       await db.buildIndex();
 
-      expect(db.health()).toEqual({
+      expect(db.health()).toMatchObject({
         connected: true,
         indexBuilt: true,
         lastIndexError: null,
+        maintenance: { unindexedRows: 0 },
       });
     } finally {
       await db.close();
@@ -118,6 +125,35 @@ describe("LaCoCoLanceDb", () => {
       expect(warning).toHaveBeenCalledOnce();
     } finally {
       warning.mockRestore();
+      await db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("optimiza automáticamente al alcanzar el umbral de escrituras", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "lacoco-lancedb-optimize-"));
+    const db = new LaCoCoLanceDb(dir, {
+      writeOperations: 2,
+      rowsModified: 100_000,
+      smallFragments: 100,
+      unindexedRows: 100_000,
+    });
+
+    try {
+      await db.connect();
+      await db.replaceBatch([record("file#A", unitVector(0), "a.ts")]);
+      expect(db.health().maintenance.writeOperations).toBe(1);
+
+      await db.replaceBatch([record("file#B", unitVector(1), "b.ts")]);
+
+      expect(db.health().maintenance).toMatchObject({
+        needed: false,
+        writeOperations: 0,
+        rowsModified: 0,
+        lastOptimizeError: null,
+      });
+      expect(db.health().maintenance.lastOptimizedAt).not.toBeNull();
+    } finally {
       await db.close();
       rmSync(dir, { recursive: true, force: true });
     }

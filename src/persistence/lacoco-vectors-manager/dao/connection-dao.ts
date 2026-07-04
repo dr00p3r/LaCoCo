@@ -39,4 +39,19 @@ export class ConnectionDao {
       waitTimeoutSeconds: 60,
     });
   }
+
+  async optimize(
+    table: lancedb.Table,
+    cleanupOlderThan: Date,
+  ): Promise<lancedb.OptimizeStats> {
+    return table.optimize({ cleanupOlderThan, deleteUnverified: false });
+  }
+
+  async stats(table: lancedb.Table): Promise<lancedb.TableStatistics> {
+    return table.stats();
+  }
+
+  async unindexedRows(table: lancedb.Table, indexName: string): Promise<number> {
+    return (await table.indexStats(indexName))?.numUnindexedRows ?? 0;
+  }
 }

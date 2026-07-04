@@ -54,6 +54,7 @@ interface RetrievalRecord {
     exclusion_reason: string | null;
   };
   ranked_nodes: RankedNode[];
+  effective_parameters: Record<string, number> | null;
   timings_ms: { total: number };
   exit_code: number | null;
   error: RetrievalError | null;
@@ -236,9 +237,11 @@ async function executeRetrieval(
   command: string,
   timeoutMs: number,
   paths: { absolute: RetrievalArtifactPaths; relative: RetrievalArtifactPaths },
+  expectedParameters: Record<string, number>,
 ): Promise<{
   result: CommandResult;
   rankedNodes: RankedNode[];
+  effectiveParameters: Record<string, number> | null;
   error: RetrievalError | null;
 }> {
   let result: CommandResult;
@@ -269,14 +272,38 @@ async function executeRetrieval(
 
   const parsed = parseRetrievalJson(result.stdout);
   const executionError = commandError(result, executionMessage);
-  const error = parsed.error?.type === "cli_error"
+  let error = parsed.error?.type === "cli_error"
     ? parsed.error
     : executionError ?? parsed.error;
+  if (error === null && !parametersMatch(parsed.effectiveParameters, expectedParameters)) {
+    error = {
+      type: "invalid_contract",
+      message: `effective parameters do not match manifest: expected ${JSON.stringify(expectedParameters)}`,
+    };
+  }
   return {
     result,
     rankedNodes: parsed.rankedNodes,
+    effectiveParameters: parsed.effectiveParameters,
     error,
   };
+}
+
+function parametersMatch(
+  effective: Record<string, number> | null,
+  expected: Record<string, number>,
+): boolean {
+  if (effective === null) return false;
+  const normalized = Object.fromEntries(Object.entries(effective).map(([key, value]) => [
+    key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+    value,
+  ]));
+  const normalizedKeys = Object.keys(normalized).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return normalizedKeys.length === expectedKeys.length
+    && normalizedKeys.every(
+      (key, index) => key === expectedKeys[index] && normalized[key] === expected[key],
+    );
 }
 
 function createRecord(
@@ -303,6 +330,7 @@ function createRecord(
       exclusion_reason: eligible ? null : `gold.status is ${task.gold.status}`,
     },
     ranked_nodes: execution.rankedNodes,
+    effective_parameters: execution.effectiveParameters,
     timings_ms: { total: execution.result.durationMs },
     exit_code: execution.result.exitCode,
     error: execution.error,
@@ -405,7 +433,12 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
       }
 
       try {
-        const execution = await executeRetrieval(command, settings.timeoutMs, paths);
+        const execution = await executeRetrieval(
+          command,
+          settings.timeoutMs,
+          paths,
+          strategy.parameters,
+        );
         const record = createRecord(
           settings,
           layout.runId,

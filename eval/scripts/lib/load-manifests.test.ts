@@ -30,4 +30,17 @@ describe("loadManifests", () => {
       new ManifestValidationError("tasks.yaml", "tasks[0].prompt must be a non-empty string"),
     );
   });
+
+  it("rejects strategy parameters that drift from runtime defaults", () => {
+    const directory = mkdtempSync(join(tmpdir(), "lacoco-manifests-"));
+    cpSync(MANIFESTS_DIR, directory, { recursive: true });
+    const strategiesPath = join(directory, "strategies.yaml");
+    const strategies = readFileSync(strategiesPath, "utf8").replace(
+      "      primary_hops: 2",
+      "      primary_hops: 1",
+    );
+    writeFileSync(strategiesPath, strategies);
+
+    expect(() => loadManifests(directory)).toThrow(/parameters does not match runtime defaults/);
+  });
 });

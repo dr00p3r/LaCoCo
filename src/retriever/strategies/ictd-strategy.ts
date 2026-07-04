@@ -34,7 +34,7 @@ export interface IctdConfig {
   maxHops: number;
 }
 
-const DEFAULT_CONFIG: IctdConfig = {
+export const ICTD_DEFAULT_CONFIG: Readonly<IctdConfig> = Object.freeze({
   anchorLimit: 30,
   maxIterations: 10,
   restartProb: 0.2,
@@ -42,7 +42,7 @@ const DEFAULT_CONFIG: IctdConfig = {
   chunkLimit: 50,
   bfsMaxNodes: 5000,
   maxHops: 2,
-};
+});
 
 type Dim = Dimension;
 
@@ -65,7 +65,7 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
     config?: Partial<IctdConfig>
   ) {
     super(db, lanceDb);
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...ICTD_DEFAULT_CONFIG, ...config };
   }
 
   protected getAnchorLimit(): number {
@@ -150,6 +150,7 @@ export class IctdStrategy extends AbstractAnchoredStrategy {
     const sigs = this.db.getNodeSignatures(ranked);
 
     return ranked.map((id) => ({
+      chunkId: id,
       nodeId: id,
       score: heat.get(id) ?? 0,
       text: sigs.get(id) ?? id,

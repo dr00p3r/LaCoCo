@@ -9,9 +9,9 @@ export interface HybridConfig {
   anchorLimit: number;
 }
 
-const DEFAULT_CONFIG: HybridConfig = {
+export const HYBRID_DEFAULT_CONFIG: Readonly<HybridConfig> = Object.freeze({
   anchorLimit: 20,
-};
+});
 
 export class HybridStrategy extends AbstractAnchoredStrategy {
   private readonly config: HybridConfig;
@@ -22,7 +22,7 @@ export class HybridStrategy extends AbstractAnchoredStrategy {
     config?: Partial<HybridConfig>,
   ) {
     super(db, lanceDb);
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...HYBRID_DEFAULT_CONFIG, ...config };
   }
 
   protected getAnchorLimit(): number {

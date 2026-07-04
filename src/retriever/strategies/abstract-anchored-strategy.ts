@@ -32,6 +32,7 @@ export abstract class AbstractAnchoredStrategy implements RecoveryStrategy {
 
   protected toChunk(anchor: HybridAnchor, source: string, score = anchor.score): ContextChunk {
     return {
+      chunkId: anchor.nodeId,
       nodeId: anchor.nodeId,
       score,
       text: anchor.text,

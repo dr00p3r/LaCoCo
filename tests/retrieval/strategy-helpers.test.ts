@@ -8,6 +8,7 @@ import {
   getDominantDimension,
   getIntentWeights,
 } from "../../src/retriever/strategies/helpers/intent-weights.js";
+import { decayScore } from "../../src/retriever/strategies/helpers/score-decay.js";
 
 describe("strategy intent helpers", () => {
   it("normaliza pesos y refuerza dimensiones indicadas por el intermediario", () => {
@@ -53,6 +54,14 @@ describe("strategy graph traversal helpers", () => {
     );
 
     expect([...visited]).toEqual(["A", "C"]);
+  });
+});
+
+describe("strategy score decay", () => {
+  it("aplica el decaimiento CLCR una vez por salto", () => {
+    expect(decayScore(1, 0.5, 1)).toBe(0.5);
+    expect(decayScore(1, 0.5, 2)).toBe(0.25);
+    expect(decayScore(1, 0.5, 3)).toBe(0.125);
   });
 });
 

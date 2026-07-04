@@ -2,6 +2,7 @@ import { asRecord, asString } from "./config.js";
 
 export interface RankedNode {
   rank: number;
+  chunk_id: string;
   node_id: string;
   score: number;
   source: string;
@@ -12,6 +13,7 @@ export interface RankedNode {
 
 export interface ParsedRetrievalOutput {
   rankedNodes: RankedNode[];
+  effectiveParameters: Record<string, number> | null;
   error: RetrievalError | null;
 }
 
@@ -42,6 +44,7 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
   } catch (error) {
     return {
       rankedNodes: [],
+      effectiveParameters: null,
       error: {
         type: "invalid_json",
         message: error instanceof Error ? error.message : String(error),
@@ -58,6 +61,7 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
       const error = asRecord(root.error, "retrieve JSON.error");
       return {
         rankedNodes: [],
+        effectiveParameters: null,
         error: {
           type: "cli_error",
           stage: asString(error.stage, "retrieve JSON.error.stage"),
@@ -72,6 +76,16 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
     if (!Array.isArray(retrieval.chunks)) {
       throw new Error("retrieve JSON.retrieval.chunks must be an array");
     }
+    const parameters = asRecord(
+      retrieval.strategyParameters,
+      "retrieve JSON.retrieval.strategyParameters",
+    );
+    const effectiveParameters = Object.fromEntries(
+      Object.entries(parameters).map(([key, value]) => [
+        key,
+        finiteNumber(value, `retrieve JSON.retrieval.strategyParameters.${key}`),
+      ]),
+    );
     const rankedNodes = retrieval.chunks.map((value, index) => {
       const path = `retrieve JSON.retrieval.chunks[${index}]`;
       const chunk = asRecord(value, path);
@@ -79,6 +93,7 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
       const kind = optionalString(chunk.kind, `${path}.kind`);
       return {
         rank: index + 1,
+        chunk_id: asString(chunk.chunkId, `${path}.chunkId`),
         node_id: asString(chunk.nodeId, `${path}.nodeId`),
         score: finiteNumber(chunk.score, `${path}.score`),
         source: asString(chunk.source, `${path}.source`),
@@ -87,10 +102,11 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
         ...(kind === undefined ? {} : { kind }),
       } satisfies RankedNode;
     });
-    return { rankedNodes, error: null };
+    return { rankedNodes, effectiveParameters, error: null };
   } catch (error) {
     return {
       rankedNodes: [],
+      effectiveParameters: null,
       error: {
         type: "invalid_contract",
         message: error instanceof Error ? error.message : String(error),

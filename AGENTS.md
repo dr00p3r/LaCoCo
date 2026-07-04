@@ -72,6 +72,11 @@ tests/retrieval/        pruebas Vitest del pipeline de retrieval
 - `VectorCallbacks.flush()` debe esperar todas las escrituras programadas; no se permiten lotes fire-and-forget.
 - `EmbeddingDao.replaceBatch()` usa `mergeInsert` por `node_id`; no reintroducir el ciclo no atómico delete + insert.
 - `LaCoCoLanceDb.health()` expone conexión, estado del índice HNSW y el último error de construcción.
+- LanceDB ejecuta `optimize()` tras 20 operaciones de escritura, 100000 filas
+  modificadas, 20 fragmentos pequeños o 100000 filas sin indexar. Conserva
+  versiones de los últimos 7 días y nunca activa `deleteUnverified`.
+  `health().maintenance` expone contadores, necesidad de mantenimiento y el
+  último resultado; `optimizeIfNeeded(true)` permite ejecución explícita.
 
 El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. La primera ejecución puede requerir descargar el modelo.
 
@@ -84,7 +89,7 @@ Estrategias CLI válidas:
 | Nombre | Mecanismo |
 |---|---|
 | `hybrid` | BM25 + ANN + Reciprocal Rank Fusion; deliberadamente ignora dimensiones |
-| `agentic` | Semillas BM25 + planificación local Ollama, máximo 3 iteraciones, con fallback determinístico |
+| `agentic` | Semillas BM25 + planificación local Ollama estructurada, máximo 3 iteraciones, sin fallback |
 | `ictd` | Anclas híbridas + difusión tensorial guiada por intent y dimensión |
 | `clcr` | Anclas híbridas + recuperación por etapas entre capas |
 | `rpr` | Anclas híbridas + enumeración y puntuación de caminos relacionales |
@@ -99,6 +104,14 @@ del retriever.
 `LlmClient` (`src/slms/llm-client.ts`), no de la clase concreta `OllamaService`.
 `OllamaService` solo se instancia en puntos de composición (CLI, `inspect.ts`).
 Todo `LlmClient` debe implementar `abort()` para cancelar solicitudes activas.
+Agentic usa un esquema JSON discriminado y validación exacta por herramienta,
+permite como máximo 3 iteraciones y 2 intentos por decisión, y aplica siempre
+el límite final de chunks. No tiene fallback cuando Ollama falla.
+
+CLCR propaga score por salto: `child = parent * decay`, con `primaryDecay=0.5`
+y `cascadeDecay=0.7`; `lambda=0.25` solo controla el boost cross-layer. RPR
+identifica cada evidencia mediante `chunkId=RPR:<path-hash>` y conserva el
+camino estructurado, aunque varios caminos terminen en el mismo `nodeId`.
 
 ## Comandos
 
@@ -128,6 +141,11 @@ npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
 npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
 ```
 
+`retrieve` y `context export` aceptan `--chunks <entero>` y
+`--max-tokens <entero>`. `inspect-query` acepta `--chunks`. El primer flag
+controla `anchorLimit` para `hybrid` y `chunkLimit` para las demás estrategias;
+el segundo controla el presupuesto de `ContextAggregator`.
+
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
 Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy` u
 `--ollama`, la CLI resuelve `strategy.default`, `agent.endpoint` y `agent.model` desde la
@@ -144,7 +162,8 @@ se omite, usan `process.cwd()`. Las rutas de almacenamiento (`db` y `lancedb`)
 se resuelven siempre desde el proyecto registrado; no aceptan flags explícitos.
 
 `retrieve --json` reserva stdout para un unico documento con
-`schemaVersion: 1`. El resultado incluye clasificacion, chunks, prompt
+`schemaVersion: 1`. El resultado incluye clasificacion, chunks, parámetros
+efectivos de estrategia, presupuesto del agregador, prompt
 enriquecido y metadatos de almacenamiento; los errores usan `ok: false` y exit
 code no cero. Logs y diagnosticos deben permanecer en stderr para no romper
 hooks. `retrieve` no genera respuestas finales: su salida está destinada a un
@@ -188,5 +207,4 @@ prueba se omite explícitamente.
 
 - El intermediario depende obligatoriamente de Ollama; no existe fallback local cuando el modelo no está disponible.
 - La prueba end-to-end del binario CLI se omite en runners que bloquean `spawnSync`.
-- La reindexación vectorial reemplaza lotes por `node_id`; falta una política explícita de compactación/optimización para LanceDB.
 - Faltan benchmarks comparables de precisión, latencia y consumo entre estrategias.

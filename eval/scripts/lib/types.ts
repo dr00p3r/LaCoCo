@@ -33,6 +33,7 @@ export interface StrategyDefinition {
   requires_ollama: boolean;
   retrieval_enabled: boolean;
   generation_enabled: boolean;
+  parameters: Record<string, number>;
   [key: string]: unknown;
 }
 
