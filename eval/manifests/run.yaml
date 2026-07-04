@@ -45,7 +45,7 @@ phases:
     commands:
       init_template: "npm run dev -- init {repo_path}"
       index_graph_template: "npm run dev -- index_graph {tsconfig} --db {db_path}"
-      index_vectors_template: "npm run dev -- index_vectors --tsconfig {tsconfig} --lancedb {lancedb_path}"
+      index_vectors_template: "npm run dev -- index_vectors {tsconfig} --lancedb {lancedb_path}"
 
   retrieval:
     enabled: true

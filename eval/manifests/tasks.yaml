@@ -54,12 +54,34 @@ tasks:
       - "string schemas"
       - "error issue construction"
       - "tests for string parsing"
-    target_tests: []
+    target_tests:
+      - "pnpm vitest run packages/zod/src/v3/tests/string.test.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Localizar nodos de ZodString, checks de string y construccion de issues."
+      status: "ready"
+      relevant_nodes:
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.nonempty"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.trim"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.min"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._addCheck"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._parse"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodStringCheck"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodStringDef"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/ZodError.ts#ZodIssueCode"
+      multihop_nodes:
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._parse"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado de zod v3.25.76 (commit 7baee4e17,
+        run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
+        Anchor primario: ZodString. La API existente a imitar es nonempty() (= .min(1));
+        trim() agrega el check "trim" y _addCheck lo anexa de forma inmutable; _parse
+        aplica los checks (trim muta input.data y min emite too_small via addIssueToContext).
+        multihop_nodes verificados a distancia BFS >=2 del anchor en el grafo LaCoCo:
+        ZodString._parse (d=4) y parseUtil#addIssueToContext (d=4).
+        ZodStringCheck/ZodStringDef/ZodIssueCode son relevantes pero quedan desconectados
+        en el grafo (por eso no se marcan multihop). target_tests verificado verde (110 tests).
     tags:
       - "pilot"
       - "string"
@@ -85,12 +107,38 @@ tasks:
       - "object schemas"
       - "unknown keys policy"
       - "partial/deep partial derivation"
-    target_tests: []
+    target_tests:
+      - "pnpm vitest run packages/zod/src/v3/tests/partials.test.ts"
+      - "pnpm vitest run packages/zod/src/v3/tests/object.test.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Anotar constructores y metodos de ZodObject relacionados con unknownKeys y partial."
+      status: "ready"
+      relevant_nodes:
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.partial"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.deepPartial"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#deepPartialify"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.required"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.strict"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject._parse"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObjectDef"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#UnknownKeysParam"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/ZodError.ts#ZodIssueCode"
+      multihop_nodes:
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject._parse"
+        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado de zod v3.25.76 (commit 7baee4e17,
+        run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
+        Anchor primario: ZodObject. El strict se guarda como _def.unknownKeys="strict"
+        (metodo strict()) y se aplica en _parse (rama unknownKeys==="strict" que emite
+        ZodIssueCode.unrecognized_keys via addIssueToContext). partial()/required() hacen
+        new ZodObject({...this._def, shape}) preservando unknownKeys; deepPartial() delega
+        en la funcion deepPartialify (locus del bug si no propaga _def). multihop_nodes a
+        distancia BFS >=2 del anchor en el grafo LaCoCo: ZodObject._parse (d=4) y
+        parseUtil#addIssueToContext (d=4). ZodObjectDef/UnknownKeysParam/ZodObject.deepPartial/
+        ZodIssueCode quedan desconectados en el grafo (relevantes pero no multihop).
+        target_tests (partials.test.ts + object.test.ts) verificados verdes (104 tests).
     tags:
       - "pilot"
       - "object"
