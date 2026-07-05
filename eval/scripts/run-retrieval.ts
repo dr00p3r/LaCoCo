@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { Buffer } from "node:buffer";
 import { dirname, join, relative } from "node:path";
 import { parseEvalCliOptions, isEntrypoint, type EvalCliOptions } from "./lib/cli.js";
 import { asBoolean, asNumber, asRecord, asString, asStringArray } from "./lib/config.js";
@@ -48,6 +49,7 @@ interface RetrievalRecord {
   lacoco_strategy: string;
   query: string;
   query_source: "task.prompt" | "deterministic_input.embedding_input";
+  sanitizer_source: "agent_intermediary" | "task.deterministic_input";
   gold_status: string;
   metrics_eligibility: {
     m3_m6: boolean;
@@ -164,19 +166,47 @@ function selectStrategies(
 function selectQuery(
   task: TaskDefinition,
   useDeterministicInput: boolean,
-): Pick<RetrievalRecord, "query" | "query_source"> {
+): Pick<RetrievalRecord, "query" | "query_source" | "sanitizer_source"> & {
+  deterministicSanitizer?: string;
+} {
   if (useDeterministicInput) {
-    // TODO(eval): pass clean_query, intent, and dimensions directly once the CLI exposes
-    // deterministic intermediary inputs. Until then, embedding_input is the stable proxy query.
+    const sanitizer = {
+      route: "RAG",
+      clean_query: task.deterministic_input.clean_query,
+      embedding_input: task.deterministic_input.embedding_input,
+      intent: task.deterministic_input.intent,
+      dimensions: task.deterministic_input.dimensions,
+      confidence: 1,
+    };
     return {
       query: task.deterministic_input.embedding_input,
       query_source: "deterministic_input.embedding_input",
+      sanitizer_source: "task.deterministic_input",
+      deterministicSanitizer: Buffer.from(JSON.stringify(sanitizer), "utf8").toString("base64url"),
     };
   }
-  return { query: task.prompt, query_source: "task.prompt" };
+  return {
+    query: task.prompt,
+    query_source: "task.prompt",
+    sanitizer_source: "agent_intermediary",
+  };
 }
 
-function buildCommand(repoPath: string, query: string, lacocoStrategy: string): string {
+function buildCommand(
+  repoPath: string,
+  query: string,
+  lacocoStrategy: string,
+  deterministicSanitizer?: string,
+): string {
+  if (deterministicSanitizer !== undefined) {
+    return [
+      "npm run --silent eval:retrieve:deterministic --",
+      shellQuote(repoPath),
+      shellQuote(query),
+      shellQuote(lacocoStrategy),
+      shellQuote(deterministicSanitizer),
+    ].join(" ");
+  }
   return [
     "npm run dev -- retrieve",
     shellQuote(repoPath),
@@ -311,7 +341,7 @@ function createRecord(
   runId: string,
   task: TaskDefinition,
   strategy: StrategyDefinition & { lacoco_strategy: string },
-  querySelection: Pick<RetrievalRecord, "query" | "query_source">,
+  querySelection: Pick<RetrievalRecord, "query" | "query_source" | "sanitizer_source">,
   paths: RetrievalArtifactPaths,
   execution: Awaited<ReturnType<typeof executeRetrieval>>,
 ): RetrievalRecord {
@@ -425,7 +455,12 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
 
     for (const strategy of strategies) {
       const querySelection = selectQuery(task, settings.useDeterministicInput);
-      const command = buildCommand(locked.repoPath, querySelection.query, strategy.lacoco_strategy);
+      const command = buildCommand(
+        locked.repoPath,
+        querySelection.query,
+        strategy.lacoco_strategy,
+        querySelection.deterministicSanitizer,
+      );
       const paths = artifactPaths(layout.artifactsDirectory, task.id, strategy.id);
       describeExecution(task, strategy, querySelection.query, command, paths.relative);
       if (options.dryRun) {

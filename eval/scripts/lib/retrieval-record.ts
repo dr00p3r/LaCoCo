@@ -9,6 +9,7 @@ export interface RankedNode {
   text: string;
   filepath?: string;
   kind?: string;
+  duplicate_count?: number;
 }
 
 export interface ParsedRetrievalOutput {
@@ -91,6 +92,12 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
       const chunk = asRecord(value, path);
       const filepath = optionalString(chunk.filepath, `${path}.filepath`);
       const kind = optionalString(chunk.kind, `${path}.kind`);
+      const diagnostics = chunk.diagnostics === undefined
+        ? undefined
+        : asRecord(chunk.diagnostics, `${path}.diagnostics`);
+      const duplicateCount = diagnostics?.duplicateCount === undefined
+        ? undefined
+        : finiteNumber(diagnostics.duplicateCount, `${path}.diagnostics.duplicateCount`);
       return {
         rank: index + 1,
         chunk_id: asString(chunk.chunkId, `${path}.chunkId`),
@@ -100,6 +107,7 @@ export function parseRetrievalJson(stdout: string): ParsedRetrievalOutput {
         text: asString(chunk.text, `${path}.text`),
         ...(filepath === undefined ? {} : { filepath }),
         ...(kind === undefined ? {} : { kind }),
+        ...(duplicateCount === undefined ? {} : { duplicate_count: duplicateCount }),
       } satisfies RankedNode;
     });
     return { rankedNodes, effectiveParameters, error: null };

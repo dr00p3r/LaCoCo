@@ -15,8 +15,12 @@ describe("loadManifests", () => {
     expect(manifests.metrics.metrics.length).toBeGreaterThan(0);
     expect(manifests.run.kind).toBe("run_configuration");
     expect(manifests.tasks.tasks.length).toBeGreaterThan(0);
-    expect(manifests.tasks.tasks[0]?.gold.relevant_nodes).toEqual([]);
-    expect(manifests.tasks.tasks[0]?.gold.multihop_nodes).toEqual([]);
+    const readyTask = manifests.tasks.tasks.find(({ id }) => id === "zod-001");
+    expect(readyTask?.gold.status).toBe("ready");
+    expect(readyTask?.gold.relevant_nodes.length).toBeGreaterThan(0);
+    expect(readyTask?.gold.multihop_nodes.every((nodeId) =>
+      readyTask.gold.relevant_nodes.includes(nodeId)
+    )).toBe(true);
   });
 
   it("reports the file and field when a required value is missing", () => {

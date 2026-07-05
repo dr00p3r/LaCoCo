@@ -354,8 +354,10 @@ Implementación: `src/retriever/strategies/rpr-strategy.ts`.
 pathScore = average(nodeRelevance) * uniqueDimensions
 ```
 
-8. Deduplicar por la secuencia completa de nodos y relaciones.
-9. Ordenar y devolver hasta 50 caminos con `source="RPR"`.
+8. Ordenar por score y deduplicar por el `nodeId` terminal, conservando el
+   camino de mayor score y contando los caminos alternativos descartados.
+9. Aplicar el corte y devolver hasta 50 nodos con su mejor camino y
+   `source="RPR"`.
 
 ### Scoring
 
@@ -379,6 +381,8 @@ OrderController.create --CALLS--> PaymentService.process --PRODUCES--> PaymentRe
 secuencia completa, las dimensiones únicas en orden de aparición y las
 relaciones únicas. `chunkId` incorpora el hash de nodos y relaciones, y `path`
 expone la trayectoria como metadata estructurada.
+`diagnostics.duplicateCount` indica cuantos caminos alternativos hacia el mismo
+`nodeId` se descartaron antes de aplicar `chunkLimit`.
 
 ### Configuración
 
@@ -403,8 +407,8 @@ Los parámetros son configurables por constructor; `--chunks` permite cambiar
 | Ninguna ancla tiene caminos salientes | Devuelve las anclas como chunks RPR |
 | Un camino volvería a un nodo ya incluido | Se descarta para evitar ciclos |
 | Se alcanzan 5000 candidatos | La enumeración termina sin warning |
-| Dos enumeraciones producen el mismo camino | Se conserva una por hash |
-| Dos caminos distintos terminan en el mismo nodo | Se conservan como evidencias distintas mediante `chunkId=RPR:<path-hash>` |
+| Dos enumeraciones producen el mismo camino | Se conserva el de mayor score para el nodo terminal |
+| Dos caminos distintos terminan en el mismo nodo | Se conserva el de mayor score y se incrementa `diagnostics.duplicateCount` |
 
 ### Fortalezas y costes
 
@@ -479,8 +483,9 @@ grandes; esas conclusiones pertenecen al benchmark, no a los tests unitarios.
   manifiestos exige igualdad exacta y el runner contrasta los parámetros
   efectivos devueltos por cada ejecución antes de aceptar el registro.
 - CLCR usa decaimiento por salto: 0.5 en la capa primaria y 0.7 en cascada.
-- RPR usa identidad de evidencia por hash de camino; el agregador deduplica por
-  `chunkId`, no por nodo terminal.
+- RPR deduplica por nodo terminal antes de `chunkLimit`, conserva el mejor
+  camino como `chunkId=RPR:<path-hash>` y reporta alternativas descartadas en
+  `diagnostics.duplicateCount`.
 - Agentic usa tool calls estructurados, máximo 3 iteraciones, 2 intentos por
   decisión y límite final estricto.
 - LanceDB optimiza con umbrales de escrituras, filas modificadas, fragmentos y

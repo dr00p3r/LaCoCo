@@ -9,6 +9,16 @@ import {
 
 describe("ground truth helpers", () => {
   const baseTask = loadManifests().tasks.tasks[0]!;
+  const pendingTask = {
+    ...baseTask,
+    gold: {
+      ...baseTask.gold,
+      status: "pending_manual_annotation",
+      relevant_nodes: [],
+      multihop_nodes: [],
+      annotation_notes: "",
+    },
+  };
 
   it("renders candidates and an editable annotation without promoting candidates", () => {
     const candidates: RetrievalCandidate[] = [{
@@ -21,7 +31,7 @@ describe("ground truth helpers", () => {
       filepath: "src/foo.ts",
       kind: "class",
     }];
-    const worksheet = renderGroundTruthWorksheet(baseTask, candidates);
+    const worksheet = renderGroundTruthWorksheet(pendingTask, candidates);
     expect(worksheet).toContain("src/foo.ts#Foo");
     expect(worksheet).toContain("No copiar automaticamente todos los nodos recuperados.");
     expect(worksheet).toContain('    - ""');
@@ -37,7 +47,7 @@ describe("ground truth helpers", () => {
   });
 
   it("reports pending gold and graph absence as a warning", () => {
-    const result = validateTaskGold(baseTask, null);
+    const result = validateTaskGold(pendingTask, null);
     expect(result.status).toBe("pending");
     expect(result.issues).toContainEqual(expect.objectContaining({
       level: "warning",

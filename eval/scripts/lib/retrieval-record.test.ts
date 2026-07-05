@@ -16,6 +16,7 @@ describe("parseRetrievalJson", () => {
           text: "class OrderService {}",
           filepath: "src/order.ts",
           kind: "class",
+          diagnostics: { duplicateCount: 3 },
         }],
       },
     }));
@@ -30,6 +31,7 @@ describe("parseRetrievalJson", () => {
         text: "class OrderService {}",
         filepath: "src/order.ts",
         kind: "class",
+        duplicate_count: 3,
       }],
       effectiveParameters: { anchorLimit: 20 },
       error: null,

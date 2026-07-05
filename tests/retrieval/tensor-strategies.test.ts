@@ -69,4 +69,41 @@ describe("estrategias tensoriales", () => {
     expect(chunks[0]!.text).toContain("relations:");
     expect(search).toHaveBeenCalledWith(expect.any(Float32Array), undefined, 10);
   });
+
+  it("RPR deduplica por nodo terminal antes de aplicar el limite", async () => {
+    db.insertNode({
+      id: "file4#SharedTarget",
+      kind: "TYPE",
+      name: "SharedTarget",
+      filepath: "/project/src/shared.ts",
+      signature: "type SharedTarget = string",
+      isDeprecated: 0,
+    });
+    db.insertEdge({
+      sourceId: "file1#CreateOrderDto",
+      targetId: "file4#SharedTarget",
+      relation: "PRODUCES",
+    });
+    db.insertEdge({
+      sourceId: "file3#Result",
+      targetId: "file4#SharedTarget",
+      relation: "CONSUMES_DATA",
+    });
+    db.populateMetadata();
+
+    const chunks = await new RprStrategy(db, lanceDb, {
+      anchorLimit: 10,
+      maxDepth: 3,
+      maxCandidates: 20,
+      chunkLimit: 5,
+    }).retrieve(makeQuery("no lexical match", ["CPG", "DTG"]));
+
+    expect(chunks.map(({ nodeId }) => nodeId)).toHaveLength(
+      new Set(chunks.map(({ nodeId }) => nodeId)).size,
+    );
+    const sharedTarget = chunks.find(({ nodeId }) => nodeId === "file4#SharedTarget");
+    expect(sharedTarget).toBeDefined();
+    expect(sharedTarget?.diagnostics?.duplicateCount).toBe(1);
+    expect(sharedTarget?.path?.nodes.at(-1)).toBe("file4#SharedTarget");
+  });
 });

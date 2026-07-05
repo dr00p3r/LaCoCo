@@ -65,7 +65,7 @@ read repos.yaml
 ```text
 lacoco init <repo_path>
 lacoco index_graph <tsconfig> --db <run>/indexes/<repo>/tensor.sqlite
-lacoco index_vectors --tsconfig <tsconfig> --lancedb <run>/indexes/<repo>/lancedb
+lacoco index_vectors <tsconfig> --lancedb <run>/indexes/<repo>/lancedb
 ```
 
 ### 3. Recuperacion
@@ -74,10 +74,17 @@ Para cada tarea y estrategia:
 
 ```text
 read task prompt + deterministic sanitizer fields
-  -> run LaCoCo retrieval
+  -> inject route=RAG, clean_query, embedding_input, intent and dimensions
+     when use_deterministic_sanitizer=true
+  -> run LaCoCo retrieval without invoking AgentIntermediary1
   -> save ranked nodes, scores, metadata, timings
   -> compute M3, M4, M5, M6 when gold is available
 ```
+
+El modo determinista vive en `eval/` y reutiliza el pipeline y el registro de
+estrategias de LaCoCo. Si `use_deterministic_sanitizer=false`, el runner usa el
+comando publico `retrieve` y evalua el pipeline completo con el intermediario
+local. `retrieval.jsonl.sanitizer_source` distingue ambos casos.
 
 ### 4. Generacion
 

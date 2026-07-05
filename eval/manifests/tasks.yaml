@@ -44,7 +44,7 @@ tasks:
       un helper que rechace cadenas vacias luego de aplicar trim, preservando el
       estilo de APIs existentes y mensajes de error coherentes.
     deterministic_input:
-      clean_query: "zod string trim nonempty validation helper error message"
+      clean_query: '"ZodString" OR "trim" OR "nonempty" OR "ZodStringCheck" OR "addIssueToContext"'
       embedding_input: "Implement helper for trimmed non-empty string validation in Zod v3"
       intent: "create"
       dimensions:
@@ -97,7 +97,7 @@ tasks:
       objeto no se mantiene correctamente al derivar variantes parciales del
       schema. Mantener compatibilidad con las pruebas existentes.
     deterministic_input:
-      clean_query: "zod object strict partial shape unknown keys behavior"
+      clean_query: '"ZodObject" OR "strict" OR "partial" OR "unknownKeys" OR "deepPartialify"'
       embedding_input: "Fix strict object behavior when deriving partial object schemas"
       intent: "debug"
       dimensions:

@@ -67,13 +67,23 @@ repositories:
       - "packages"
       - "src"
     tsconfig_candidates:
-      - "tsconfig.json"
-      - "packages/zod/tsconfig.json"
-      - "packages/zod/src/tsconfig.json"
+      - "tsconfig.lacoco-eval.json"
     language_scope:
       - "typescript"
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        module: "NodeNext"
+        moduleResolution: "NodeNext"
+        customConditions:
+          - "@zod/source"
+      include:
+        - "packages/zod/src/v3/**/*.ts"
+      exclude:
+        - "packages/zod/src/v3/tests/**"
+        - "packages/zod/src/v3/benchmarks/**"
     index_notes:
-      - "Preferir tsconfig del paquete evaluado si el tsconfig raiz arrastra demasiados paquetes auxiliares."
+      - "El tag v3.25.76 del monorepo contiene v3 y v4. El indice se enfoca en packages/zod/src/v3 (sin tests/benchmarks) porque las tareas evaluan zod v3; el tsconfig raiz arrastra v4 y contamina la recuperacion."
+      - "El harness genera tsconfig.lacoco-eval.json a partir de lacoco_tsconfig_overrides; no se depende de un tsconfig efimero del repo."
     tags:
       - "schema-validation"
       - "library"

@@ -11,6 +11,9 @@ export interface ContextChunk {
     relations: string[];
     dimensions: string[];
   };
+  diagnostics?: {
+    duplicateCount?: number;
+  };
 }
 
 export interface RecoveryStrategy {

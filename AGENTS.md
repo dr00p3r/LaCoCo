@@ -110,8 +110,10 @@ el límite final de chunks. No tiene fallback cuando Ollama falla.
 
 CLCR propaga score por salto: `child = parent * decay`, con `primaryDecay=0.5`
 y `cascadeDecay=0.7`; `lambda=0.25` solo controla el boost cross-layer. RPR
-identifica cada evidencia mediante `chunkId=RPR:<path-hash>` y conserva el
-camino estructurado, aunque varios caminos terminen en el mismo `nodeId`.
+identifica cada evidencia mediante `chunkId=RPR:<path-hash>` y conserva el mejor
+camino estructurado por `nodeId` terminal. Deduplica por `nodeId` antes de
+aplicar `chunkLimit` y expone en `diagnostics.duplicateCount` cuantos caminos
+alternativos fueron descartados.
 
 ## Comandos
 

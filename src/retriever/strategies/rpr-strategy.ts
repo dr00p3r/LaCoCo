@@ -10,7 +10,7 @@
  *   2. Subgrafo local vía BFS bidireccional (2 hops)
  *   3. Enumeración de caminos desde cada ancla (DFS, solo salientes, depth≤3)
  *   4. Scoring: avgNodeRelevance × uniqueDims
- *   5. Deduplicación por hash de camino, rank, top-K
+ *   5. Rank, deduplicación por nodo terminal conservando el mejor camino, top-K
  *   6. Chunks con trayectoria relacional completa como texto
  */
 
@@ -40,6 +40,11 @@ interface PathData {
 interface ScoredPath extends PathData {
   score: number;
   hash: string;
+}
+
+interface RankedPath {
+  path: ScoredPath;
+  duplicateCount: number;
 }
 
 export interface RprConfig {
@@ -106,22 +111,24 @@ export class RprStrategy extends AbstractAnchoredStrategy {
 
     const scored = this.#scorePaths(paths, nodeRelevance);
 
-    const seen = new Set<string>();
-    const ranked = scored
-      .sort((a, b) => b.score - a.score)
-      .filter((p) => {
-        if (seen.has(p.hash)) return false;
-        seen.add(p.hash);
-        return true;
-      })
-      .slice(0, this.config.chunkLimit);
+    const bestByNode = new Map<string, RankedPath>();
+    for (const path of scored.sort((a, b) => b.score - a.score)) {
+      const nodeId = path.nodes[path.nodes.length - 1]!;
+      const existing = bestByNode.get(nodeId);
+      if (existing) {
+        existing.duplicateCount++;
+      } else {
+        bestByNode.set(nodeId, { path, duplicateCount: 0 });
+      }
+    }
+    const ranked = Array.from(bestByNode.values()).slice(0, this.config.chunkLimit);
 
     const sigNodes = new Set<string>();
-    for (const p of ranked) for (const n of p.nodes) sigNodes.add(n);
+    for (const { path } of ranked) for (const n of path.nodes) sigNodes.add(n);
     const idArr = Array.from(sigNodes) as string[];
     const sigs = this.db.getNodeSignatures(idArr);
 
-    return ranked.map((p) => {
+    return ranked.map(({ path: p, duplicateCount }) => {
       const parts: string[] = [];
       for (let i = 0; i < p.nodes.length; i++) {
         const nid = p.nodes[i]!;
@@ -150,6 +157,7 @@ export class RprStrategy extends AbstractAnchoredStrategy {
           relations: [...p.relations],
           dimensions: [...p.dims],
         },
+        diagnostics: { duplicateCount },
       };
     });
   }

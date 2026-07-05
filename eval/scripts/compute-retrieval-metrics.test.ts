@@ -11,8 +11,8 @@ describe("computeRetrievalMetrics", () => {
     const record = {
       schema_version: 1,
       run_id: runId,
-      task_id: "zod-001",
-      repo_id: "zod",
+      task_id: "inversify-001",
+      repo_id: "inversify",
       strategy_id: "hybrid",
       lacoco_strategy: "hybrid",
       query: "query",
