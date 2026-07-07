@@ -1,8 +1,14 @@
-import type { ChatMessage, ChatOptions, LlmClient } from "../slms/llm-client.js";
+import type { ChatOptions, LlmClient } from "../slms/llm-client.js";
 import { SEMANTIC_DOMAINS, type DeterministicTerm, type EnrichedTerm, type SemanticAlias, type SemanticDomainScore } from "./types.js";
 
 export const SEMANTIC_ENRICHMENT_PROMPT_VERSION = 1;
-const BATCH_SIZE = 50;
+// Cada término enriquecido ocupa ~100-180 tokens (hasta 8 alias + dominios +
+// descripción de 240 chars). El contrato exige devolver el lote completo en una
+// sola respuesta, acotada por num_predict. Si la respuesta se trunca, el JSON
+// queda sin cerrar y falla el parseo. En qwen2.5-coder:1.5b un lote de 10 aún
+// rebasa 4096 tokens; con lote de 5 y presupuesto de 8192 hay holgura de sobra y
+// la verificación estricta de longitud se mantiene fiable.
+const BATCH_SIZE = 5;
 const MAX_ALIASES = 8;
 const ENRICHMENT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -54,7 +60,12 @@ const ENRICHMENT_SCHEMA: Record<string, unknown> = {
 };
 const OPTIONS: ChatOptions = {
   format: ENRICHMENT_SCHEMA,
-  options: { temperature: 0, seed: 42, num_predict: 4096 },
+  options: { temperature: 0, seed: 42, num_predict: 8192 },
+  // Sin razonamiento: un modelo con `thinking` (p. ej. gemma4) consume
+  // `num_predict` en su bloque de pensamiento y devuelve `content` vacío ("El
+  // enriquecedor no devolvió JSON"). El enriquecimiento es una tarea de formato,
+  // no de deliberación → desactivarlo preserva el presupuesto para el JSON.
+  think: false,
 };
 const SYSTEM_PROMPT = `Eres el enriquecedor semántico de LaCoCo.
 Recibirás evidencias determinísticas de un proyecto TypeScript/Node.js.
@@ -76,6 +87,27 @@ export class SemanticTermEnricher {
   }
 
   async #enrichBatch(terms: readonly DeterministicTerm[]): Promise<EnrichedTerm[]> {
+    // Primera pasada sobre el lote completo. Se recoge por id lo que el SLM haya
+    // enriquecido de forma válida, ignorando ids inventados o duplicados.
+    const byId = new Map<string, EnrichedTerm>();
+    this.#collectInto(byId, await this.#requestEnrichment(terms), terms);
+
+    // Con temperature 0 y seed fijo, reintentar el MISMO lote da la misma salida.
+    // Por eso la reparación pide SOLO los términos que faltan: una entrada más
+    // pequeña y distinta produce una decodificación fresca con mayor probabilidad
+    // de cumplir el contrato de completitud.
+    const missing = terms.filter((term) => !byId.has(term.id));
+    if (missing.length > 0) {
+      this.#collectInto(byId, await this.#requestEnrichment(missing), missing);
+    }
+
+    // Cualquier término que el SLM siga omitiendo recibe un enriquecimiento
+    // mínimo (sin alias/dominios) en lugar de abortar el perfil entero: el término
+    // sigue disponible para grounding por su forma canónica.
+    return terms.map((term) => byId.get(term.id) ?? minimalEnrichment(term));
+  }
+
+  async #requestEnrichment(terms: readonly DeterministicTerm[]): Promise<string> {
     const input = terms.map((term) => ({
       id: term.id,
       canonical_term: term.canonicalTerm,
@@ -84,120 +116,107 @@ export class SemanticTermEnricher {
       dimensions: term.dimensions,
       evidence: term.evidence,
     }));
-    const messages: ChatMessage[] = [
+    return this.llm.chat([
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: `Entrada:\n${JSON.stringify(input)}\nSalida:` },
-    ];
-    const first = await this.llm.chat(messages, OPTIONS);
-    try {
-      return this.#parse(first, terms);
-    } catch (error) {
-      const repaired = await this.llm.chat([
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `La respuesta anterior incumplió el contrato: ${formatError(error)}\n` +
-            `Entrada original:\n${JSON.stringify(input)}\n` +
-            `Respuesta inválida:\n${JSON.stringify(first)}\nDevuelve el lote completo corregido:`,
-        },
-      ], OPTIONS);
-      return this.#parse(repaired, terms);
-    }
+    ], OPTIONS);
   }
 
-  #parse(text: string, source: readonly DeterministicTerm[]): EnrichedTerm[] {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("El enriquecedor no devolvió JSON");
-    const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-    assertExactKeys(parsed, ["terms"], "respuesta del enriquecedor");
-    if (!Array.isArray(parsed.terms) || parsed.terms.length !== source.length) {
-      throw new Error("El enriquecedor debe devolver exactamente todos los términos del lote");
-    }
+  /** Vuelca en `target` los términos válidos de una respuesta; los ids ajenos o
+   * repetidos se ignoran (nunca lanza: la completitud la garantiza el fallback). */
+  #collectInto(
+    target: Map<string, EnrichedTerm>,
+    text: string,
+    source: readonly DeterministicTerm[],
+  ): void {
     const sourceById = new Map(source.map((term) => [term.id, term]));
-    const seen = new Set<string>();
-    return parsed.terms.map((value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error("Término enriquecido inválido");
-      }
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
+      return;
+    }
+    const rawTerms = (parsed as Record<string, unknown>)?.terms;
+    if (!Array.isArray(rawTerms)) return;
+    for (const value of rawTerms) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const record = value as Record<string, unknown>;
-      assertExactKeys(record, ["id", "aliases", "domains", "description", "confidence"], "término enriquecido");
-      if (typeof record.id !== "string" || !sourceById.has(record.id) || seen.has(record.id)) {
-        throw new Error(`ID enriquecido inesperado o duplicado: ${String(record.id)}`);
-      }
-      seen.add(record.id);
-      const aliases = parseAliases(record.aliases);
-      const domains = parseDomains(record.domains);
-      if (typeof record.description !== "string" || record.description.trim().length === 0 || record.description.length > 240) {
-        throw new Error(`Descripción inválida para ${record.id}`);
-      }
-      const confidence = parseConfidence(record.confidence, `confidence de ${record.id}`);
-      return {
-        ...sourceById.get(record.id)!,
-        aliases,
-        domains,
-        description: record.description.trim(),
-        confidence,
-      };
-    });
+      const origin = typeof record.id === "string" ? sourceById.get(record.id) : undefined;
+      if (!origin || target.has(origin.id)) continue;
+      target.set(origin.id, {
+        ...origin,
+        aliases: parseAliases(record.aliases),
+        domains: parseDomains(record.domains),
+        description: coerceDescription(record.description, origin.canonicalTerm),
+        confidence: coerceConfidence(record.confidence, 0.5),
+      });
+    }
   }
 }
 
+function minimalEnrichment(term: DeterministicTerm): EnrichedTerm {
+  return { ...term, aliases: [], domains: [], description: term.canonicalTerm, confidence: 0 };
+}
+
+// Los alias son vocabulario de búsqueda: cualquier entrada mal formada (valor
+// vacío, idioma o confianza inválidos, clave extra) se descarta sin abortar. Se
+// deduplica por valor normalizado y se recorta a MAX_ALIASES.
 function parseAliases(value: unknown): SemanticAlias[] {
-  if (!Array.isArray(value) || value.length > MAX_ALIASES) throw new Error("aliases inválidos");
+  if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  return value.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("alias inválido");
+  const aliases: SemanticAlias[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const record = entry as Record<string, unknown>;
-    assertExactKeys(record, ["value", "language", "confidence"], "alias");
-    if (typeof record.value !== "string" || record.value.trim().length === 0) throw new Error("alias vacío");
-    if (record.language !== "es" && record.language !== "en" && record.language !== "unknown") {
-      throw new Error("idioma de alias inválido");
-    }
+    if (typeof record.value !== "string" || record.value.trim().length === 0) continue;
+    if (record.language !== "es" && record.language !== "en" && record.language !== "unknown") continue;
+    const confidence = tryConfidence(record.confidence);
+    if (confidence === null) continue;
     const normalized = record.value.normalize("NFKC").toLocaleLowerCase("en-US").trim();
-    if (seen.has(normalized)) throw new Error(`alias duplicado: ${record.value}`);
+    if (seen.has(normalized)) continue;
     seen.add(normalized);
-    return {
-      value: record.value.trim(),
-      language: record.language,
-      confidence: parseConfidence(record.confidence, "confidence de alias"),
-    };
-  });
+    aliases.push({ value: record.value.trim(), language: record.language, confidence });
+    if (aliases.length >= MAX_ALIASES) break;
+  }
+  return aliases;
 }
 
+// Dominios no canónicos, con score inválido o duplicados se descartan; se recorta
+// a tres. Un término sin dominios válidos queda sin dominios (aceptable): el
+// grounding sigue funcionando por término canónico y aliases.
 function parseDomains(value: unknown): SemanticDomainScore[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 3) throw new Error("domains inválidos");
+  if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  return value.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("domain inválido");
+  const domains: SemanticDomainScore[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const record = entry as Record<string, unknown>;
-    assertExactKeys(record, ["name", "score"], "domain");
-    if (typeof record.name !== "string" || !SEMANTIC_DOMAINS.includes(record.name as (typeof SEMANTIC_DOMAINS)[number])) {
-      throw new Error(`domain no canónico: ${String(record.name)}`);
-    }
-    if (seen.has(record.name)) throw new Error(`domain duplicado: ${record.name}`);
+    if (typeof record.name !== "string" || !SEMANTIC_DOMAINS.includes(record.name as (typeof SEMANTIC_DOMAINS)[number])) continue;
+    const score = tryConfidence(record.score);
+    if (score === null) continue;
+    if (seen.has(record.name)) continue;
     seen.add(record.name);
-    return {
-      name: record.name as SemanticDomainScore["name"],
-      score: parseConfidence(record.score, "score de domain"),
-    };
-  });
-}
-
-function parseConfidence(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
-    throw new Error(`${label} inválido`);
+    domains.push({ name: record.name as SemanticDomainScore["name"], score });
+    if (domains.length >= 3) break;
   }
-  return value;
+  return domains;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** Confianza válida en [0,1] o `null` si el SLM la emitió mal formada. */
+function tryConfidence(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 }
 
-function assertExactKeys(record: Record<string, unknown>, allowed: readonly string[], label: string): void {
-  const actual = Object.keys(record).sort();
-  const expected = [...allowed].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
-    throw new Error(`${label} contiene propiedades inválidas`);
-  }
+/** Confianza válida o el `fallback` neutro cuando el SLM la emite mal formada. */
+function coerceConfidence(value: unknown, fallback: number): number {
+  return tryConfidence(value) ?? fallback;
+}
+
+/** Descripción recortada a 240 chars; usa `fallback` (término canónico) si viene vacía. */
+function coerceDescription(value: unknown, fallback: string): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  const base = text.length > 0 ? text : fallback;
+  return base.length > 240 ? base.slice(0, 240) : base;
 }

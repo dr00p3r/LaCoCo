@@ -17,6 +17,7 @@
     "eval:index": "node --import tsx eval/scripts/index-repos.ts",
     "eval:retrieve:deterministic": "node --import tsx eval/scripts/deterministic-retrieve.ts",
     "eval:retrieval": "node --import tsx eval/scripts/run-retrieval.ts",
+    "eval:grounding:profiles": "node --import tsx eval/scripts/build-grounding-profiles.ts",
     "eval:metrics:retrieval": "node --import tsx eval/scripts/compute-retrieval-metrics.ts",
     "eval:metrics:semantic-profile": "node --import tsx eval/scripts/compute-semantic-profile-metrics.ts",
     "eval:generation": "node --import tsx eval/scripts/run-generation.ts",

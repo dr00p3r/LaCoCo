@@ -43,6 +43,10 @@ const CLASSIFICATION_SCHEMA: Record<string, unknown> = {
 const CLASSIFICATION_OPTIONS: ChatOptions = {
   format: CLASSIFICATION_SCHEMA,
   options: { temperature: 0, seed: 42, num_predict: 256 },
+  // El presupuesto de 256 tokens es solo para el JSON. Un modelo con `thinking`
+  // (p. ej. gemma4, configurable vía intermediary.model) lo consumiría entero en
+  // su bloque de pensamiento y devolvería `content` vacío → clasificación fallida.
+  think: false,
 };
 const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 

@@ -28,6 +28,7 @@ import type {
 } from "../semantic-profile/types.js";
 import type { DetailedClassification } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { resolveConfig } from "./state/config-store.js";
+import { resolveIntermediaryModel } from "./config.js";
 import { writeTextFileAtomic } from "./state/json-store.js";
 import { inspectProject } from "./state/project-registry.js";
 import { resolveDbPath, resolveLanceDbPath } from "./storage-paths.js";
@@ -70,7 +71,7 @@ export interface RetrieveIntermediary {
 export interface RetrieveRuntime {
   createDatabase(dbPath: string): LaCoCoDatabase;
   createOllama(endpoint: string): LlmClient;
-  createIntermediary(ollama: LlmClient): RetrieveIntermediary;
+  createIntermediary(ollama: LlmClient, endpoint: string, timeoutMs: number): RetrieveIntermediary;
   createStrategy(
     strategyName: string,
     db: LaCoCoDatabase,
@@ -144,8 +145,15 @@ const defaultRetrieveRuntime: RetrieveRuntime = {
   createDatabase: (dbPath) => new LaCoCoDatabase(dbPath),
   createOllama: (endpoint) =>
     new OllamaService(endpoint, resolveStringConfig("agent.model"), resolveNumberConfig("timeout.ms")),
-  createIntermediary: (ollama) =>
-    new AgentIntermediary1(new SlmClassifier(ollama)),
+  // El clasificador puede usar un modelo distinto al de generación vía
+  // intermediary.model (vacío = hereda agent.model → reutiliza el mismo cliente).
+  createIntermediary: (ollama, endpoint, timeoutMs) => {
+    const model = resolveIntermediaryModel();
+    const client = model === resolveStringConfig("agent.model")
+      ? ollama
+      : new OllamaService(endpoint, model, timeoutMs);
+    return new AgentIntermediary1(new SlmClassifier(client));
+  },
   createStrategy: createRecoveryStrategy,
 };
 
@@ -350,7 +358,7 @@ async function retrieveContext(
     }
 
     stage = "intermediario";
-    const intermediary = runtime.createIntermediary(ollama);
+    const intermediary = runtime.createIntermediary(ollama, options.ollama, resolveNumberConfig("timeout.ms"));
     let detailed: DetailedClassification | undefined;
     let sanitized: SanitizerOutput;
     if (grounding) {
