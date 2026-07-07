@@ -11,7 +11,7 @@ import {
 } from "./lib/exec.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { readRepositoriesLock, type LockedRepository } from "./lib/repo-lock.js";
 import {
   applyEmbeddingEnv,
@@ -546,8 +546,9 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
     "--split",
     "--sanitizer-variant",
     "--use-slm",
+    "--manifests-dir",
   ]);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   assertRequestedIdsExist(options, manifests);
   const settings = readSettings(manifests.run, options.split);
   const layout = resolveEvalLayout(manifests.run, options.runId);

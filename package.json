@@ -13,6 +13,7 @@
     "start": "node dist/cli/index.js",
     "typecheck": "tsc --noEmit && tsc --project eval/tsconfig.json",
     "eval:check-manifests": "node --import tsx eval/scripts/lib/load-manifests.ts",
+    "eval:import:swe-polybench": "node --import tsx eval/scripts/import-swe-polybench.ts",
     "eval:prepare": "node --import tsx eval/scripts/prepare-repos.ts",
     "eval:index": "node --import tsx eval/scripts/index-repos.ts",
     "eval:retrieve:deterministic": "node --import tsx eval/scripts/deterministic-retrieve.ts",

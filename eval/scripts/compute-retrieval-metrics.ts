@@ -15,13 +15,14 @@ import {
   type GoldInput,
 } from "./lib/metrics.js";
 import { resolveNodeId } from "./lib/node-id.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { renderSummaryCsv, renderSummaryMarkdown } from "./lib/summary.js";
 
 interface MetricsCliOptions {
   runId?: string;
   runDir?: string;
   inputFile?: string;
+  manifestsDir?: string;
   strict?: boolean;
 }
 
@@ -29,6 +30,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   let runId: string | undefined;
   let runDir: string | undefined;
   let inputFile: string | undefined;
+  let manifestsDir: string | undefined;
   let strict = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -38,7 +40,12 @@ function parseOptions(argv: string[]): MetricsCliOptions {
       strict = true;
       continue;
     }
-    if (argument !== "--run-id" && argument !== "--run-dir" && argument !== "--input-file") {
+    if (
+      argument !== "--run-id" &&
+      argument !== "--run-dir" &&
+      argument !== "--input-file" &&
+      argument !== "--manifests-dir"
+    ) {
       throw new Error(`unknown argument: ${String(argument)}`);
     }
     const value = argv[index + 1];
@@ -47,6 +54,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
     }
     if (argument === "--run-id") runId = value;
     else if (argument === "--run-dir") runDir = value;
+    else if (argument === "--manifests-dir") manifestsDir = value;
     else inputFile = value;
     index += 1;
   }
@@ -56,7 +64,8 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   const base = runId === undefined ? { runDir: runDir!, strict } : { runId, strict };
   // --input-file (default retrieval.jsonl) permite medir sobre una variante
   // normalizada (p. ej. retrieval.normalized.jsonl) sin mutar el JSONL crudo.
-  return inputFile === undefined ? base : { ...base, inputFile };
+  const withInput = inputFile === undefined ? base : { ...base, inputFile };
+  return manifestsDir === undefined ? withInput : { ...withInput, manifestsDir };
 }
 
 function resolveRun(
@@ -112,7 +121,7 @@ export function detectAllZeroRetrieval(
 
 export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   const options = parseOptions(argv);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const run = resolveRun(options, manifests.run);
   const aggregation = asRecord(
     manifests.metrics.aggregation_policy,

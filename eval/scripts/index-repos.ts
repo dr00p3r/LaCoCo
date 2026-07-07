@@ -5,7 +5,7 @@ import { asBoolean, asNumber, asRecord, asString } from "./lib/config.js";
 import { CommandExecutionError, executeCommand, shellQuote } from "./lib/exec.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { readRepositoriesLock, type LockedRepository } from "./lib/repo-lock.js";
 import { resolveRepositoryTsconfig } from "./lib/tsconfig.js";
 import type { RepositoryDefinition } from "./lib/types.js";
@@ -200,8 +200,8 @@ async function indexRepository(
 }
 
 export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
-  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id", "--profile"]);
-  const manifests = loadManifests();
+  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id", "--profile", "--manifests-dir"]);
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const settings = readSettings(manifests.repos, manifests.run);
   // Perfil de embedding = fuente de verdad de run.yaml. Setear el env AQUÍ hace que
   // el subproceso `index_vectors` embeba con el modelo correcto sin que el operador

@@ -1,0 +1,294 @@
+manifest_version: 1
+kind: metrics
+updated_at: "2026-07-05"
+
+aggregation_policy:
+  primary_average: "macro_by_task_then_repo"
+  secondary_average: "micro_global"
+  report_confidence_intervals: true
+  bootstrap_iterations: 1000
+  missing_data_policy:
+    retrieval_without_gold: "exclude_from_m3_m6_and_report_as_pending"
+    generation_timeout: "count_as_fail_for_m1_and_report_timeout"
+    hallucination_unknown_symbol: "exclude_from_denominator_and_report_unknown"
+  ranking_cutoff_primary: 5
+  multihop_cutoff_primary: 20
+
+metrics:
+  - id: M1
+    name: "Pass@1 (regression)"
+    dimension: "Generacion"
+    stage: "generation"
+    what_it_measures: >-
+      Si el cambio generado por el agente restaura el repositorio a verde
+      partiendo de un broken_state canonico. Citable como M1_regression_pass@1.
+    formula: "passed_tasks / total_tasks"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    source: "automatic_tests"
+    numerator: "Numero de tareas con baseline_failing_tests vacio tras el agente y test_exit_code == 0."
+    denominator: "Numero de tareas ejecutadas para la combinacion repo x estrategia x agente."
+    pass_condition:
+      - "agent_exit_code == 0"
+      - "patch_applied == true"
+      - "test_exit_code == 0"
+      - "baseline_failing_tests vacio tras el agente"
+      - "no_manual_edit_after_agent == true"
+    sub_metrics:
+      - id: M1_regression_pass
+        name: "M1 regression pass (citable)"
+        definition: "baseline_failing_tests ⊆ tests_passing_post_agent ∧ test_exit_code == 0"
+        citable: true
+      - id: M1_grading_pass
+        name: "M1 grading pass"
+        definition: "Todos los grading_tests del task pasan tras el agente"
+      - id: M1_target_pass
+        name: "M1 target pass"
+        definition: "test_exit_code == 0 sobre el comando target_tests completo"
+      - id: M1_regression_introduced
+        name: "M1 regression introduced failures"
+        definition: "post_tests_failing − baseline_failing_tests (cuantos tests nuevos rompio el agente)"
+        better: "lower"
+    secondary_fields:
+      - "tests_passed"
+      - "tests_failed"
+      - "tests_total"
+      - "test_duration_ms"
+      - "timeout"
+      - "baseline_failing_tests"
+      - "post_failing_tests"
+      - "grading_tests_passed"
+      - "regression_introduced_failures"
+
+  - id: M2
+    name: "Hallucination Rate"
+    dimension: "Generacion"
+    stage: "hallucination_detection"
+    what_it_measures: >-
+      Proporcion de llamadas a metodos, funciones, clases o constructores que no
+      existen en el proyecto ni en la version instalada de las dependencias.
+    formula: "invalid_calls / analyzable_calls"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "lower"
+    source: "static_analysis_on_generated_diff"
+    numerator: "Llamadas invalidas detectadas en archivos modificados por el agente."
+    denominator: "Llamadas analizables en el diff generado."
+    unknown_policy: >-
+      Expresiones dinamicas, valores any, index access y simbolos no resolubles
+      se registran como unknown y no entran en el denominador principal.
+    detector_requirements:
+      - "Usar TypeScript Language Service o ts-morph sobre el repositorio con dependencias instaladas."
+      - "Analizar solo archivos modificados en patch.diff."
+      - "Resolver simbolos internos y node_modules."
+      - "Registrar falsos positivos revisables."
+    secondary_fields:
+      - "invalid_calls"
+      - "analyzable_calls"
+      - "unknown_calls"
+      - "invalid_symbols"
+      - "files_analyzed"
+
+  - id: M3
+    name: "Precision@5"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      De los primeros cinco nodos recuperados, cuantos pertenecen al conjunto de
+      nodos necesarios definido por ground truth.
+    formula: "|relevant_nodes ∩ retrieved_top_5| / 5"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    source: "manual_gold_or_crosscodeeval_style_gold"
+    denominator: 5
+    requires_gold: true
+    gold_fields:
+      - "tasks[].gold.relevant_nodes"
+    output_fields:
+      - "intersection_count"
+      - "retrieved_top_5"
+      - "relevant_nodes"
+
+  - id: M4
+    name: "Recall@5"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      De todos los nodos necesarios para resolver la tarea, cuantos aparecen en
+      los primeros cinco resultados recuperados.
+    formula: "|relevant_nodes ∩ retrieved_top_5| / |relevant_nodes|"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    source: "manual_gold_or_crosscodeeval_style_gold"
+    requires_gold: true
+    zero_denominator_policy: "invalid_task_gold"
+    gold_fields:
+      - "tasks[].gold.relevant_nodes"
+
+  - id: M5
+    name: "MRR"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      Que tan temprano aparece el primer nodo relevante en el ranking producido
+      por una estrategia.
+    formula: "mean(1 / first_relevant_rank)"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    source: "manual_gold_or_crosscodeeval_style_gold"
+    requires_gold: true
+    no_relevant_found_value: 0
+    rank_base: 1
+    gold_fields:
+      - "tasks[].gold.relevant_nodes"
+
+  - id: M6
+    name: "Multi-hop Dependency Recall"
+    dimension: "Cobertura"
+    stage: "retrieval"
+    what_it_measures: >-
+      De las dependencias relevantes a distancia mayor o igual a dos saltos en el
+      grafo, cuantas fueron recuperadas dentro del cutoff definido.
+    formula: "|gold_multihop_nodes ∩ retrieved_top_k| / |gold_multihop_nodes|"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    source: "manual_gold_20_tasks"
+    requires_gold: true
+    primary_k: 20
+    secondary_k:
+      - 5
+      - 50
+    gold_fields:
+      - "tasks[].gold.multihop_nodes"
+    hop_definition:
+      min_hops: 2
+      graph_dimensions:
+        - "SYS"
+        - "CPG"
+        - "DTG"
+    notes:
+      - "Esta metrica es central para diferenciar estrategias de grafo de recuperacion puramente lexica/vectorial."
+
+  - id: M7
+    name: "Latency P95"
+    dimension: "Eficiencia"
+    stage: "retrieval"
+    what_it_measures: >-
+      Tiempo de respuesta en el percentil 95 para cada combinacion repo x tarea
+      x estrategia sobre repeticiones controladas.
+    formula: "percentile(total_latency_ms, 95)"
+    unit: "milliseconds"
+    range:
+      min: 0
+      max: null
+    better: "lower"
+    source: "automatic_timing"
+    repetitions: 100
+    warmup_repetitions: 5
+    measured_segments:
+      - "sanitize_ms"
+      - "retrieval_ms"
+      - "aggregation_ms"
+      - "injection_ms"
+      - "total_ms"
+    timing_requirements:
+      - "Usar performance.now() o temporizador monotonic equivalente."
+      - "Excluir instalacion, indexacion y ejecucion del agente externo."
+      - "Reportar por separado cache cold y cache warm si se implementa."
+
+  - id: M8
+    name: "Grounding Candidate Recall@20"
+    dimension: "Traduccion"
+    stage: "grounding"
+    formula: "|relevant_terms intersect candidate_terms_top_20| / |relevant_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M9
+    name: "Translation Term Precision"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "|relevant_terms intersect clean_query_terms| / |clean_query_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M10
+    name: "Translation Term Recall"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "|relevant_terms intersect clean_query_terms| / |relevant_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M11
+    name: "Unsupported Term Rate"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "initial_unsupported_clauses / all_observed_clauses"
+    unit: "ratio"
+    better: "lower"
+    source: "grounding_diagnostics"
+
+  - id: M12
+    name: "Classifier Repair Count"
+    dimension: "Robustez"
+    stage: "sanitization"
+    formula: "mean(repair_count)"
+    unit: "count"
+    better: "lower"
+    source: "grounding_diagnostics"
+
+  - id: M13
+    name: "Grounding Latency"
+    dimension: "Eficiencia"
+    stage: "grounding"
+    formula: "mean(grounding_duration_ms)"
+    unit: "milliseconds"
+    better: "lower"
+    source: "automatic_timing"
+
+quality_gates:
+  official_run:
+    required_metrics:
+      - M1
+      - M2
+      - M3
+      - M4
+      - M5
+      - M6
+      - M7
+    min_ready_tasks: 20
+    fail_if_any_task_missing_gold_for_retrieval: true
+    fail_if_agent_not_available: true
+    fail_if_repo_baseline_tests_fail: true
+
+output_files:
+  retrieval_jsonl: "retrieval.jsonl"
+  generation_jsonl: "generation.jsonl"
+  hallucinations_jsonl: "hallucinations.jsonl"
+  summary_csv: "summary.csv"
+  summary_markdown: "summary.md"
+  thesis_tables_markdown: "tables-for-thesis.md"
+  semantic_profile_metrics_json: "semantic-profile-metrics.json"
+  semantic_profile_summary_csv: "semantic-profile-summary.csv"
+  semantic_profile_summary_markdown: "semantic-profile-summary.md"

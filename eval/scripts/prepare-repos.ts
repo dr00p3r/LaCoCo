@@ -16,7 +16,7 @@ import {
   type LockedRegressionTask,
 } from "./lib/repo-lock.js";
 import type { RepositoryDefinition, TaskDefinition } from "./lib/types.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 
 interface PrepareSettings {
   enabled: boolean;
@@ -335,8 +335,8 @@ async function runRegressionVerification(
 }
 
 export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> {
-  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id"]);
-  const manifests = loadManifests();
+  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id", "--manifests-dir"]);
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const settings = readSettings(manifests.repos, manifests.run);
   const repositories = options.repoId === undefined
     ? manifests.repos.repositories

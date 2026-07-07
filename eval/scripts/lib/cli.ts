@@ -11,6 +11,7 @@ export interface EvalCliOptions {
   agentId?: string | undefined;
   split?: string | undefined;
   sanitizerVariant?: string | undefined;
+  manifestsDir?: string | undefined;
   profile?: boolean | undefined;
   useSlm?: boolean | undefined;
   maxBudgetUsd?: number | undefined;
@@ -27,6 +28,7 @@ export type EvalCliFlag =
   | "--agent-id"
   | "--split"
   | "--sanitizer-variant"
+  | "--manifests-dir"
   | "--profile"
   | "--use-slm"
   | "--resume"
@@ -41,6 +43,7 @@ const VALUE_FLAGS = {
   "--agent-id": "agentId",
   "--split": "split",
   "--sanitizer-variant": "sanitizerVariant",
+  "--manifests-dir": "manifestsDir",
   "--max-budget-usd": "maxBudgetUsd",
 } as const;
 
