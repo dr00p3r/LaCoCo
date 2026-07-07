@@ -132,6 +132,15 @@ def main() -> int:
     ap.add_argument("--dataset", default=DEFAULT_DATASET)
     ap.add_argument("--out-dir", default="eval/data/swe-polybench")
     ap.add_argument("--no-stars", action="store_true", help="omitir consulta a GitHub API")
+    ap.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "escribir el cuerpo completo (problem_statement/patch/test_patch) en "
+            "instances.tsjs.full.jsonl para desbloquear el loader; sin este flag "
+            "solo se escriben las longitudes (instances.tsjs.jsonl)"
+        ),
+    )
     args = ap.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN")
@@ -162,6 +171,8 @@ def main() -> int:
     total_seen = 0
 
     inst_path = out_dir / "instances.tsjs.jsonl"
+    full_path = out_dir / "instances.tsjs.full.jsonl"
+    full_fh = full_path.open("w", encoding="utf-8") if args.full else None
     with inst_path.open("w", encoding="utf-8") as fh:
         for row in iter_rows(args.dataset, config, split):
             total_seen += 1
@@ -232,7 +243,21 @@ def main() -> int:
             fh.write(json.dumps(slim, ensure_ascii=False) + "\n")
             tsjs_written += 1
 
+            # --full: el registro completo con los cuerpos que el loader necesita
+            # (problem_statement = query de retrieval; patch/test_patch = gold + tests).
+            if full_fh is not None:
+                full = dict(slim)
+                full["problem_statement"] = pick(row, "problem_statement", default="") or ""
+                full["patch"] = patch if isinstance(patch, str) else ""
+                full["test_patch"] = pick(row, "test_patch", default="") or ""
+                full_fh.write(json.dumps(full, ensure_ascii=False) + "\n")
+
+    if full_fh is not None:
+        full_fh.close()
+
     print(f"[fetch] filas totales vistas: {total_seen}; TS/JS: {tsjs_written}; repos TS/JS: {len(per_repo)}", file=sys.stderr)
+    if args.full:
+        print(f"[fetch] --full: cuerpos completos escritos en {full_path}", file=sys.stderr)
 
     # C2: estrellas por repo (unicos, pocos).
     stars: dict[str, int | None] = {}
@@ -338,6 +363,8 @@ def main() -> int:
             f"{s['has_test_command']:6d}/{s['instances']:<3d} {s['has_modified_nodes']:d}/{s['instances']:d}"
         )
     print(f"\nescrito: {inst_path}")
+    if args.full:
+        print(f"escrito: {full_path}  (cuerpos completos — desbloquea el loader)")
     print(f"escrito: {out_dir/'repos.summary.json'}")
     print(f"escrito: {out_dir/'repos.whitelist.md'}")
     return 0

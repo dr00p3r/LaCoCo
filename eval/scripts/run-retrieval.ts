@@ -18,7 +18,7 @@ import {
   EMBEDDING_DIM,
   EMBEDDING_QUANTIZED,
 } from "../../src/embeddings/embedding-config.js";
-import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
+import { resolveIntermediaryModel, resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
 import { resolveDbPath } from "../../src/cli/storage-paths.js";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
@@ -268,9 +268,15 @@ async function freezeSlmQuery(
   variant: SanitizerVariant,
   repoPath: string,
 ): Promise<{ selection: QuerySelection; sanitizer: SanitizerOutput; grounding: QueryGrounding | null }> {
+  // El intermediario que congela el sanitizer honra `intermediary.model` (vacío =
+  // hereda agent.model), igual que la pipeline real (src/cli/pipeline.ts). Esto
+  // importa para el brazo `grounded`: `sanitizeDetailed` inyecta los candidatos del
+  // grounding y agranda el prompt; qwen2.5-coder:1.5b se atraganta con el JSON —
+  // un instruct 7B+ lo maneja. El grounder en sí es determinista, así que cambiar
+  // este modelo no altera qué términos recupera, solo si el SLM emite JSON válido.
   const ollama = new OllamaService(
     resolveStringConfig("agent.endpoint"),
-    resolveStringConfig("agent.model"),
+    resolveIntermediaryModel(),
     resolveNumberConfig("timeout.ms"),
   );
   let db: LaCoCoDatabase | undefined;
@@ -577,7 +583,7 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   console.log(`Selected tasks (${tasks.length}): ${tasks.map(({ id }) => id).join(", ")}`);
   console.log(`Selected strategies (${strategies.length}): ${strategies.map(({ id }) => id).join(", ")}`);
   console.log(`Sanitizer variants (${sanitizerVariants.length}): ${sanitizerVariants.join(", ")}`);
-  console.log(`SLM intermediary: ${options.useSlm === true ? `active and frozen once per task (${resolveStringConfig("agent.model")})` : "selected by sanitizer variant"}`);
+  console.log(`SLM intermediary: ${options.useSlm === true ? `active and frozen once per task (${resolveIntermediaryModel()})` : "selected by sanitizer variant"}`);
   console.log(`Combinations: ${tasks.length * strategies.length * sanitizerVariants.length}`);
   if (!settings.enabled) {
     console.log("Retrieval phase is disabled by run.yaml.");

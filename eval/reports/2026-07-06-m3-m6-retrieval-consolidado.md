@@ -137,3 +137,14 @@ Estado del piloto de retrieval: **M3–M6 cerrado y citable**. Próximos frentes
 este carril: (a) medición M7 formal con warmup/repeticiones para cuantificar el
 costo real de Jina, y (b) A/B de semantic-profile-grounding (`split
 semantic_profile_ab`, variantes `baseline` vs `grounded`).
+
+> **Actualización 2026-07-07.** El A/B de grounding (b) está cerrado para zod en
+> `2026-07-07-grounding-ab-zod.md`: el grounding recupera profundidad de ranking
+> (M5/MRR y M6/multihop) sin tocar la precisión temprana, a +~1.65 s. Además, dos
+> notas de validez sobre los números Jina de este consolidado: (1) fueron
+> calculados con el gold en rutas **absolutas** (era previa a la migración a rutas
+> relativas), por lo que son válidos tal como están publicados; (2) **recomputarlos
+> hoy** requiere el fix de `compute-retrieval-metrics.ts` que resuelve el gold
+> contra el `repoPath` del *lock del run* (árbol `repos-jina/`) en vez de
+> `paths.repos` — sin ese fix, el gold relativo se resuelve contra `repos/` y M3–M6
+> dan 0 en todas las celdas **sin error**.

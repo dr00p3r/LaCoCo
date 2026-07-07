@@ -3,8 +3,10 @@ import { writeFileSync } from "node:fs";
 import { isEntrypoint } from "./lib/cli.js";
 import { asNumber, asRecord } from "./lib/config.js";
 import { readJsonl } from "./lib/jsonl.js";
+import { existsSync } from "node:fs";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
+import { readRepositoriesLock } from "./lib/repo-lock.js";
 import {
   computeExecutionMetrics,
   groupByTask,
@@ -93,7 +95,20 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
     schemaVersions.retrieval,
     "run.yaml.jsonl_schema_versions.retrieval",
   );
-  const reposDirectory = resolveEvalLayout(manifests.run, run.runId).reposDirectory;
+  const layout = resolveEvalLayout(manifests.run, run.runId);
+  const reposDirectory = layout.reposDirectory;
+  // El gold es repo-relativo y debe resolverse contra el MISMO árbol donde corrió
+  // el retrieval. Ese árbol lo fija el lock del run (p. ej. repos-jina/ para los
+  // runs Jina), no `paths.repos`. Resolver contra `paths.repos` (repos/) cuando el
+  // run usó repos-jina/ produce un prefijo distinto → 0 matches en TODAS las celdas
+  // (regresión introducida al migrar el gold a rutas relativas). Fallback a
+  // `paths.repos` para runs cuyo lock no exista o no liste el repo.
+  const lockRepoPathById = new Map<string, string>();
+  if (existsSync(layout.lockFile)) {
+    for (const repository of readRepositoriesLock(layout.lockFile).repositories) {
+      lockRepoPathById.set(repository.id, repository.repoPath);
+    }
+  }
   const inputPath = join(run.runDirectory, options.inputFile ?? "retrieval.jsonl");
   const metricsPath = join(run.runDirectory, "retrieval-metrics.json");
   const csvPath = join(run.runDirectory, "summary.csv");
@@ -119,7 +134,7 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
         `${inputPath}:${line}: repo_id ${record.repoId} does not match task repo ${task.repo_id}`,
       );
     }
-    const repoPath = join(reposDirectory, task.repo_id);
+    const repoPath = lockRepoPathById.get(task.repo_id) ?? join(reposDirectory, task.repo_id);
     const gold: GoldInput = {
       status: task.gold.status,
       relevantNodes: task.gold.relevant_nodes.map((id) => resolveNodeId(id, repoPath)),
