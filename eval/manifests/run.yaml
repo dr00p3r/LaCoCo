@@ -14,8 +14,14 @@ paths:
   root: "eval"
   manifests: "eval/manifests"
   workdir: "eval/workdir"
-  repos: "eval/workdir/repos"
-  indexes: "eval/workdir/indexes"
+  # Árbol canónico = Jina (single-tree, Fase 3). `repos-jina/`+`indexes-jina/` es el
+  # ÚNICO árbol activo; `repos/`+`indexes/` (MiniLM, 384d) quedan como histórico/
+  # archivado (runs viejos no recomputables — sus métricas ya están congeladas y se
+  # resuelven contra el repoPath de su lock, no contra estos paths). Apuntar aquí al
+  # árbol Jina hace que eval:index construya en indexes-jina/ y vuelve estricto el
+  # assert de consistencia de embedding (Fase 2).
+  repos: "eval/workdir/repos-jina"
+  indexes: "eval/workdir/indexes-jina"
   runs: "eval/runs"
   artifacts: "eval/runs/{run_id}/artifacts"
   lock_file: "eval/runs/{run_id}/repos.lock.json"
