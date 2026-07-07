@@ -36,10 +36,10 @@ grande en paralelo. Ollama es el cuello serial: encola sus pasos.
 
 ### Orden concreto (con mi ayuda)
 
-1. **[5 min] Commitear lo pendiente.** Enricher/classifier/`intermediary.model` +
+1. [Realizado]**[5 min] Commitear lo pendiente.** Enricher/classifier/`intermediary.model` +
    los 2 traductores nuevos están validados (typecheck + tests verdes) pero **sin
    commitear**. Revisamos el diff y commiteamos antes de tocar nada.
-2. **[arranca temprano, es largo — Ollama] Perfiles rxjs + inversify** (para el A/B
+2. [Responde (Cómo puedo configurarlo para que tarde mucho menos, en la herramienta estaba pensando tener un tiempo menor a 10 minutos, incluso menor a 5? )]**[arranca temprano, es largo — Ollama] Perfiles rxjs + inversify** (para el A/B
    completo de 6 tareas): `npm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --model qwen2.5:7b-instruct`
    (~1–1.5 h c/u). ⚠ `inversify` puede chocar con M1 — avísame para coordinar.
    **Atajo:** el A/B **solo-zod** ya se puede correr (perfil listo) → señal rápida
