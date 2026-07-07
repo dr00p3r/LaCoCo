@@ -75,7 +75,7 @@ tasks:
           ```"
       oracle_input: null
       embedding_input: Static else block references should be nulled out
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -180,7 +180,7 @@ tasks:
           `.reverse()`, the issue doesn't happen."
       oracle_input: null
       embedding_input: Some combination of keyed blocks and binding breaks array looping
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -370,7 +370,7 @@ tasks:
       oracle_input: null
       embedding_input: Attribute name only (no value) CSS selector throws if html
         attribute has a value.
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -454,7 +454,7 @@ tasks:
           ```"
       oracle_input: null
       embedding_input: async keyword is removed
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -806,7 +806,7 @@ tasks:
           ```"
       oracle_input: null
       embedding_input: can't supply store to nested components server side
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -918,7 +918,7 @@ tasks:
           I've tried with depth of 3 and 4. Same behavior."
       oracle_input: null
       embedding_input: CSS - Class not applied to child elements
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -1028,7 +1028,7 @@ tasks:
           `.foo` should be preserved; it isn't."
       oracle_input: null
       embedding_input: Spread properties cause CSS to be DCE'd incorrectly
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -1161,7 +1161,7 @@ tasks:
       oracle_input: null
       embedding_input: Event handlers not deconflicted when one is binding inside each
         loop and one outside
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -1303,7 +1303,7 @@ tasks:
       oracle_input: null
       embedding_input: Assigning to a property of `this` in a function triggers
         invalidation of “undefined”
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG
@@ -1570,7 +1570,7 @@ tasks:
           4"
       oracle_input: null
       embedding_input: Shorthand methods in object literals disappear
-      intent: fix
+      intent: debug
       dimensions:
         - CPG
         - DTG

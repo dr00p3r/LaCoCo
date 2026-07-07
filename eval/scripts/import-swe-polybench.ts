@@ -158,7 +158,7 @@ function build(instances: SwePolyBenchInstance[]): BuildResult {
         retrieval_input: { query },
         oracle_input: null,
         embedding_input: firstLine === "" ? query : firstLine,
-        intent: "fix",
+        intent: "debug",
         dimensions: ["CPG", "DTG"],
       },
       expected_areas: areasFromFiles(translation.files),
