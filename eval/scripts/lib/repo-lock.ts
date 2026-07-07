@@ -2,6 +2,15 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { asRecord, asString } from "./config.js";
 
+export interface LockedRegressionTask {
+  id: string;
+  base_commit: string;
+  broken_patch: string;
+  grading_tests: string[];
+  baseline_failing_tests: string[];
+  regression_verified_at: string;
+}
+
 export interface LockedRepository {
   id: string;
   url: string;
@@ -10,6 +19,8 @@ export interface LockedRepository {
   repoPath: string;
   preparedAt: string;
   steps: Record<string, "passed" | "failed" | "skipped">;
+  reset_excludes?: string[];
+  regression_tasks?: LockedRegressionTask[];
 }
 
 export interface RepositoriesLock {
@@ -74,6 +85,42 @@ export function readRepositoriesLock(path: string): RepositoriesLock {
       }
       steps[name] = status;
     }
+    const resetExcludes = item.reset_excludes === undefined
+      ? undefined
+      : (() => {
+        const value = item.reset_excludes;
+        if (!Array.isArray(value)) {
+          throw new Error(`repos.lock.json.repositories[${index}].reset_excludes must be an array`);
+        }
+        return value.map((entry, i) => asString(entry, `repos.lock.json.repositories[${index}].reset_excludes[${i}]`));
+      })();
+    const regressionTasks = item.regression_tasks === undefined
+      ? undefined
+      : (() => {
+        const arr = item.regression_tasks;
+        if (!Array.isArray(arr)) {
+          throw new Error(`repos.lock.json.repositories[${index}].regression_tasks must be an array`);
+        }
+        return arr.map((entry, i) => {
+          const rec = asRecord(entry, `repos.lock.json.repositories[${index}].regression_tasks[${i}]`);
+          const baselineArr = rec.baseline_failing_tests;
+          if (!Array.isArray(baselineArr)) {
+            throw new Error(`repos.lock.json.repositories[${index}].regression_tasks[${i}].baseline_failing_tests must be an array`);
+          }
+          const gradingArr = rec.grading_tests;
+          if (!Array.isArray(gradingArr)) {
+            throw new Error(`repos.lock.json.repositories[${index}].regression_tasks[${i}].grading_tests must be an array`);
+          }
+          return {
+            id: asString(rec.id, `repos.lock.json.repositories[${index}].regression_tasks[${i}].id`),
+            base_commit: asString(rec.base_commit, `repos.lock.json.repositories[${index}].regression_tasks[${i}].base_commit`),
+            broken_patch: asString(rec.broken_patch, `repos.lock.json.repositories[${index}].regression_tasks[${i}].broken_patch`),
+            grading_tests: gradingArr.map((e, j) => asString(e, `repos.lock.json.repositories[${index}].regression_tasks[${i}].grading_tests[${j}]`)),
+            baseline_failing_tests: baselineArr.map((e, j) => asString(e, `repos.lock.json.repositories[${index}].regression_tasks[${i}].baseline_failing_tests[${j}]`)),
+            regression_verified_at: asString(rec.regression_verified_at, `repos.lock.json.repositories[${index}].regression_tasks[${i}].regression_verified_at`),
+          } satisfies LockedRegressionTask;
+        });
+      })();
     return {
       id: asString(item.id, `repos.lock.json.repositories[${index}].id`),
       url: asString(item.url, `repos.lock.json.repositories[${index}].url`),
@@ -82,6 +129,8 @@ export function readRepositoriesLock(path: string): RepositoriesLock {
       repoPath: asString(item.repoPath, `repos.lock.json.repositories[${index}].repoPath`),
       preparedAt: asString(item.preparedAt, `repos.lock.json.repositories[${index}].preparedAt`),
       steps,
+      ...(resetExcludes === undefined ? {} : { reset_excludes: resetExcludes }),
+      ...(regressionTasks === undefined ? {} : { regression_tasks: regressionTasks }),
     } satisfies LockedRepository;
   });
 

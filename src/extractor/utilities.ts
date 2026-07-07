@@ -11,6 +11,8 @@
  */
 
 import {
+  Node,
+  SyntaxKind,
   type Type,
   type ClassDeclaration,
   type FunctionDeclaration,
@@ -53,6 +55,77 @@ export function resolveTypeToId(type: Type): string | null {
   if (sourceFilePath.includes("node_modules/typescript")) return null;
 
   return `${sourceFilePath}#${symbol.getName()}`;
+}
+
+/** Resuelve aliases de import/export hasta el símbolo declarado originalmente. */
+export function resolveAliasedSymbol(symbol: MorphSymbol | undefined): MorphSymbol | undefined {
+  let current = symbol;
+  const visited = new Set<MorphSymbol>();
+  while (current?.isAlias() && !visited.has(current)) {
+    visited.add(current);
+    const aliased = current.getAliasedSymbol();
+    if (!aliased) break;
+    current = aliased;
+  }
+  return current;
+}
+
+/**
+ * Convierte una declaración extraída en el mismo ID canónico usado por sus
+ * extractores de nodo. Devuelve null para declaraciones sin nodo propio.
+ */
+export function resolveDeclarationToId(declaration: MorphNode): string | null {
+  const filePath = declaration.getSourceFile().getFilePath();
+
+  if (Node.isFunctionDeclaration(declaration)) {
+    const name = declaration.getName();
+    return name ? `${filePath}#${name}` : null;
+  }
+  if (Node.isClassDeclaration(declaration) || Node.isInterfaceDeclaration(declaration) ||
+      Node.isTypeAliasDeclaration(declaration) || Node.isEnumDeclaration(declaration)) {
+    const name = declaration.getName();
+    return name ? `${filePath}#${name}` : null;
+  }
+  if (Node.isVariableDeclaration(declaration)) {
+    return declaration.getVariableStatement()?.isExported()
+      ? `${filePath}#${declaration.getName()}`
+      : null;
+  }
+  if (Node.isMethodDeclaration(declaration)) {
+    const owner = declaration.getFirstAncestorByKind(SyntaxKind.ClassDeclaration);
+    const ownerName = owner?.getName();
+    if (ownerName) return `${filePath}#${ownerName}.${declaration.getName()}`;
+
+    const variable = declaration.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
+    return variable?.getVariableStatement()?.isExported()
+      ? `${filePath}#${variable.getName()}.${declaration.getName()}`
+      : null;
+  }
+  if (Node.isPropertyDeclaration(declaration)) {
+    const owner = declaration.getFirstAncestorByKind(SyntaxKind.ClassDeclaration)?.getName();
+    return owner ? `${filePath}#${owner}::${declaration.getName()}` : null;
+  }
+  if (Node.isGetAccessorDeclaration(declaration) || Node.isSetAccessorDeclaration(declaration)) {
+    const owner = declaration.getFirstAncestorByKind(SyntaxKind.ClassDeclaration)?.getName();
+    const prefix = Node.isGetAccessorDeclaration(declaration) ? "get" : "set";
+    return owner ? `${filePath}#${owner}::${prefix}:${declaration.getName()}` : null;
+  }
+  if (Node.isEnumMember(declaration)) {
+    const owner = declaration.getFirstAncestorByKind(SyntaxKind.EnumDeclaration)?.getName();
+    return owner ? `${filePath}#${owner}.${declaration.getName()}` : null;
+  }
+  return null;
+}
+
+/** Resuelve un símbolo, incluidos aliases importados, a un nodo canónico. */
+export function resolveSymbolToId(symbol: MorphSymbol | undefined): string | null {
+  const resolved = resolveAliasedSymbol(symbol);
+  if (!resolved) return null;
+  for (const declaration of resolved.getDeclarations()) {
+    const id = resolveDeclarationToId(declaration);
+    if (id) return id;
+  }
+  return null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────────

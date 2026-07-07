@@ -12,12 +12,6 @@ type ToolCall =
   | { name: "get_node_by_symbol"; params: { name: string } }
   | { name: "get_dependencies"; params: { package: string; version?: string } };
 
-type PlannerOutput =
-  | { action: "done" }
-  | { action: "get_neighbors"; node_id: string }
-  | { action: "get_node_by_symbol"; name: string }
-  | { action: "get_dependencies"; package: string; version?: string };
-
 export interface AgenticConfig {
   maxIterations: number;
   seedLimit: number;

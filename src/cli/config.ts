@@ -15,3 +15,11 @@ export function resolveNumberConfig(key: string): number {
   }
   return entry.value;
 }
+
+export function resolveBooleanConfig(key: string): boolean {
+  const entry = resolveConfig(key);
+  if (typeof entry.value !== "boolean") {
+    throw new Error(`La configuración ${key} debe ser boolean`);
+  }
+  return entry.value;
+}

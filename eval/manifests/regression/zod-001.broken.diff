@@ -1,0 +1,14 @@
+diff --git a/packages/zod/src/v3/types.ts b/packages/zod/src/v3/types.ts
+--- a/packages/zod/src/v3/types.ts
++++ b/packages/zod/src/v3/types.ts
+@@ -897,9 +897,7 @@
+             message: check.message,
+           });
+           status.dirty();
+         }
+-      } else if (check.kind === "trim") {
+-        input.data = input.data.trim();
+       } else if (check.kind === "includes") {
+         if (!(input.data as string).includes(check.value, check.position)) {
+           ctx = this._getOrReturnCtx(input, ctx);
+           addIssueToContext(ctx, {

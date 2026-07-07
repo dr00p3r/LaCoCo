@@ -20,6 +20,7 @@ interface IndexSettings {
   initTemplate: string;
   graphTemplate: string;
   vectorsTemplate: string;
+  profileTemplate: string;
 }
 
 function readSettings(reposManifest: Record<string, unknown>, runManifest: Record<string, unknown>): IndexSettings {
@@ -47,6 +48,10 @@ function readSettings(reposManifest: Record<string, unknown>, runManifest: Recor
     vectorsTemplate: asString(
       commands.index_vectors_template,
       "run.yaml.phases.index_repos.commands.index_vectors_template",
+    ),
+    profileTemplate: asString(
+      commands.profile_rebuild_template,
+      "run.yaml.phases.index_repos.commands.profile_rebuild_template",
     ),
   };
 }
@@ -101,6 +106,7 @@ async function indexRepository(
   indexesDirectory: string,
   logsDirectory: string,
   dryRun: boolean,
+  buildProfile: boolean,
 ): Promise<void> {
   const repoPath = locked.repoPath;
   const indexDirectory = join(indexesDirectory, repository.id);
@@ -167,10 +173,22 @@ async function indexRepository(
       dryRun,
     );
   }
+
+  if (buildProfile) {
+    const profileCommand = fillTemplate(settings.profileTemplate, { repo_path: repoPath });
+    await runStep(
+      repository.id,
+      "profile-rebuild",
+      profileCommand,
+      join(logsDirectory, "profile-rebuild.log"),
+      settings.timeoutMs,
+      dryRun,
+    );
+  }
 }
 
 export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
-  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id"]);
+  const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id", "--profile"]);
   const manifests = loadManifests();
   const settings = readSettings(manifests.repos, manifests.run);
   const repositories = options.repoId === undefined
@@ -233,6 +251,7 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
         layout.indexesDirectory,
         logsDirectory,
         options.dryRun,
+        options.profile ?? false,
       );
     } catch (error) {
       const message = `${repository.id}: ${error instanceof Error ? error.message : String(error)}`;

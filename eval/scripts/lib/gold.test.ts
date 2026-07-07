@@ -47,7 +47,7 @@ describe("ground truth helpers", () => {
   });
 
   it("reports pending gold and graph absence as a warning", () => {
-    const result = validateTaskGold(pendingTask, null);
+    const result = validateTaskGold(pendingTask, null, "/repo");
     expect(result.status).toBe("pending");
     expect(result.issues).toContainEqual(expect.objectContaining({
       level: "warning",
@@ -61,7 +61,7 @@ describe("ground truth helpers", () => {
       target_tests: [],
       gold: { ...baseTask.gold, status: "ready", relevant_nodes: [], multihop_nodes: [] },
     };
-    const result = validateTaskGold(task, null);
+    const result = validateTaskGold(task, null, "/repo");
     expect(result.status).toBe("invalid");
     expect(result.issues.map(({ code }) => code)).toContain("ready_without_relevant_nodes");
     expect(result.issues.map(({ code }) => code)).toContain("ready_without_target_tests");
@@ -78,7 +78,7 @@ describe("ground truth helpers", () => {
         multihop_nodes: ["node-b"],
       },
     };
-    expect(validateTaskGold(task, null).issues.map(({ code }) => code))
+    expect(validateTaskGold(task, null, "/repo").issues.map(({ code }) => code))
       .toContain("multihop_not_relevant");
   });
 
@@ -92,7 +92,7 @@ describe("ground truth helpers", () => {
         multihop_nodes: [""],
       },
     };
-    const result = validateTaskGold(task, null);
+    const result = validateTaskGold(task, null, "/repo");
     expect(result.status).toBe("invalid");
     expect(result.issues.filter(({ code }) => code === "empty_string")).toHaveLength(3);
   });

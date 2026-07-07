@@ -32,6 +32,7 @@ yarn-debug.log*
 tmp/
 eval/workdir/
 eval/runs/
+eval/data/
 
 # Ignorar todos los archivos .sqlite exclusivamente en la raíz
 /*.sqlite

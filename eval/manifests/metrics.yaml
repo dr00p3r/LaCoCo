@@ -1,6 +1,6 @@
 manifest_version: 1
 kind: metrics
-updated_at: "2026-06-28"
+updated_at: "2026-07-05"
 
 aggregation_policy:
   primary_average: "macro_by_task_then_repo"
@@ -16,12 +16,12 @@ aggregation_policy:
 
 metrics:
   - id: M1
-    name: "Pass@1"
+    name: "Pass@1 (regression)"
     dimension: "Generacion"
     stage: "generation"
     what_it_measures: >-
-      Si el cambio generado por el agente para una tarea pasa la suite de pruebas
-      definida sin intervencion manual posterior.
+      Si el cambio generado por el agente restaura el repositorio a verde
+      partiendo de un broken_state canonico. Citable como M1_regression_pass@1.
     formula: "passed_tasks / total_tasks"
     unit: "ratio"
     range:
@@ -29,19 +29,39 @@ metrics:
       max: 1
     better: "higher"
     source: "automatic_tests"
-    numerator: "Numero de tareas con patch aplicado y target_tests exitosos."
+    numerator: "Numero de tareas con baseline_failing_tests vacio tras el agente y test_exit_code == 0."
     denominator: "Numero de tareas ejecutadas para la combinacion repo x estrategia x agente."
     pass_condition:
       - "agent_exit_code == 0"
       - "patch_applied == true"
       - "test_exit_code == 0"
+      - "baseline_failing_tests vacio tras el agente"
       - "no_manual_edit_after_agent == true"
+    sub_metrics:
+      - id: M1_regression_pass
+        name: "M1 regression pass (citable)"
+        definition: "baseline_failing_tests ⊆ tests_passing_post_agent ∧ test_exit_code == 0"
+        citable: true
+      - id: M1_grading_pass
+        name: "M1 grading pass"
+        definition: "Todos los grading_tests del task pasan tras el agente"
+      - id: M1_target_pass
+        name: "M1 target pass"
+        definition: "test_exit_code == 0 sobre el comando target_tests completo"
+      - id: M1_regression_introduced
+        name: "M1 regression introduced failures"
+        definition: "post_tests_failing − baseline_failing_tests (cuantos tests nuevos rompio el agente)"
+        better: "lower"
     secondary_fields:
       - "tests_passed"
       - "tests_failed"
       - "tests_total"
       - "test_duration_ms"
       - "timeout"
+      - "baseline_failing_tests"
+      - "post_failing_tests"
+      - "grading_tests_passed"
+      - "regression_introduced_failures"
 
   - id: M2
     name: "Hallucination Rate"
@@ -193,6 +213,60 @@ metrics:
       - "Excluir instalacion, indexacion y ejecucion del agente externo."
       - "Reportar por separado cache cold y cache warm si se implementa."
 
+  - id: M8
+    name: "Grounding Candidate Recall@20"
+    dimension: "Traduccion"
+    stage: "grounding"
+    formula: "|relevant_terms intersect candidate_terms_top_20| / |relevant_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M9
+    name: "Translation Term Precision"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "|relevant_terms intersect clean_query_terms| / |clean_query_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M10
+    name: "Translation Term Recall"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "|relevant_terms intersect clean_query_terms| / |relevant_terms|"
+    unit: "ratio"
+    better: "higher"
+    source: "manual_translation_gold"
+
+  - id: M11
+    name: "Unsupported Term Rate"
+    dimension: "Traduccion"
+    stage: "sanitization"
+    formula: "initial_unsupported_clauses / all_observed_clauses"
+    unit: "ratio"
+    better: "lower"
+    source: "grounding_diagnostics"
+
+  - id: M12
+    name: "Classifier Repair Count"
+    dimension: "Robustez"
+    stage: "sanitization"
+    formula: "mean(repair_count)"
+    unit: "count"
+    better: "lower"
+    source: "grounding_diagnostics"
+
+  - id: M13
+    name: "Grounding Latency"
+    dimension: "Eficiencia"
+    stage: "grounding"
+    formula: "mean(grounding_duration_ms)"
+    unit: "milliseconds"
+    better: "lower"
+    source: "automatic_timing"
+
 quality_gates:
   official_run:
     required_metrics:
@@ -215,3 +289,6 @@ output_files:
   summary_csv: "summary.csv"
   summary_markdown: "summary.md"
   thesis_tables_markdown: "tables-for-thesis.md"
+  semantic_profile_metrics_json: "semantic-profile-metrics.json"
+  semantic_profile_summary_csv: "semantic-profile-summary.csv"
+  semantic_profile_summary_markdown: "semantic-profile-summary.md"

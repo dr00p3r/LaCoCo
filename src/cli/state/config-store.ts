@@ -82,6 +82,11 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "watcher.debounceMs debe ser un entero mayor o igual a cero",
   },
+  "profile.groundingEnabled": {
+    type: "boolean",
+    defaultValue: false,
+    env: "LACOCO_PROFILE_GROUNDING",
+  },
   "paths.data": {
     type: "string",
     defaultValue: ".lacoco",

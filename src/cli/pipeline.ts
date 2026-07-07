@@ -20,6 +20,13 @@ import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
 import type { SanitizerOutput } from "../retriever/models/utilities/types.js";
 import type { LlmClient } from "../slms/llm-client.js";
 import { OllamaService } from "../slms/ollama-service.js";
+import { SemanticProfileStore } from "../semantic-profile/semantic-profile-store.js";
+import { QueryGrounder } from "../semantic-profile/query-grounder.js";
+import type {
+  GroundingDiagnostics,
+  QueryGrounding,
+} from "../semantic-profile/types.js";
+import type { DetailedClassification } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { resolveConfig } from "./state/config-store.js";
 import { writeTextFileAtomic } from "./state/json-store.js";
 import { inspectProject } from "./state/project-registry.js";
@@ -34,6 +41,7 @@ export interface RetrieveCliOptions {
   json?: boolean;
   chunks?: number;
   maxTokens?: number;
+  grounding?: boolean;
 }
 
 export interface ContextExportCliOptions extends Omit<RetrieveCliOptions, "json">, JsonOption {
@@ -46,6 +54,7 @@ type ResolvedRetrieveCliOptions = RetrieveCliOptions & {
   strategy: string;
   ollama: string;
   maxTokens: number;
+  grounding: boolean;
 };
 
 export interface CliStreams {
@@ -54,7 +63,8 @@ export interface CliStreams {
 }
 
 export interface RetrieveIntermediary {
-  sanitize(prompt: string): Promise<SanitizerOutput>;
+  sanitize(prompt: string, grounding?: QueryGrounding): Promise<SanitizerOutput>;
+  sanitizeDetailed?(prompt: string, grounding?: QueryGrounding): Promise<DetailedClassification>;
 }
 
 export interface RetrieveRuntime {
@@ -85,12 +95,13 @@ interface RetrievedContext {
     maxTokens: number;
   };
   sanitized: SanitizerOutput;
+  grounding: GroundingDiagnostics;
   chunks: ReturnType<ContextAggregator["aggregate"]>;
   enrichedPrompt: string;
 }
 
 export interface RetrieveJsonSuccess {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: true;
   contextId: string;
   generatedAt: string;
@@ -104,6 +115,7 @@ export interface RetrieveJsonSuccess {
     cleanQuery: string;
     embeddingInput: string;
   };
+  grounding: GroundingDiagnostics;
   retrieval: {
     chunkCount: number;
     chunks: RetrievedContext["chunks"];
@@ -118,7 +130,7 @@ export interface RetrieveJsonSuccess {
 }
 
 export interface RetrieveJsonFailure {
-  schemaVersion: 1;
+  schemaVersion: 2;
   ok: false;
   error: {
     stage: string;
@@ -182,7 +194,7 @@ function createRetrieveJsonSuccess(
   context: RetrievedContext,
 ): RetrieveJsonSuccess {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: true,
     contextId: context.id,
     generatedAt: context.generatedAt,
@@ -196,6 +208,7 @@ function createRetrieveJsonSuccess(
       cleanQuery: context.sanitized.clean_query,
       embeddingInput: context.sanitized.embedding_input,
     },
+    grounding: context.grounding,
     retrieval: {
       chunkCount: context.chunks.length,
       chunks: context.chunks,
@@ -212,7 +225,7 @@ function createRetrieveJsonSuccess(
 
 function createRetrieveJsonFailure(stage: string, message: string): RetrieveJsonFailure {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     ok: false,
     error: { stage, message },
   };
@@ -275,6 +288,7 @@ function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): 
     strategy: entry.name,
     ollama: options.ollama ?? resolveStringConfig("agent.endpoint"),
     maxTokens,
+    grounding: options.grounding ?? resolveBooleanConfig("profile.groundingEnabled"),
   };
 }
 
@@ -329,9 +343,26 @@ async function retrieveContext(
     db = runtime.createDatabase(options.db);
     ollama = runtime.createOllama(options.ollama);
 
+    let grounding: QueryGrounding | undefined;
+    if (options.grounding) {
+      stage = "query grounding";
+      grounding = new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(query);
+    }
+
     stage = "intermediario";
     const intermediary = runtime.createIntermediary(ollama);
-    const sanitized = await intermediary.sanitize(query);
+    let detailed: DetailedClassification | undefined;
+    let sanitized: SanitizerOutput;
+    if (grounding) {
+      if (!intermediary.sanitizeDetailed) {
+        throw new Error("El intermediario configurado no soporta grounding detallado");
+      }
+      detailed = await intermediary.sanitizeDetailed(query, grounding);
+      sanitized = detailed.output;
+    } else {
+      sanitized = await intermediary.sanitize(query);
+    }
+    const groundingDiagnostics = createGroundingDiagnostics(grounding, detailed);
 
     verbose(
       `[CLI] intermediario: route=${sanitized.route} intent=${sanitized.intent} ` +
@@ -339,7 +370,14 @@ async function retrieveContext(
     );
 
     if (sanitized.route === "LLM_DIRECT") {
-      return createRetrievedContext(query, options, sanitized, [], sanitized.embedding_input || query);
+      return createRetrievedContext(
+        query,
+        options,
+        sanitized,
+        groundingDiagnostics,
+        [],
+        sanitized.embedding_input || query,
+      );
     }
 
     stage = "selección de estrategia";
@@ -364,7 +402,14 @@ async function retrieveContext(
 
     const injector = new PromptInjector();
     const enrichedPrompt = injector.inject(query, aggregated);
-    return createRetrievedContext(query, options, sanitized, aggregated, enrichedPrompt);
+    return createRetrievedContext(
+      query,
+      options,
+      sanitized,
+      groundingDiagnostics,
+      aggregated,
+      enrichedPrompt,
+    );
   } catch (err) {
     throw new PipelineStageError(stage, err);
   } finally {
@@ -390,6 +435,7 @@ function createRetrievedContext(
   originalQuery: string,
   options: ResolvedRetrieveCliOptions,
   sanitized: SanitizerOutput,
+  grounding: GroundingDiagnostics,
   chunks: RetrievedContext["chunks"],
   enrichedPrompt: string,
 ): RetrievedContext {
@@ -409,6 +455,7 @@ function createRetrievedContext(
       maxTokens: options.maxTokens,
     },
     sanitized,
+    grounding,
     chunks,
     enrichedPrompt,
   };
@@ -463,6 +510,8 @@ ${context.originalQuery}
 | Dimensions | ${context.sanitized.dimensions.length > 0 ? context.sanitized.dimensions.map((dim) => `\`${dim}\``).join(", ") : "-"} |
 | Strategy parameters | \`${JSON.stringify(context.options.strategyParameters)}\` |
 | Max tokens | \`${context.options.maxTokens}\` |
+| Grounding | \`${context.grounding.enabled}\` |
+| Semantic profile build | ${context.grounding.profileBuildId ? `\`${context.grounding.profileBuildId}\`` : "-"} |
 | SQLite | \`${context.options.db}\` |
 | LanceDB | \`${context.options.lancedb}\` |
 
@@ -490,6 +539,42 @@ function createContextId(query: string): string {
     .update(query.trim().replace(/\s+/g, " "))
     .digest("hex")
     .slice(0, 16);
+}
+
+function createGroundingDiagnostics(
+  grounding: QueryGrounding | undefined,
+  detailed: DetailedClassification | undefined,
+): GroundingDiagnostics {
+  if (!grounding) {
+    return {
+      enabled: false,
+      profileBuildId: null,
+      candidates: [],
+      domains: [],
+      usedTermIds: [],
+      initialUnsupportedClauses: [],
+      repairCount: 0,
+      durationMs: null,
+    };
+  }
+  return {
+    enabled: true,
+    profileBuildId: grounding.profileBuildId,
+    candidates: grounding.candidates,
+    domains: grounding.domains,
+    usedTermIds: detailed?.usedTermIds ?? [],
+    initialUnsupportedClauses: detailed?.initialUnsupportedClauses ?? [],
+    repairCount: detailed?.repairCount ?? 0,
+    durationMs: grounding.durationMs,
+  };
+}
+
+function resolveBooleanConfig(key: string): boolean {
+  const entry = resolveConfig(key);
+  if (typeof entry.value !== "boolean") {
+    throw new Error(`La configuración ${key} debe ser boolean`);
+  }
+  return entry.value;
 }
 
 function yamlString(value: string): string {

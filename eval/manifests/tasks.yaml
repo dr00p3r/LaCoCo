@@ -6,6 +6,8 @@ annotation_policy:
   gold_source: "manual"
   do_not_invent_gold: true
   ready_status_required_for_m3_m6: true
+  translation_gold_source: "manual"
+  do_not_promote_grounding_candidates_to_gold: true
   node_id_format: "<filepath>#<symbol_or_node_name>"
   multihop_definition: "relevant node with shortest graph distance >= 2 from the primary anchor"
   annotation_steps:
@@ -44,7 +46,10 @@ tasks:
       un helper que rechace cadenas vacias luego de aplicar trim, preservando el
       estilo de APIs existentes y mensajes de error coherentes.
     deterministic_input:
-      clean_query: '"ZodString" OR "trim" OR "nonempty" OR "ZodStringCheck" OR "addIssueToContext"'
+      retrieval_input:
+        query: "reject empty string after trim helper preserve existing validation error style"
+      oracle_input:
+        query: '"ZodString" OR "trim" OR "nonempty" OR "ZodStringCheck" OR "addIssueToContext"'
       embedding_input: "Implement helper for trimmed non-empty string validation in Zod v3"
       intent: "create"
       dimensions:
@@ -58,30 +63,38 @@ tasks:
       - "pnpm vitest run packages/zod/src/v3/tests/string.test.ts"
     gold:
       status: "ready"
+      primary_anchor: "packages/zod/src/v3/types.ts#ZodString"
       relevant_nodes:
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.nonempty"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.trim"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString.min"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._addCheck"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._parse"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodStringCheck"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodStringDef"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/ZodError.ts#ZodIssueCode"
+        - "packages/zod/src/v3/types.ts#ZodString"
+        - "packages/zod/src/v3/types.ts#ZodString.nonempty"
+        - "packages/zod/src/v3/types.ts#ZodString.trim"
+        - "packages/zod/src/v3/types.ts#ZodString.min"
+        - "packages/zod/src/v3/types.ts#ZodString._addCheck"
+        - "packages/zod/src/v3/types.ts#ZodString._parse"
+        - "packages/zod/src/v3/types.ts#ZodStringCheck"
+        - "packages/zod/src/v3/types.ts#ZodStringDef"
+        - "packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/ZodError.ts#ZodIssueCode"
       multihop_nodes:
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodString._parse"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/types.ts#ZodStringCheck"
+        - "packages/zod/src/v3/types.ts#ZodStringDef"
+        - "packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/ZodError.ts#ZodIssueCode"
       annotation_notes: >-
         Gold anotado contra el grafo indexado de zod v3.25.76 (commit 7baee4e17,
         run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
         Anchor primario: ZodString. La API existente a imitar es nonempty() (= .min(1));
         trim() agrega el check "trim" y _addCheck lo anexa de forma inmutable; _parse
         aplica los checks (trim muta input.data y min emite too_small via addIssueToContext).
-        multihop_nodes verificados a distancia BFS >=2 del anchor en el grafo LaCoCo:
-        ZodString._parse (d=4) y parseUtil#addIssueToContext (d=4).
-        ZodStringCheck/ZodStringDef/ZodIssueCode son relevantes pero quedan desconectados
-        en el grafo (por eso no se marcan multihop). target_tests verificado verde (110 tests).
+        Tras corregir aliases, miembros y referencias del extractor, _parse es vecino
+        directo (d=1). multihop_nodes verificados a distancia BFS >=2: ZodStringCheck
+        (d=7), ZodStringDef (d=6), parseUtil#addIssueToContext (d=2) y ZodIssueCode
+        (d=5). target_tests verificado verde (110 tests).
+    regression:
+      base_commit: "7baee4e17f86f4017e09e12b0acdee36a5b1c087"
+      broken_patch: "regression/zod-001.broken.diff"
+      grading_tests:
+        - "trim"
     tags:
       - "pilot"
       - "string"
@@ -97,7 +110,10 @@ tasks:
       objeto no se mantiene correctamente al derivar variantes parciales del
       schema. Mantener compatibilidad con las pruebas existentes.
     deterministic_input:
-      clean_query: '"ZodObject" OR "strict" OR "partial" OR "unknownKeys" OR "deepPartialify"'
+      retrieval_input:
+        query: "strict object rejecting unknown properties not preserved when deriving partial schema"
+      oracle_input:
+        query: '"ZodObject" OR "strict" OR "partial" OR "unknownKeys" OR "deepPartialify"'
       embedding_input: "Fix strict object behavior when deriving partial object schemas"
       intent: "debug"
       dimensions:
@@ -112,21 +128,24 @@ tasks:
       - "pnpm vitest run packages/zod/src/v3/tests/object.test.ts"
     gold:
       status: "ready"
+      primary_anchor: "packages/zod/src/v3/types.ts#ZodObject"
       relevant_nodes:
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.partial"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.deepPartial"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#deepPartialify"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.required"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject.strict"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject._parse"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObjectDef"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#UnknownKeysParam"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/ZodError.ts#ZodIssueCode"
+        - "packages/zod/src/v3/types.ts#ZodObject"
+        - "packages/zod/src/v3/types.ts#ZodObject.partial"
+        - "packages/zod/src/v3/types.ts#ZodObject.deepPartial"
+        - "packages/zod/src/v3/types.ts#deepPartialify"
+        - "packages/zod/src/v3/types.ts#ZodObject.required"
+        - "packages/zod/src/v3/types.ts#ZodObject.strict"
+        - "packages/zod/src/v3/types.ts#ZodObject._parse"
+        - "packages/zod/src/v3/types.ts#ZodObjectDef"
+        - "packages/zod/src/v3/types.ts#UnknownKeysParam"
+        - "packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/ZodError.ts#ZodIssueCode"
       multihop_nodes:
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/types.ts#ZodObject._parse"
-        - "/home/dr00p3r/Projects/LaCoCo/eval/workdir/repos/zod/packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/types.ts#ZodObjectDef"
+        - "packages/zod/src/v3/types.ts#UnknownKeysParam"
+        - "packages/zod/src/v3/helpers/parseUtil.ts#addIssueToContext"
+        - "packages/zod/src/v3/ZodError.ts#ZodIssueCode"
       annotation_notes: >-
         Gold anotado contra el grafo indexado de zod v3.25.76 (commit 7baee4e17,
         run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
@@ -134,11 +153,18 @@ tasks:
         (metodo strict()) y se aplica en _parse (rama unknownKeys==="strict" que emite
         ZodIssueCode.unrecognized_keys via addIssueToContext). partial()/required() hacen
         new ZodObject({...this._def, shape}) preservando unknownKeys; deepPartial() delega
-        en la funcion deepPartialify (locus del bug si no propaga _def). multihop_nodes a
-        distancia BFS >=2 del anchor en el grafo LaCoCo: ZodObject._parse (d=4) y
-        parseUtil#addIssueToContext (d=4). ZodObjectDef/UnknownKeysParam/ZodObject.deepPartial/
-        ZodIssueCode quedan desconectados en el grafo (relevantes pero no multihop).
+        en la funcion deepPartialify (locus del bug si no propaga _def). Tras corregir el
+        extractor, _parse y deepPartial son vecinos directos (d=1). multihop_nodes a
+        distancia BFS >=2: ZodObjectDef (d=4), UnknownKeysParam (d=2),
+        parseUtil#addIssueToContext (d=2) y ZodIssueCode (d=3).
         target_tests (partials.test.ts + object.test.ts) verificados verdes (104 tests).
+    regression:
+      base_commit: "7baee4e17f86f4017e09e12b0acdee36a5b1c087"
+      broken_patch: "regression/zod-002.broken.diff"
+      grading_tests:
+        - "strict"
+        - "strictcreate"
+        - "constructor key"
     tags:
       - "pilot"
       - "object"
@@ -154,7 +180,9 @@ tasks:
       invalido produzca un error temprano y consistente, sin romper los casos de
       simbolos, clases y strings ya soportados.
     deterministic_input:
-      clean_query: "inversify service identifier binding validation symbol class string"
+      retrieval_input:
+        query: "inversify validate service identifier so an invalid binding fails early with a consistent error for symbol class and string"
+      oracle_input: null
       embedding_input: "Fix ServiceIdentifier validation in Inversify binding resolution"
       intent: "debug"
       dimensions:
@@ -164,15 +192,57 @@ tasks:
       - "binding API"
       - "service identifiers"
       - "container resolution"
-    target_tests: []
+    target_tests:
+      - "pnpm --filter @inversifyjs/container exec jest --config=jest.config.mjs --runInBand src/binding/models/BindingFluentSyntaxImplementation.spec.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Localizar tipos ServiceIdentifier, metodos bind/get y errores de binding."
+      status: "ready"
+      primary_anchor: "packages/container/libraries/container/src/container/services/Container.ts#Container.bind"
+      relevant_nodes:
+        - "packages/container/libraries/container/src/container/services/Container.ts#Container.bind"
+        - "packages/container/libraries/container/src/binding/models/BindingFluentSyntaxImplementation.ts#BindToFluentSyntaxImplementation"
+        - "packages/container/libraries/container/src/container/services/Container.ts#Container.#setBinding"
+        - "packages/container/libraries/container/src/binding/models/BindingFluentSyntaxImplementation.ts#BindToFluentSyntaxImplementation.to"
+        - "packages/container/libraries/container/src/binding/models/BindingFluentSyntaxImplementation.ts#BindToFluentSyntaxImplementation.toSelf"
+        - "packages/container/libraries/container/src/binding/actions/getBindingId.ts#getBindingId"
+        - "packages/container/libraries/container/src/error/models/InversifyContainerError.ts#InversifyContainerError"
+        - "packages/container/libraries/container/src/error/models/InversifyContainerErrorKind.ts#InversifyContainerErrorKind"
+        - "packages/container/libraries/common/src/services/calculations/stringifyServiceIdentifier.ts#stringifyServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/ServiceIdentifier.ts#ServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/LazyServiceIdentifier.ts#LazyServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/LazyServiceIdentifier.ts#LazyServiceIdentifier.is"
+      multihop_nodes:
+        - "packages/container/libraries/container/src/binding/models/BindingFluentSyntaxImplementation.ts#BindToFluentSyntaxImplementation.to"
+        - "packages/container/libraries/container/src/binding/models/BindingFluentSyntaxImplementation.ts#BindToFluentSyntaxImplementation.toSelf"
+        - "packages/container/libraries/container/src/binding/actions/getBindingId.ts#getBindingId"
+        - "packages/container/libraries/container/src/error/models/InversifyContainerError.ts#InversifyContainerError"
+        - "packages/container/libraries/common/src/services/calculations/stringifyServiceIdentifier.ts#stringifyServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/ServiceIdentifier.ts#ServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/LazyServiceIdentifier.ts#LazyServiceIdentifier"
+        - "packages/container/libraries/common/src/services/models/LazyServiceIdentifier.ts#LazyServiceIdentifier.is"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado del monorepo inversify/monorepo,
+        tag @inversifyjs/container@1.5.2 (commit be5d342a), que fija las versiones
+        exactas de InversifyJS v7.0.0: common@1.5.0, container@1.5.2, core@4.0.0.
+        El repo inversify/InversifyJS v7.0.0 es solo un cascaron de re-exports, por
+        eso se indexa el monorepo (packages/container/libraries/{common,container,core}/src).
+        node_id = <ruta_absoluta>#<simbolo>. Anchor primario: Container.bind, que
+        construye un BindToFluentSyntaxImplementation (d=1) guardando el serviceIdentifier
+        sin validarlo; el binding se entrega via Container.#setBinding (d=1). La validacion
+        temprana y consistente se anadiria aqui imitando el patron existente de toSelf()
+        (d=2), que ya lanza cuando el serviceIdentifier no es newable, usando
+        InversifyContainerError (d=3) + InversifyContainerErrorKind y stringifyServiceIdentifier
+        (d=6) para el mensaje. Debe seguir aceptando los tipos validos de ServiceIdentifier
+        (d=10): string, symbol, Newable/Function y LazyServiceIdentifier (d=12) detectado via
+        LazyServiceIdentifier.is (d=13). to() (d=2) consume el serviceIdentifier al binding y
+        getBindingId (d=3) genera su id. multihop_nodes verificados a distancia BFS >=2:
+        to, toSelf, getBindingId, InversifyContainerError, stringifyServiceIdentifier,
+        ServiceIdentifier, LazyServiceIdentifier, LazyServiceIdentifier.is. InversifyContainerErrorKind
+        es relevante pero queda desconectado del subgrafo de bind (solo tiene el miembro
+        invalidOperation) → va en relevant, no en multihop.
     tags:
       - "dependency-injection"
       - "binding"
+      - "regression_excluded"
 
   - id: inversify-002
     repo_id: inversify
@@ -184,7 +254,9 @@ tasks:
       dependencias reporte con claridad cuando falta metadata requerida en un
       constructor decorado.
     deterministic_input:
-      clean_query: "inversify decorator metadata constructor injection missing metadata error"
+      retrieval_input:
+        query: "inversify report a clear error when required decorator metadata is missing on a constructor injected class"
+      oracle_input: null
       embedding_input: "Improve missing decorator metadata error in constructor injection"
       intent: "debug"
       dimensions:
@@ -195,12 +267,58 @@ tasks:
       - "metadata reader"
       - "injectable decorators"
       - "constructor injection planning"
-    target_tests: []
+    target_tests:
+      - "pnpm --filter @inversifyjs/core test src/metadata/calculations/getClassMetadata.spec.ts src/metadata/calculations/throwAtInvalidClassMetadata.spec.ts src/metadata/calculations/validateConstructorMetadataArray.spec.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Esta tarea deberia requerir dependencias multi-hop entre decoradores, metadata y planner."
+      status: "ready"
+      primary_anchor: "packages/container/libraries/core/src/metadata/calculations/getClassMetadata.ts#getClassMetadata"
+      relevant_nodes:
+        - "packages/container/libraries/core/src/metadata/calculations/getClassMetadata.ts#getClassMetadata"
+        - "packages/container/libraries/core/src/metadata/calculations/isPendingClassMetadata.ts#isPendingClassMetadata"
+        - "packages/container/libraries/core/src/metadata/calculations/getDefaultClassMetadata.ts#getDefaultClassMetadata"
+        - "packages/container/libraries/core/src/metadata/calculations/throwAtInvalidClassMetadata.ts#throwAtInvalidClassMetadata"
+        - "packages/container/libraries/core/src/metadata/calculations/validateConstructorMetadataArray.ts#validateConstructorMetadataArray"
+        - "packages/container/libraries/core/src/error/models/InversifyCoreError.ts#InversifyCoreError"
+        - "packages/container/libraries/core/src/error/models/InversifyCoreErrorKind.ts#InversifyCoreErrorKind"
+        - "packages/container/libraries/core/src/metadata/decorators/injectable.ts#injectable"
+        - "packages/container/libraries/core/src/metadata/decorators/inject.ts#inject"
+        - "packages/container/libraries/core/src/planning/calculations/plan.ts#plan"
+        - "packages/container/libraries/core/src/planning/calculations/plan.ts#buildInstancePlanBindingNode"
+        - "packages/container/libraries/core/src/resolution/actions/resolveInstanceBindingConstructorParams.ts#resolveInstanceBindingConstructorParams"
+      multihop_nodes:
+        - "packages/container/libraries/core/src/error/models/InversifyCoreError.ts#InversifyCoreError"
+        - "packages/container/libraries/core/src/metadata/decorators/injectable.ts#injectable"
+        - "packages/container/libraries/core/src/metadata/decorators/inject.ts#inject"
+        - "packages/container/libraries/core/src/planning/calculations/plan.ts#plan"
+        - "packages/container/libraries/core/src/planning/calculations/plan.ts#buildInstancePlanBindingNode"
+        - "packages/container/libraries/core/src/resolution/actions/resolveInstanceBindingConstructorParams.ts#resolveInstanceBindingConstructorParams"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado del monorepo inversify/monorepo,
+        tag @inversifyjs/container@1.5.2 (commit be5d342a), que fija las versiones
+        exactas de InversifyJS v7.0.0 (common@1.5.0, container@1.5.2, core@4.0.0).
+        node_id = <ruta_absoluta>#<simbolo>. Anchor primario: getClassMetadata, el
+        lector de metadata que usa el planner. Lee la metadata de reflect
+        (classMetadataReflectKey) o cae en getDefaultClassMetadata (d=1); si la clase
+        tiene metadata pendiente (isPendingClassMetadata, d=1) delega en
+        throwAtInvalidClassMetadata (d=1) que reporta "Missing or incomplete metadata ...
+        Every constructor parameter must be decorated with @inject/@multiInject/@unmanaged";
+        en caso contrario validateConstructorMetadataArray (d=1) exige un elemento por
+        argumento del constructor. Ambos lanzan InversifyCoreError (d=2) con
+        InversifyCoreErrorKind.missingInjectionDecorator. La metadata la escribe el decorador
+        injectable (d=3) e inject (d=5). El planner plan/buildInstancePlanBindingNode (d=3)
+        invoca getClassMetadata al planear la inyeccion por constructor, y
+        resolveInstanceBindingConstructorParams (d=3) resuelve esos parametros. multihop_nodes
+        verificados a distancia BFS >=2: InversifyCoreError (d=2), injectable (d=3), plan (d=3),
+        buildInstancePlanBindingNode (d=3), resolveInstanceBindingConstructorParams (d=3),
+        inject (d=5). InversifyCoreErrorKind y classMetadataReflectKey son relevantes pero
+        dispersos/desconectados del anchor → InversifyCoreErrorKind va en relevant (no multihop)
+        y el reflect key (VARIABLE, grado 0) se omite del gold de simbolos editables.
+    regression:
+      base_commit: "be5d342a5a593954895c2fda712648d219c1b72d"
+      broken_patch: "regression/inversify-002.broken.diff"
+      grading_tests:
+        - "throwAtInvalidClassMetadata › having valid class metadata › when called › should throw an Error"
+        - "throwAtInvalidClassMetadata › having invalid class metadata with both undefined and invalid constructor metadata and invalid property metadata › when called › should throw an Error"
     tags:
       - "decorators"
       - "multi-hop"
@@ -215,7 +333,9 @@ tasks:
       del subscriber interno llegue al subscriber externo sin duplicar
       notificaciones de complete.
     deterministic_input:
-      clean_query: "rxjs operator inner subscriber error propagation complete notification"
+      retrieval_input:
+        query: "rxjs operator inner subscriber error propagation to outer without duplicate complete notification"
+      oracle_input: null
       embedding_input: "Fix RxJS operator inner subscriber error propagation"
       intent: "debug"
       dimensions:
@@ -225,12 +345,49 @@ tasks:
       - "operators"
       - "Subscriber"
       - "error and complete flow"
-    target_tests: []
+    target_tests:
+      - "npx mocha --config spec/support/.mocharc.js spec/operators/mergeMap-spec.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Anotar operador especifico, Subscriber/OperatorSubscriber y pruebas marble si aplica."
+      status: "ready"
+      primary_anchor: "src/internal/operators/mergeMap.ts#mergeMap"
+      relevant_nodes:
+        - "src/internal/operators/mergeMap.ts#mergeMap"
+        - "src/internal/operators/mergeInternals.ts#mergeInternals"
+        - "src/internal/operators/OperatorSubscriber.ts#createOperatorSubscriber"
+        - "src/internal/operators/OperatorSubscriber.ts#OperatorSubscriber"
+        - "src/internal/Subscriber.ts#Subscriber"
+        - "src/internal/Subscriber.ts#Subscriber.error"
+        - "src/internal/Subscriber.ts#Subscriber.complete"
+        - "src/internal/Subscriber.ts#Subscriber._error"
+        - "src/internal/Subscriber.ts#Subscriber._complete"
+        - "src/internal/util/lift.ts#operate"
+        - "src/internal/observable/innerFrom.ts#innerFrom"
+      multihop_nodes:
+        - "src/internal/operators/OperatorSubscriber.ts#createOperatorSubscriber"
+        - "src/internal/operators/OperatorSubscriber.ts#OperatorSubscriber"
+        - "src/internal/Subscriber.ts#Subscriber.error"
+        - "src/internal/Subscriber.ts#Subscriber.complete"
+        - "src/internal/Subscriber.ts#Subscriber._error"
+        - "src/internal/Subscriber.ts#Subscriber._complete"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado de rxjs 7.8.2 (commit e5351d02e,
+        run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
+        Anchor primario: mergeMap. operate (lift) envuelve el operador; mergeInternals
+        es el motor compartido (mergeMap/mergeScan) que mantiene active/isComplete/buffer
+        y usa checkComplete() para completar el destino solo una vez (evita duplicar
+        complete). createOperatorSubscriber/OperatorSubscriber crean el subscriber interno
+        cuyos wrappers _error/_complete enrutan el error del inner a destination.error y
+        fuerzan unsubscribe; innerFrom crea el observable interno. Subscriber.error/complete
+        con isStopped impiden el doble complete. Tras corregir resolución de aliases y
+        métodos, mergeInternals, Subscriber, operate e innerFrom son vecinos directos
+        (d=1). multihop_nodes a distancia BFS >=2: createOperatorSubscriber,
+        OperatorSubscriber, Subscriber.error, Subscriber.complete, Subscriber._error y
+        Subscriber._complete (todos d=2).         target_tests verificado verde
+        (mergeMap-spec.ts, 40 tests).
+    regression:
+      base_commit: "e5351d02e225e275ac0e497c7b66eaa5f0c88791"
+      broken_patch: "regression/rxjs-001.broken.diff"
+      grading_tests: []
     tags:
       - "pilot"
       - "operator"
@@ -246,7 +403,9 @@ tasks:
       scheduler recibido por parametro en lugar de caer a la temporizacion por
       defecto.
     deterministic_input:
-      clean_query: "rxjs scheduler parameter deferred operation default scheduler test scheduler"
+      retrieval_input:
+        query: "rxjs deferred operation should respect provided scheduler instead of default scheduling"
+      oracle_input: null
       embedding_input: "Make deferred RxJS operation respect provided scheduler"
       intent: "debug"
       dimensions:
@@ -256,16 +415,50 @@ tasks:
       - "scheduler utilities"
       - "observable creation"
       - "test scheduler specs"
-    target_tests: []
+    target_tests:
+      - "npx mocha --config spec/support/.mocharc.js spec/operators/delay-spec.ts"
     gold:
-      status: "pending_manual_annotation"
-      relevant_nodes: []
-      multihop_nodes: []
-      annotation_notes: "Esperada como tarea multi-hop entre operador, scheduler y pruebas de temporizacion."
+      status: "ready"
+      primary_anchor: "src/internal/operators/delay.ts#delay"
+      relevant_nodes:
+        - "src/internal/operators/delay.ts#delay"
+        - "src/internal/operators/delayWhen.ts#delayWhen"
+        - "src/internal/observable/timer.ts#timer"
+        - "src/internal/util/isScheduler.ts#isScheduler"
+        - "src/internal/Scheduler.ts#Scheduler"
+        - "src/internal/Scheduler.ts#Scheduler.schedule"
+        - "src/internal/scheduler/AsyncScheduler.ts#AsyncScheduler"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction.schedule"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction.requestAsyncId"
+      multihop_nodes:
+        - "src/internal/util/isScheduler.ts#isScheduler"
+        - "src/internal/Scheduler.ts#Scheduler"
+        - "src/internal/Scheduler.ts#Scheduler.schedule"
+        - "src/internal/scheduler/AsyncScheduler.ts#AsyncScheduler"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction.schedule"
+        - "src/internal/scheduler/AsyncAction.ts#AsyncAction.requestAsyncId"
+      annotation_notes: >-
+        Gold anotado contra el grafo indexado de rxjs 7.8.2 (commit e5351d02e,
+        run 2026-07-04-9ee37a5-pilot). node_id = <ruta_absoluta>#<simbolo>.
+        Anchor primario: delay. delay(due, scheduler = asyncScheduler) construye
+        timer(due, scheduler) y delega en delayWhen. timer usa isScheduler para respetar
+        el scheduler recibido y programa la emision diferida via Scheduler.schedule ->
+        AsyncScheduler -> AsyncAction.schedule -> AsyncAction.requestAsyncId (setInterval,
+        la temporizacion por defecto). El bug ocurre si la ruta ignora el scheduler param
+        y cae al asyncScheduler global. Tras corregir el extractor, delayWhen y timer son
+        vecinos directos (d=1), e isScheduler (d=2), Scheduler (d=2), AsyncScheduler
+        (d=2), AsyncAction (d=2), Scheduler.schedule (d=3), AsyncAction.schedule (d=3)
+        y AsyncAction.requestAsyncId (d=3) son multihop. asyncScheduler y su alias async
+        ahora generan nodos VARIABLE conectados, aunque no forman parte del gold de símbolos
+        necesarios para modificar esta ruta.
+        target_tests verificado verde (delay-spec.ts, 16 tests, usa TestScheduler).
     tags:
       - "pilot"
       - "scheduler"
       - "multi-hop"
+      - "regression_excluded"
 
   - id: dayjs-001
     repo_id: dayjs

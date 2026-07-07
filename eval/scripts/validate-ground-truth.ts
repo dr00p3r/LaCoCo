@@ -13,9 +13,11 @@ function validateRepoTasks(
   tasks: TaskDefinition[],
   runDirectory: string | undefined,
   indexesDirectory: string,
+  reposDirectory: string,
   graphDbName: string,
 ): TaskGoldValidation[] {
   const repoId = tasks[0]!.repo_id;
+  const repoPath = join(reposDirectory, repoId);
   const graphPath = findGraphDatabase(runDirectory, indexesDirectory, repoId, graphDbName);
   let graph: GraphLookup | null = null;
   let warning = `graph database not found for ${repoId}; node IDs were not checked`;
@@ -27,7 +29,7 @@ function validateRepoTasks(
     }
   }
   try {
-    return tasks.map((task) => validateTaskGold(task, graph, warning));
+    return tasks.map((task) => validateTaskGold(task, graph, repoPath, warning));
   } finally {
     graph?.close();
   }
@@ -64,7 +66,7 @@ export function validateGroundTruth(argv = process.argv.slice(2)): TaskGoldValid
     byRepo.set(task.repo_id, repoTasks);
   }
   const results = [...byRepo.values()].flatMap((repoTasks) =>
-    validateRepoTasks(repoTasks, runDirectory, layout.indexesDirectory, graphDbName),
+    validateRepoTasks(repoTasks, runDirectory, layout.indexesDirectory, layout.reposDirectory, graphDbName),
   );
   const valid = results.filter(({ status }) => status === "valid").length;
   const pending = results.filter(({ status }) => status === "pending").length;

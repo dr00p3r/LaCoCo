@@ -27,6 +27,7 @@ export interface InspectQueryOptions {
   model: string;
   timeoutMs?: number;
   chunks?: number;
+  grounding: boolean;
 }
 
 export interface InspectStats {

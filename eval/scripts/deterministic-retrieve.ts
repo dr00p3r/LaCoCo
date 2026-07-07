@@ -94,7 +94,7 @@ export async function runDeterministicRetrieve(argv = process.argv.slice(2)): Pr
   const sanitized = parseSanitizer(encodedSanitizer);
   return runRetrieve(
     query,
-    { strategy, verbose: false, json: true },
+    { strategy, verbose: false, json: true, grounding: false },
     { stdout: process.stdout, stderr: process.stderr },
     createRuntime(sanitized),
     project,

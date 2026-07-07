@@ -34,4 +34,11 @@ describe("parseEvalCliOptions", () => {
       ["--repo-id"],
     )).toThrow("duplicate argument: --repo-id");
   });
+
+  it("parses the resume switch", () => {
+    expect(parseEvalCliOptions(["--resume"], ["--resume"])).toEqual({
+      dryRun: false,
+      resume: true,
+    });
+  });
 });

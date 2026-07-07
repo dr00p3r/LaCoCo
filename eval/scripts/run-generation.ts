@@ -1,0 +1,863 @@
+/**
+ * run-generation.ts
+ *
+ * Runner de la fase de generacion (M1, M2). Para cada combinacion
+ * {task, strategy, agent} genera un patch con el agente externo y
+ * ejecuta los tests focalizados. Resultado: `generation.jsonl`.
+ *
+ * Diferencias con run-retrieval.ts:
+ *   - La estrategia `no_context` no tiene retrieval asociado. El prompt
+ *     conserva el bloque LaCoCo con un placeholder explicito.
+ *   - El worktree del repo se resetea entre celdas.
+ *   - El agente externo se invoca segun `agents.yaml:30-82`.
+ *   - Hay un budget USD opcional que detiene el runner al alcanzarse.
+ */
+
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
+import { asBoolean, asNumber, asRecord, asString, asStringArray } from "./lib/config.js";
+import { CommandExecutionError, executeCommand, shellQuote } from "./lib/exec.js";
+import {
+  applyBrokenPatch,
+  captureWorkingTreeDiff,
+  parseTestRunnerOutput,
+  resetRepoClean,
+} from "./lib/git.js";
+import { loadManifests } from "./lib/load-manifests.js";
+import {
+  type AgentDefinition,
+  type StrategyDefinition,
+  type TaskDefinition,
+} from "./lib/types.js";
+import { resolveEvalLayout } from "./lib/layout.js";
+import { readRepositoriesLock } from "./lib/repo-lock.js";
+import { PROJECT_ROOT } from "./lib/paths.js";
+import {
+  GENERATION_RECORD_SCHEMA_VERSION,
+  makeEmptyArtifactPaths,
+  type GenerationRecord,
+} from "./lib/generation-record.js";
+import type { AgentsManifest } from "./lib/types.js";
+
+interface GenerationSettings {
+  splitName: string;
+  enabled: boolean;
+  agentTimeoutMs: number;
+  testTimeoutMs: number;
+  maxDiffBytes: number;
+  maxChangedFiles: number;
+  taskIds?: Set<string>;
+  repoIds?: Set<string>;
+  strategyIds: Set<string>;
+  agentIds: Set<string>;
+  continueOnTaskFailure: boolean;
+  continueOnStrategyFailure: boolean;
+}
+
+export interface RetrievalJsonlRecord {
+  run_id: string;
+  task_id: string;
+  repo_id: string;
+  strategy_id: string;
+  sanitizer_source?: string;
+  sanitizer_variant?: string;
+  artifact_paths: {
+    context_json: string;
+    sanitizer_json?: string | null;
+  };
+  error?: unknown;
+}
+
+function readGenerationSettings(
+  runManifest: Record<string, unknown>,
+  agentsManifest: AgentsManifest,
+  requestedSplit: string,
+): GenerationSettings {
+  const phases = asRecord(runManifest.phases, "run.yaml.phases");
+  const generation = asRecord(phases.generation, "run.yaml.phases.generation");
+  const failure = asRecord(runManifest.failure_policy, "run.yaml.failure_policy");
+  const splits = asRecord(runManifest.splits, "run.yaml.splits");
+  const splitValue = splits[requestedSplit];
+  if (splitValue === undefined) {
+    throw new Error(`split not found: ${requestedSplit}`);
+  }
+  const split = asRecord(splitValue, `run.yaml.splits.${requestedSplit}`);
+
+  const phaseStrategies = new Set(asStringArray(generation.include_strategies, "run.yaml.phases.generation.include_strategies"));
+  const splitStrategies = split.strategies === undefined
+    ? undefined
+    : new Set(asStringArray(split.strategies, `run.yaml.splits.${requestedSplit}.strategies`));
+  const taskIds = split.task_ids === undefined
+    ? undefined
+    : new Set(asStringArray(split.task_ids, `run.yaml.splits.${requestedSplit}.task_ids`));
+  const repoIds = split.repo_ids === undefined
+    ? undefined
+    : new Set(asStringArray(split.repo_ids, `run.yaml.splits.${requestedSplit}.repo_ids`));
+  const splitAgents = split.agents === undefined
+    ? undefined
+    : new Set(asStringArray(split.agents, `run.yaml.splits.${requestedSplit}.agents`));
+  const phaseAgents = splitAgents === undefined
+    ? new Set([asString(generation.agent_id, "run.yaml.phases.generation.agent_id")])
+    : splitAgents;
+
+  // Intersect phase strategies with split strategies (split narrows the phase set)
+  const strategyIds = splitStrategies === undefined
+    ? phaseStrategies
+    : new Set([...phaseStrategies].filter((id) => splitStrategies.has(id)));
+
+  // agent defaults live in agents.yaml:defaults
+  const agentsDefaults = asRecord(
+    (agentsManifest as unknown as { defaults?: Record<string, unknown> }).defaults ?? {},
+    "agents.yaml.defaults",
+  );
+  const maxDiffBytes = asNumber(agentsDefaults.max_diff_bytes ?? 2_000_000, "agents.yaml.defaults.max_diff_bytes");
+  const maxChangedFiles = asNumber(agentsDefaults.max_changed_files ?? 20, "agents.yaml.defaults.max_changed_files");
+
+  return {
+    splitName: requestedSplit,
+    enabled: asBoolean(generation.enabled, "run.yaml.phases.generation.enabled"),
+    agentTimeoutMs: asNumber(generation.timeout_ms, "run.yaml.phases.generation.timeout_ms"),
+    testTimeoutMs: asNumber(generation.timeout_ms, "run.yaml.phases.generation.timeout_ms"),
+    maxDiffBytes,
+    maxChangedFiles,
+    ...(taskIds === undefined ? {} : { taskIds }),
+    ...(repoIds === undefined ? {} : { repoIds }),
+    strategyIds,
+    agentIds: phaseAgents,
+    continueOnTaskFailure: asBoolean(failure.continue_on_task_failure, "run.yaml.failure_policy.continue_on_task_failure"),
+    continueOnStrategyFailure: asBoolean(failure.continue_on_strategy_failure, "run.yaml.failure_policy.continue_on_strategy_failure"),
+  };
+}
+
+function getAgentArgs(agent: AgentDefinition): string[] {
+  const invocation = agent.invocation as { args?: unknown };
+  const args = invocation?.args;
+  if (!Array.isArray(args)) {
+    throw new Error(`agent ${agent.id}.invocation.args must be an array`);
+  }
+  return args.filter((a): a is string => typeof a === "string");
+}
+
+function getAgentModel(agent: AgentDefinition): string {
+  // Honor the env var override (LACOCO_EVAL_OPENCODE_MODEL, etc.) declared
+  // in agents.yaml:model.env. The variable name is "LACOCO_EVAL_<AGENT_ID>_MODEL"
+  // by convention, but the manifest provides it explicitly.
+  const model = (agent as { model?: { env?: string; default?: unknown } }).model;
+  if (model && typeof model.env === "string" && process.env[model.env] !== undefined) {
+    return process.env[model.env] as string;
+  }
+  if (model && typeof model.default === "string") return model.default;
+  throw new Error(`agent ${agent.id}.model.default must be a string`);
+}
+
+function getAgentProfile(agent: AgentDefinition): string {
+  const profile = (agent as { agent_profile?: { default?: unknown } }).agent_profile;
+  if (profile && typeof profile.default === "string") return profile.default;
+  return "build";
+}
+
+function loadRetrievalJsonl(runDirectory: string): RetrievalJsonlRecord[] {
+  const path = join(runDirectory, "retrieval.jsonl");
+  if (!existsSync(path)) {
+    throw new Error(`retrieval.jsonl not found at ${path}; run eval:retrieval first`);
+  }
+  const text = readFileSync(path, "utf8");
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as RetrievalJsonlRecord);
+}
+
+function findRetrievalRecord(
+  records: RetrievalJsonlRecord[],
+  taskId: string,
+  strategyId: string,
+): RetrievalJsonlRecord | null {
+  if (strategyId === "no_context") return null;
+  const matches = records.filter((record) =>
+    record.task_id === taskId && record.strategy_id === strategyId
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      `expected exactly one retrieval record for ${taskId} x ${strategyId}, found ${matches.length}`,
+    );
+  }
+  const record = matches[0]!;
+  if (record.error !== undefined && record.error !== null) {
+    throw new Error(`retrieval record for ${taskId} x ${strategyId} contains an error`);
+  }
+  return record;
+}
+
+function resolveContextPath(record: RetrievalJsonlRecord): string {
+  const contextPath = record.artifact_paths.context_json;
+  return isAbsolute(contextPath) ? contextPath : join(PROJECT_ROOT, contextPath);
+}
+
+function resolveArtifactPath(artifactPath: string): string {
+  return isAbsolute(artifactPath) ? artifactPath : join(PROJECT_ROOT, artifactPath);
+}
+
+export function loadRequiredEnrichedPrompt(record: RetrievalJsonlRecord): string {
+  const contextPath = resolveContextPath(record);
+  if (!existsSync(contextPath)) {
+    throw new Error(
+      `required context.json is missing for ${record.task_id} x ${record.strategy_id}: ${record.artifact_paths.context_json}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(contextPath, "utf8")) as unknown;
+  } catch (error) {
+    throw new Error(
+      `required context.json is invalid JSON for ${record.task_id} x ${record.strategy_id}`,
+      { cause: error },
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`required context.json is not an object for ${record.task_id} x ${record.strategy_id}`);
+  }
+  const context = parsed as Record<string, unknown>;
+  if (context.ok !== true) {
+    throw new Error(`required context.json is not a successful retrieval for ${record.task_id} x ${record.strategy_id}`);
+  }
+  if (typeof context.enrichedPrompt !== "string" || context.enrichedPrompt.trim().length === 0) {
+    throw new Error(`required context.json has no enrichedPrompt for ${record.task_id} x ${record.strategy_id}`);
+  }
+  return context.enrichedPrompt;
+}
+
+export function validateRetrievalContexts(
+  records: RetrievalJsonlRecord[],
+  tasks: TaskDefinition[],
+  strategies: StrategyDefinition[],
+): void {
+  for (const task of tasks) {
+    let frozenSanitizerPath: string | null = null;
+    for (const strategy of strategies) {
+      if (strategy.id === "no_context") continue;
+      const record = findRetrievalRecord(records, task.id, strategy.id);
+      if (record === null) throw new Error(`missing retrieval record for ${task.id} x ${strategy.id}`);
+      if (record.sanitizer_source === "agent_intermediary") {
+        if (record.sanitizer_variant === "deterministic") {
+          throw new Error(
+            `invalid sanitizer_variant for ${task.id} x ${strategy.id}: agent_intermediary cannot be deterministic`,
+          );
+        }
+        const sanitizerPath = record.artifact_paths.sanitizer_json;
+        if (typeof sanitizerPath !== "string" || sanitizerPath.length === 0) {
+          throw new Error(`missing frozen sanitizer artifact for ${task.id} x ${strategy.id}`);
+        }
+        if (!existsSync(resolveArtifactPath(sanitizerPath))) {
+          throw new Error(`frozen sanitizer artifact does not exist for ${task.id} x ${strategy.id}: ${sanitizerPath}`);
+        }
+        if (frozenSanitizerPath === null) frozenSanitizerPath = sanitizerPath;
+        if (frozenSanitizerPath !== sanitizerPath) {
+          throw new Error(`retrieval strategies do not share one frozen sanitizer for task ${task.id}`);
+        }
+      }
+      loadRequiredEnrichedPrompt(record);
+    }
+  }
+}
+
+export function buildPrompt(
+  task: TaskDefinition,
+  strategy: StrategyDefinition,
+  retrievalRecord: RetrievalJsonlRecord | null,
+  regressionInfo?: { id: string; baseline_failing_tests: string[]; base_commit: string },
+): string {
+  const sections: string[] = [];
+  sections.push(`# Tarea\n\n${task.prompt}`);
+  sections.push(`# Repositorio\n\nid: ${task.repo_id}\ntype: ${task.type}\ndifficulty: ${task.difficulty}`);
+
+  sections.push(
+    [
+      "# Restricciones",
+      "",
+      "- No modifiques archivos fuera del alcance de la tarea salvo que sea estrictamente necesario.",
+      "- No actualices dependencias salvo que la tarea lo pida.",
+      "- No cambies snapshots o tests para ocultar fallos.",
+      "- Explica brevemente los archivos tocados si produces resumen.",
+    ].join("\n"),
+  );
+
+  if (strategy.id === "no_context") {
+    sections.push(
+      [
+        "# Contexto recuperado por LaCoCo",
+        "",
+        "No hay contexto recuperado para esta tarea.",
+        "",
+        "(El baseline `no_context` ejecuta el agente sin enriquecimiento contextual; la estructura del prompt se conserva identica a las demas condiciones.)",
+      ].join("\n"),
+    );
+  } else {
+    if (retrievalRecord === null) {
+      throw new Error(`missing retrieval record for ${task.id} x ${strategy.id}`);
+    }
+    sections.push(`# Contexto recuperado por LaCoCo\n\n${loadRequiredEnrichedPrompt(retrievalRecord)}`);
+  }
+
+  if (regressionInfo !== undefined) {
+    const shortSha = regressionInfo.base_commit.slice(0, 7);
+    const failingList = regressionInfo.baseline_failing_tests.length === 0
+      ? ["  (no tests detected in the captured baseline)"]
+      : regressionInfo.baseline_failing_tests.map((name) => `  - ${name}`);
+    sections.push(
+      [
+        "# Estado del repositorio",
+        "",
+        `El repositorio esta anclado al commit ${shortSha} y en este momento NO esta en verde.`,
+        "Hay un conjunto de tests que actualmente fallan; tu objetivo es restaurarlos sin introducir fallos nuevos.",
+        "",
+        "Tests fallando ahora mismo:",
+        ...failingList,
+        "",
+        "Comando de validacion (correlo antes de cerrar):",
+        "```bash",
+        ...task.target_tests,
+        "```",
+        "",
+        "Restricciones adicionales:",
+        "- No modifiques archivos de test para ocultar el fallo.",
+        "- No anadas dependencias.",
+        "- El repositorio NO contiene pistas sobre que archivo o simbolo esta roto: debes averiguarlo por inspection directa.",
+      ].join("\n"),
+    );
+  } else if (task.target_tests.length > 0) {
+    sections.push(
+      [
+        "# Pruebas esperadas",
+        "",
+        "Ejecuta el siguiente comando para validar la tarea:",
+        "",
+        "```bash",
+        ...task.target_tests,
+        "```",
+      ].join("\n"),
+    );
+  }
+
+  sections.push(
+    [
+      "# Instrucciones de salida",
+      "",
+      "- Realiza los cambios directamente en el repositorio.",
+      "- No modifiques tests salvo que la tarea lo autorice.",
+      "- No agregues dependencias nuevas.",
+      "- El resultado debe poder validarse con el comando de prueba indicado.",
+    ].join("\n"),
+  );
+
+  return sections.join("\n\n---\n\n");
+}
+
+function buildAgentCommand(
+  agent: AgentDefinition,
+  repoPath: string,
+  promptFile: string,
+  model: string,
+  agentProfile: string,
+): string {
+  const args = getAgentArgs(agent).map((arg) => {
+    let out = arg;
+    out = out.replaceAll("{repo_path}", repoPath);
+    out = out.replaceAll("{prompt_file}", promptFile);
+    out = out.replaceAll("{model}", model);
+    out = out.replaceAll("{agent_profile}", agentProfile);
+    return out;
+  });
+  if (agent.command === null) {
+    throw new Error(`agent ${agent.id}.command is null; cannot build invocation`);
+  }
+  return [agent.command, ...args].map(shellQuote).join(" ");
+}
+
+interface ParsedTestResult {
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  logPath: string;
+}
+
+async function runTargetTests(
+  testCommand: string,
+  repoPath: string,
+  timeoutMs: number,
+  logPath: string,
+): Promise<ParsedTestResult> {
+  try {
+    const result = await executeCommand({
+      command: testCommand,
+      cwd: repoPath,
+      timeoutMs,
+      logPath,
+    });
+    return {
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      durationMs: result.durationMs,
+      logPath,
+    };
+  } catch (error) {
+    if (error instanceof CommandExecutionError) {
+      return {
+        exitCode: error.result.exitCode,
+        timedOut: error.result.timedOut,
+        durationMs: error.result.durationMs,
+        logPath,
+      };
+    }
+    throw error;
+  }
+}
+
+interface RunOptions {
+  runId?: string | undefined;
+  split: string;
+  repoId?: string | undefined;
+  taskId?: string | undefined;
+  strategyId?: string | undefined;
+  agentId?: string | undefined;
+  maxBudgetUsd?: number | undefined;
+  resume: boolean;
+  dryRun: boolean;
+}
+
+function parseRunOptions(argv: string[]): RunOptions {
+  const options = parseEvalCliOptions(argv, [
+    "--dry-run",
+    "--run-id",
+    "--repo-id",
+    "--task-id",
+    "--strategy-id",
+    "--agent-id",
+    "--split",
+    "--max-budget-usd",
+    "--resume",
+  ]);
+  return {
+    runId: options.runId,
+    split: options.split ?? "generation_pilot",
+    repoId: options.repoId,
+    taskId: options.taskId,
+    strategyId: options.strategyId,
+    agentId: options.agentId,
+    maxBudgetUsd: options.maxBudgetUsd,
+    resume: options.resume === true,
+    dryRun: options.dryRun,
+  };
+}
+
+function generationCellId(
+  taskId: string,
+  strategyId: string,
+  agentId: string,
+  modelId: string,
+): string {
+  return `${taskId}__${strategyId}__${agentId}__${modelId}`;
+}
+
+function readExistingGenerationRecords(outputPath: string, runId: string): GenerationRecord[] {
+  if (!existsSync(outputPath)) return [];
+  return readFileSync(outputPath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line, index) => {
+      const parsed = JSON.parse(line) as Partial<GenerationRecord>;
+      if (parsed.schema_version !== GENERATION_RECORD_SCHEMA_VERSION) {
+        throw new Error(`generation.jsonl line ${index + 1} has schema_version ${String(parsed.schema_version)}; expected ${GENERATION_RECORD_SCHEMA_VERSION}`);
+      }
+      if (parsed.run_id !== runId || typeof parsed.model_id !== "string") {
+        throw new Error(`generation.jsonl line ${index + 1} does not belong to run ${runId} or has no model_id`);
+      }
+      return parsed as GenerationRecord;
+    });
+}
+
+export function parseOpenCodeCost(stdout: string): number | null {
+  let total = 0;
+  let found = false;
+  for (const line of stdout.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (typeof value !== "object" || value === null) continue;
+    const event = value as Record<string, unknown>;
+    if (event.type !== "step_finish" || typeof event.part !== "object" || event.part === null) continue;
+    const cost = (event.part as Record<string, unknown>).cost;
+    if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) continue;
+    total += cost;
+    found = true;
+  }
+  return found ? total : null;
+}
+
+export async function runGeneration(argv = process.argv.slice(2)): Promise<void> {
+  const options = parseRunOptions(argv);
+  const manifests = loadManifests();
+  const settings = readGenerationSettings(manifests.run, manifests.agents, options.split);
+  const layout = resolveEvalLayout(manifests.run, options.runId);
+  const tasks = manifests.tasks.tasks.filter((task) =>
+    (options.repoId === undefined || task.repo_id === options.repoId) &&
+    (options.taskId === undefined || task.id === options.taskId) &&
+    (settings.taskIds === undefined || settings.taskIds.has(task.id)) &&
+    (settings.repoIds === undefined || settings.repoIds.has(task.repo_id)),
+  );
+  const strategies = manifests.strategies.strategies.filter(
+    (strategy) =>
+      strategy.enabled &&
+      strategy.generation_enabled &&
+      (strategy.lacoco_strategy !== null || strategy.id === "no_context") &&
+      settings.strategyIds.has(strategy.id) &&
+      (options.strategyId === undefined || strategy.id === options.strategyId),
+  );
+  const agents = manifests.agents.agents.filter(
+    (agent) =>
+      agent.enabled &&
+      settings.agentIds.has(agent.id) &&
+      (options.agentId === undefined || agent.id === options.agentId),
+  );
+
+  if (tasks.length === 0) throw new Error(`no tasks matched the combined filters for split ${settings.splitName}`);
+  if (strategies.length === 0) throw new Error(`no strategies matched the combined filters for split ${settings.splitName}`);
+  if (agents.length === 0) throw new Error(`no agents matched the combined filters for split ${settings.splitName}`);
+
+  console.log(`Run: ${layout.runId}`);
+  console.log(`Split: ${settings.splitName}`);
+  console.log(`Tasks (${tasks.length}): ${tasks.map((t) => t.id).join(", ")}`);
+  console.log(`Strategies (${strategies.length}): ${strategies.map((s) => s.id).join(", ")}`);
+  console.log(`Agents (${agents.length}): ${agents.map((a) => a.id).join(", ")}`);
+  console.log(`Combinations: ${tasks.length * strategies.length * agents.length}`);
+  console.log(`Agent timeout: ${settings.agentTimeoutMs}ms`);
+  console.log(`Max diff bytes: ${settings.maxDiffBytes}, max changed files: ${settings.maxChangedFiles}`);
+  if (options.maxBudgetUsd !== undefined) {
+    console.log(`Max budget: $${options.maxBudgetUsd.toFixed(2)}`);
+  }
+
+  if (!settings.enabled) {
+    console.log("Generation phase is disabled by run.yaml.");
+    return;
+  }
+
+  if (!existsSync(layout.lockFile)) {
+    throw new Error(`repositories lock does not exist: ${layout.lockFile}; run eval:prepare first`);
+  }
+  const lock = readRepositoriesLock(layout.lockFile);
+  if (lock.runId !== layout.runId) {
+    throw new Error(`lock run id ${lock.runId} does not match requested run ${layout.runId}`);
+  }
+  const lockedById = new Map(lock.repositories.map((r) => [r.id, r]));
+
+  const retrievalRecords = loadRetrievalJsonl(layout.runDirectory);
+  validateRetrievalContexts(retrievalRecords, tasks, strategies);
+
+  mkdirSync(layout.runDirectory, { recursive: true });
+  mkdirSync(layout.generationArtifactsDirectory, { recursive: true });
+  const outputPath = join(layout.runDirectory, "generation.jsonl");
+  const existingRecords = options.resume
+    ? readExistingGenerationRecords(outputPath, layout.runId)
+    : [];
+  const completedCells = new Set(existingRecords.map((record) => generationCellId(
+    record.task_id,
+    record.strategy_id,
+    record.agent_id,
+    record.model_id,
+  )));
+  if (!options.dryRun && !options.resume) writeFileSync(outputPath, "", "utf8");
+  if (!options.dryRun && options.resume && !existsSync(outputPath)) writeFileSync(outputPath, "", "utf8");
+
+  let spentUsd = existingRecords.reduce((total, record) => total + (record.cost_usd ?? 0), 0);
+  const failures: string[] = [];
+  let stop = false;
+  if (options.resume) {
+    console.log(`Resume: ${completedCells.size} completed cells, reported spend $${spentUsd.toFixed(6)}`);
+  }
+
+  for (const task of tasks) {
+    if (stop) break;
+    const locked = lockedById.get(task.repo_id);
+    if (locked === undefined) {
+      failures.push(`${task.id}: repository ${task.repo_id} is missing from ${layout.lockFile}`);
+      console.error(failures.at(-1));
+      if (!settings.continueOnTaskFailure) break;
+      continue;
+    }
+
+    for (const strategy of strategies) {
+      if (stop) break;
+      for (const agent of agents) {
+        const model = getAgentModel(agent);
+        const agentProfile = getAgentProfile(agent);
+        const cellId = generationCellId(task.id, strategy.id, agent.id, model);
+        if (completedCells.has(cellId)) {
+          console.log(`\n${task.id} x ${strategy.id} x ${agent.id}: already recorded, skipping`);
+          continue;
+        }
+        if (options.maxBudgetUsd !== undefined && spentUsd >= options.maxBudgetUsd) {
+          const message = `Budget reached ($${spentUsd.toFixed(6)} >= $${options.maxBudgetUsd.toFixed(2)}). Stopping before ${cellId}.`;
+          console.error(message);
+          failures.push(message);
+          stop = true;
+          break;
+        }
+
+        const cellDir = join(layout.generationArtifactsDirectory, task.id, strategy.id, agent.id);
+        const paths = makeEmptyArtifactPaths(cellDir);
+
+        const regressionInfo = (locked.regression_tasks ?? []).find((t) => t.id === task.id);
+        if (task.regression !== undefined && regressionInfo === undefined) {
+          failures.push(
+            `${task.id} x ${strategy.id} x ${agent.id}: regression metadata missing from repos.lock.json; ` +
+            `re-run eval:prepare to certify the broken state`,
+          );
+          console.error(failures.at(-1));
+          if (!settings.continueOnTaskFailure) {
+            break;
+          } else {
+            continue;
+          }
+        }
+        if (task.regression !== undefined && regressionInfo !== undefined) {
+          if (regressionInfo.base_commit !== task.regression.base_commit) {
+            failures.push(
+              `${task.id} x ${strategy.id} x ${agent.id}: regression.base_commit ${task.regression.base_commit} ` +
+              `does not match lock base_commit ${regressionInfo.base_commit}; refusing to apply broken_patch`,
+            );
+            console.error(failures.at(-1));
+            if (!settings.continueOnTaskFailure) {
+              break;
+            } else {
+              continue;
+            }
+          }
+        }
+
+        try {
+          await resetRepoClean({
+            repoPath: locked.repoPath,
+            timeoutMs: 60_000,
+            excludes: locked.reset_excludes ?? [],
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          failures.push(`${task.id} x ${strategy.id} x ${agent.id}: reset failed: ${msg}`);
+          console.error(failures.at(-1));
+          await resetRepoClean({
+            repoPath: locked.repoPath,
+            timeoutMs: 60_000,
+            excludes: locked.reset_excludes ?? [],
+          }).catch(() => undefined);
+          continue;
+        }
+
+        if (regressionInfo !== undefined) {
+          const brokenPatchPath = isAbsolute(regressionInfo.broken_patch)
+            ? regressionInfo.broken_patch
+            : join(PROJECT_ROOT, "eval", "manifests", regressionInfo.broken_patch);
+          try {
+            await applyBrokenPatch({
+              repoPath: locked.repoPath,
+              brokenPatchPath,
+              timeoutMs: 60_000,
+            });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            failures.push(`${task.id} x ${strategy.id} x ${agent.id}: broken_patch apply failed: ${msg}`);
+            console.error(failures.at(-1));
+            await resetRepoClean({
+              repoPath: locked.repoPath,
+              timeoutMs: 60_000,
+              excludes: locked.reset_excludes ?? [],
+            }).catch(() => undefined);
+            continue;
+          }
+        }
+
+        const retrievalRecord = findRetrievalRecord(retrievalRecords, task.id, strategy.id);
+        const prompt = buildPrompt(task, strategy, retrievalRecord, regressionInfo);
+        mkdirSync(cellDir, { recursive: true });
+        writeFileSync(paths.prompt, prompt, "utf8");
+
+        if (retrievalRecord !== null) {
+          const ctxPath = resolveContextPath(retrievalRecord);
+          const dst = join(cellDir, "context.json");
+          writeFileSync(dst, readFileSync(ctxPath, "utf8"), "utf8");
+          paths.context_json = relative(PROJECT_ROOT, dst);
+        }
+
+        const command = buildAgentCommand(agent, locked.repoPath, paths.prompt, model, agentProfile);
+        console.log(`\n${task.id} x ${strategy.id} x ${agent.id}`);
+        console.log(`  command: ${command.slice(0, 200)}${command.length > 200 ? "..." : ""}`);
+
+        if (options.dryRun) {
+          console.log("  (dry-run: skipping agent invocation)");
+          continue;
+        }
+
+        mkdirSync(dirname(paths.command), { recursive: true });
+        writeFileSync(paths.command, command, "utf8");
+
+        const agentStartedAt = performance.now();
+        let agentExitCode: number | null = null;
+        let agentTimedOut = false;
+        let agentStdout = "";
+        try {
+          const result = await executeCommand({
+            command,
+            cwd: PROJECT_ROOT,
+            timeoutMs: settings.agentTimeoutMs,
+            logPath: paths.stdout,
+            env: { npm_config_loglevel: "silent", npm_config_update_notifier: "false" },
+          });
+          agentExitCode = result.exitCode;
+          agentStdout = result.stdout;
+          writeFileSync(paths.stdout, result.stdout, "utf8");
+          writeFileSync(paths.stderr, result.stderr, "utf8");
+        } catch (error) {
+          if (error instanceof CommandExecutionError) {
+            agentExitCode = error.result.exitCode;
+            agentTimedOut = error.result.timedOut;
+            agentStdout = error.result.stdout;
+            writeFileSync(paths.stdout, error.result.stdout, "utf8");
+            writeFileSync(paths.stderr, error.result.stderr, "utf8");
+          } else {
+            throw error;
+          }
+        }
+        const agentDurationMs = Math.round(performance.now() - agentStartedAt);
+        const costUsd = agent.id === "opencode" ? parseOpenCodeCost(agentStdout) : null;
+        if (options.maxBudgetUsd !== undefined && costUsd === null) {
+          failures.push(`${cellId}: no provider-reported cost was found; budget enforcement cannot continue safely`);
+          stop = true;
+        }
+        if (costUsd !== null) spentUsd += costUsd;
+
+        const diff = await captureWorkingTreeDiff({ repoPath: locked.repoPath, timeoutMs: 60_000 });
+        const patchApplied = diff.length > 0;
+        const patchSizeBytes = Buffer.byteLength(diff, "utf8");
+        const filesChangedCount = (diff.match(/^diff --git /gm) ?? []).length;
+        writeFileSync(paths.patch, diff, "utf8");
+
+        const patchLimitErrors: string[] = [];
+        if (patchSizeBytes > settings.maxDiffBytes) {
+          patchLimitErrors.push(`patch size ${patchSizeBytes} exceeds ${settings.maxDiffBytes} bytes`);
+        }
+        if (filesChangedCount > settings.maxChangedFiles) {
+          patchLimitErrors.push(`changed files ${filesChangedCount} exceeds ${settings.maxChangedFiles}`);
+        }
+        let recordError: GenerationRecord["error"] = agentTimedOut
+          ? { type: "agent_timeout", message: `agent timed out after ${settings.agentTimeoutMs} ms` }
+          : agentExitCode !== 0
+            ? { type: "agent_error", message: `agent exited with code ${String(agentExitCode)}` }
+            : patchLimitErrors.length > 0
+              ? { type: "patch_limit_exceeded", message: patchLimitErrors.join("; ") }
+              : null;
+        if (stop && costUsd === null) {
+          recordError = recordError ?? {
+            type: "cost_unavailable",
+            message: "provider-reported cost was not available while budget enforcement was enabled",
+          };
+        }
+
+        let testResult: ParsedTestResult | null = null;
+        const shouldRunTests = task.target_tests.length > 0
+          && recordError === null
+          && (patchApplied || regressionInfo !== undefined);
+        if (shouldRunTests) {
+          const testCommand = task.target_tests.join(" && ");
+          testResult = await runTargetTests(testCommand, locked.repoPath, settings.testTimeoutMs, paths.test_log);
+        } else if (task.target_tests.length === 0) {
+          writeFileSync(paths.test_log, "(no target_tests for this task)\n", "utf8");
+        } else {
+          const reason = recordError === null ? "no patch applied" : recordError.message;
+          writeFileSync(paths.test_log, `(${reason}; skipping tests)\n`, "utf8");
+        }
+
+        let baselineFailing: string[] = [];
+        let postFailing: string[] = [];
+        let gradingPassed: string[] = [];
+        let regressionIntroduced: string[] = [];
+        if (regressionInfo !== undefined && testResult !== null) {
+          baselineFailing = regressionInfo.baseline_failing_tests;
+          const logText = readFileSync(paths.test_log, "utf8");
+          const parsed = parseTestRunnerOutput(logText, "");
+          postFailing = [...parsed.failed];
+          const gradingSet = new Set(regressionInfo.grading_tests);
+          gradingPassed = regressionInfo.grading_tests.filter((name) => !postFailing.includes(name));
+          const baselineSet = new Set(baselineFailing);
+          regressionIntroduced = postFailing.filter((name) => !baselineSet.has(name) && !gradingSet.has(name));
+        } else if (regressionInfo !== undefined && testResult === null) {
+          baselineFailing = regressionInfo.baseline_failing_tests;
+        }
+
+        const record: GenerationRecord = {
+          schema_version: GENERATION_RECORD_SCHEMA_VERSION,
+          run_id: layout.runId,
+          task_id: task.id,
+          repo_id: task.repo_id,
+          strategy_id: strategy.id,
+          agent_id: agent.id,
+          model_id: model,
+          agent_exit_code: agentExitCode,
+          agent_duration_ms: agentDurationMs,
+          cost_usd: costUsd,
+          patch_applied: patchApplied,
+          patch_size_bytes: patchSizeBytes,
+          files_changed_count: filesChangedCount,
+          test_exit_code: testResult?.exitCode ?? null,
+          test_duration_ms: testResult?.durationMs ?? 0,
+          tests_passed: testResult === null ? null : null,
+          tests_failed: testResult === null ? null : null,
+          tests_total: testResult === null ? null : null,
+          timeout: agentTimedOut,
+          baseline_failing_tests: baselineFailing,
+          post_failing_tests: postFailing,
+          grading_tests_passed: gradingPassed,
+          regression_introduced_failures: regressionIntroduced,
+          artifact_paths: paths,
+          error: recordError,
+        };
+
+        appendFileSync(outputPath, `${JSON.stringify(record)}\n`, "utf8");
+        console.log(
+          `  exit=${String(agentExitCode)} patch=${patchApplied}(${patchSizeBytes}B,${filesChangedCount}f) ` +
+            `test=${String(testResult?.exitCode ?? "-")} dur=${agentDurationMs}ms cost=${costUsd === null ? "unknown" : `$${costUsd.toFixed(6)}`}` +
+            (regressionInfo ? ` reg=${postFailing.length === 0 ? "pass" : `${postFailing.length}f`}` : ""),
+        );
+
+        // Reset to a clean green state so the next cell starts fresh.
+        await resetRepoClean({
+          repoPath: locked.repoPath,
+          timeoutMs: 60_000,
+          excludes: locked.reset_excludes ?? [],
+        }).catch(() => undefined);
+
+        completedCells.add(cellId);
+        if (stop) break;
+      }
+    }
+  }
+
+  if (options.dryRun) {
+    console.log("\nDry run: no agent invocations, no diffs, no test runs.");
+  }
+  if (failures.length > 0) {
+    console.error(`\nFailures:\n${failures.join("\n")}`);
+    process.exitCode = 1;
+  }
+  console.log(`\nTotal provider-reported spend: $${spentUsd.toFixed(6)}`);
+}
+
+if (isEntrypoint(import.meta.url)) {
+  runGeneration().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

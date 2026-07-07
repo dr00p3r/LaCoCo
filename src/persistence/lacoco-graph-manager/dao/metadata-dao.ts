@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { KIND_TO_DIM, KIND_TO_SUBTYPE, RELATION_TO_DIM, type Dimension } from "../../../domain/dimensions.js";
+import { KIND_TO_DIM, KIND_TO_SUBTYPE, RELATION_TO_DIM } from "../../../domain/dimensions.js";
 
 export class MetadataDao {
   private readonly insertStmt: Database.Statement;

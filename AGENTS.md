@@ -19,7 +19,7 @@ prompt original
   -> LLM o agente de codificación
 ```
 
-`AgentIntermediary1` es el único filtro dimensional. No existe ni debe añadirse un componente `DimensionalFilter` separado. Toda transformación semántica del prompt pertenece al SLM: no usar stopwords, extracción de keywords, reglas heurísticas ni fallbacks locales. Si Ollama falla o devuelve un contrato inválido, la consulta debe fallar explícitamente.
+`AgentIntermediary1` es el único filtro dimensional. No existe ni debe añadirse un componente `DimensionalFilter` separado. Toda transformación semántica del prompt pertenece al SLM: no usar stopwords, extracción de keywords, reglas heurísticas ni fallbacks locales. `QueryGrounder` puede tokenizar léxicamente el prompt completo, sin descartar stopwords ni inferir significado, únicamente para recuperar evidencias del Project Semantic Profile. Si Ollama falla o devuelve un contrato inválido, la consulta debe fallar explícitamente.
 
 `SlmClassifier` solicita un esquema JSON estructurado a Ollama con temperatura
 cero y semilla fija. Toda propuesta `LLM_DIRECT` se somete a una segunda
@@ -31,10 +31,14 @@ contrato, pero no reemplaza ni corrige semánticamente la decisión.
 El grafo contiene tres dimensiones:
 
 - `SYS`: ecosistema y contratos, por ejemplo `EXTENDS`, `IMPLEMENTS`, `IMPORTS_EXTERNAL`.
-- `CPG`: estructura y ejecución, por ejemplo `INJECTS`, `CALLS`, `INSTANTIATES`.
-- `DTG`: flujo y mutación de datos, por ejemplo `CONSUMES_DATA`, `PRODUCES`, `MUTATES_STATE`.
+- `CPG`: estructura y ejecución, por ejemplo `INJECTS`, `CALLS`, `INSTANTIATES`, `DECLARES`.
+- `DTG`: flujo y mutación de datos, por ejemplo `CONSUMES_DATA`, `PRODUCES`, `MUTATES_STATE`, `REFERENCES`.
 
 Los metadatos dimensionales consideran relaciones entrantes y salientes.
+`DECLARES` conecta clases, enums y objetos exportados con sus miembros.
+`REFERENCES` conserva dependencias estáticas de tipos y valores que no son
+llamadas. Los aliases importados deben resolverse hasta su declaración original
+y las llamadas a métodos deben apuntar al ID canónico `#Clase.metodo`.
 
 ## Estructura
 
@@ -58,6 +62,7 @@ src/
       filters/          agregación e inyección de contexto
       mini-agents/      AgentIntermediary1
       search/           servicios internos de búsqueda
+  semantic-profile/    inventario, enriquecimiento SLM, persistencia y grounding
   slms/                 cliente local de Ollama e interfaz LlmClient
 tests/retrieval/        pruebas Vitest del pipeline de retrieval
 ```
@@ -77,6 +82,12 @@ tests/retrieval/        pruebas Vitest del pipeline de retrieval
   versiones de los últimos 7 días y nunca activa `deleteUnverified`.
   `health().maintenance` expone contadores, necesidad de mantenimiento y el
   último resultado; `optimizeIfNeeded(true)` permite ejecución explícita.
+
+El Project Semantic Profile vive en tablas SQLite separadas del grafo. Sus
+alias, dominios y descripciones nunca son nodos SYS/CPG/DTG. `profile rebuild`
+extrae evidencias determinísticas, reutiliza términos sin cambios por hash,
+enriquece lotes con `LlmClient` y promueve el build atómicamente. Reindexar el
+grafo invalida el perfil. El watcher solo mantiene un perfil ya construido.
 
 El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. La primera ejecución puede requerir descargar el modelo.
 
@@ -138,6 +149,9 @@ npm run dev -- watch status [proyecto]
 npm run dev -- watch list
 npm run dev -- index_graph <ruta-tsconfig>
 npm run dev -- index_vectors <ruta-tsconfig>
+npm run dev -- profile rebuild [proyecto] --json
+npm run dev -- profile ground [proyecto] "<consulta>" --json
+npm run dev -- profile status [proyecto] --verify --json
 npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid
 npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
 npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
@@ -163,8 +177,13 @@ opcional que resuelve el proyecto desde el registro (por nombre, id o ruta). Si
 se omite, usan `process.cwd()`. Las rutas de almacenamiento (`db` y `lancedb`)
 se resuelven siempre desde el proyecto registrado; no aceptan flags explícitos.
 
+El grounding es experimental y está desactivado por defecto. `retrieve`,
+`context export` e `inspect-query` aceptan `--grounding` y `--no-grounding`; la
+configuración persistente es `profile.groundingEnabled`. Si se solicita y el
+perfil no está `ready`, la consulta falla explícitamente.
+
 `retrieve --json` reserva stdout para un unico documento con
-`schemaVersion: 1`. El resultado incluye clasificacion, chunks, parámetros
+`schemaVersion: 2`. El resultado incluye clasificacion, grounding, chunks, parámetros
 efectivos de estrategia, presupuesto del agregador, prompt
 enriquecido y metadatos de almacenamiento; los errores usan `ok: false` y exit
 code no cero. Logs y diagnosticos deben permanecer en stderr para no romper
@@ -190,6 +209,19 @@ consumidores que necesiten observabilidad inmediata pueden pasar `onError`.
   los nombres válidos viven en `src/retriever/strategies/strategy-names.ts` y
   alimentan CLI, `inspect-query`, configuración, esta tabla y sus pruebas.
 
+En benchmarks con `eval:retrieval -- --use-slm`, el intermediario se ejecuta
+una sola vez por tarea y variante. Su contrato completo se persiste y se
+reutiliza en todas las estrategias; `sanitizer_variant` debe identificar
+`agent_intermediary`, no `deterministic`. Retrieval y generación usan raíces de
+artefactos separadas. Antes de generar, el runner valida todos los
+`context.json` requeridos y falla sin truncar `generation.jsonl` si falta alguno;
+solo `no_context` puede usar el placeholder explícito sin contexto.
+`GenerationRecord` schema v2 persiste el modelo efectivo en `model_id`; no se
+debe reconstruir esa procedencia desde `command.log`. También persiste el costo
+reportado por el proveedor en `cost_usd`. `eval:generation -- --resume` debe
+preservar y omitir celdas ya registradas; los límites de tamaño/número de
+archivos del patch se aplican antes de ejecutar pruebas.
+
 ## Verificación mínima
 
 Antes de cerrar cambios de comportamiento:
@@ -208,5 +240,6 @@ prueba se omite explícitamente.
 ## Riesgos conocidos
 
 - El intermediario depende obligatoriamente de Ollama; no existe fallback local cuando el modelo no está disponible.
+- El Project Semantic Profile requiere construcción explícita y permanece opt-in hasta revisar su benchmark A/B.
 - La prueba end-to-end del binario CLI se omite en runners que bloquean `spawnSync`.
 - Faltan benchmarks comparables de precisión, latencia y consumo entre estrategias.

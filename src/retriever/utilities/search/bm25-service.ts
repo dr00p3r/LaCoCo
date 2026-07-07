@@ -38,14 +38,14 @@ export function normalizeBm25Score(
  * comillas invertidas o dos puntos no sean interpretados como operadores FTS5.
  */
 export function normalizeFts5Query(query: string): string {
-  const clauses = splitByOr(query)
+  const clauses = splitFts5OrClauses(query)
     .map((clause) => clause.trim())
     .filter((clause) => clause.length > 0);
 
   return clauses.map(quoteFts5Phrase).join(" OR ");
 }
 
-function splitByOr(query: string): string[] {
+export function splitFts5OrClauses(query: string): string[] {
   const clauses: string[] = [];
   let current = "";
   let inQuote = false;

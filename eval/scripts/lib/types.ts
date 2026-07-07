@@ -87,8 +87,17 @@ export interface RunConfigurationManifest extends ManifestHeader {
   [key: string]: unknown;
 }
 
+export interface QueryInput {
+  query: string;
+}
+
 export interface DeterministicInput {
-  clean_query: string;
+  // Principal, publishable query: natural user intent, MUST NOT contain gold
+  // symbols or internal identifiers discovered while annotating.
+  retrieval_input: QueryInput;
+  // Optional diagnostic upper-bound query (may contain gold symbols). Never a
+  // principal result; used only for oracle/debug runs.
+  oracle_input: QueryInput | null;
   embedding_input: string;
   intent: string;
   dimensions: string[];
@@ -96,8 +105,19 @@ export interface DeterministicInput {
 
 export interface TaskGold {
   status: string;
+  // Repo-relative node id (`<relpath>#<symbol>`) used as the BFS root for
+  // multihop distance checks. Null when not yet annotated.
+  primary_anchor: string | null;
+  // Node ids are stored repo-relative and resolved against the repo path at
+  // validation/metrics time so gold is portable across machines.
   relevant_nodes: string[];
   multihop_nodes: string[];
+  annotation_notes: string;
+}
+
+export interface TranslationGold {
+  status: string;
+  relevant_terms: string[];
   annotation_notes: string;
 }
 
@@ -112,7 +132,15 @@ export interface TaskDefinition {
   expected_areas: string[];
   target_tests: string[];
   gold: TaskGold;
+  translation_gold: TranslationGold;
+  regression?: TaskRegression;
   [key: string]: unknown;
+}
+
+export interface TaskRegression {
+  base_commit: string;
+  broken_patch: string;
+  grading_tests: string[];
 }
 
 export interface TasksManifest extends ManifestHeader {

@@ -1,6 +1,6 @@
 manifest_version: 1
 kind: run_configuration
-updated_at: "2026-06-28"
+updated_at: "2026-07-05"
 
 run:
   default_id_template: "{date_yyyy_mm_dd}-{git_short_sha}-{label}"
@@ -36,6 +36,7 @@ phases:
     install_dependencies: true
     run_baseline_tests: true
     fail_on_baseline_test_failure: true
+    verify_regression: true
 
   index_repos:
     enabled: true
@@ -46,6 +47,7 @@ phases:
       init_template: "npm run dev -- init {repo_path}"
       index_graph_template: "npm run dev -- index_graph {tsconfig} --db {db_path}"
       index_vectors_template: "npm run dev -- index_vectors {tsconfig} --lancedb {lancedb_path}"
+      profile_rebuild_template: "npm run dev -- profile rebuild {repo_path} --json"
 
   retrieval:
     enabled: true
@@ -57,6 +59,8 @@ phases:
     warmup_repetitions: 5
     timeout_ms: 120000
     use_deterministic_sanitizer: true
+    sanitizer_variants:
+      - "deterministic"
     include_strategies:
       - "hybrid"
       - "ictd"
@@ -66,7 +70,7 @@ phases:
       - "agentic"
 
   generation:
-    enabled: false
+    enabled: true
     agent_id: "opencode"
     include_strategies:
       - "no_context"
@@ -74,7 +78,7 @@ phases:
       - "ictd"
       - "clcr"
       - "rpr"
-    timeout_ms: 1800000
+    timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
     save_patch: true
@@ -142,6 +146,95 @@ splits:
     agents:
       - "opencode"
 
+  semantic_profile_ab:
+    description: "Comparación del intermediario sin grounding y con Project Semantic Profile."
+    require_gold_status: "ready"
+    sanitizer_variants:
+      - "baseline"
+      - "grounded"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+
+  retrieval_natural_6:
+    description: >-
+      Re-corrida con retrieval_input.query natural (sin símbolos del gold) sobre
+      las 6 tareas con gold listo de zod, rxjs e inversify. Variante principal
+      (deterministic) genera la tabla M3-M7 base; la variante oracle (cota
+      superior diagnóstica) es opcional. Piloto: 2026-07-05-natural.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "inversify-001"
+      - "inversify-002"
+    sanitizer_variants:
+      - "deterministic"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+
+  generation_pilot:
+    description: >-
+      Piloto de generacion sobre las 6 tareas con gold listo. Alimenta
+      generation.jsonl a partir del retrieval.jsonl del run (--run-id
+      debe apuntar a un run que ya tenga retrieval.jsonl). Estrategias:
+      no_context + 4 estrategias de retrieval. 1 agente: opencode.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "inversify-001"
+      - "inversify-002"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+    agents:
+      - "opencode"
+
+  generation_pilot_regression:
+    description: >-
+      Piloto de generacion en modo regresion. Solo incluye las tareas
+      con `regression:` en tasks.yaml y broken_patch validado en F0
+      (zod-001, zod-002, inversify-002, rxjs-001). inversify-001 y
+      rxjs-002 quedan fuera por no tener test discriminante
+      (ver eval/manifests/regression/STATUS.md). El agente parte de
+      un broken_state canonico y debe restaurar verde; M1 citable es
+      M1_regression_pass@1.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "inversify-002"
+      - "rxjs-001"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+    agents:
+      - "opencode"
+
 resource_limits:
   max_parallel_repos: 1
   max_parallel_tasks: 1
@@ -174,13 +267,13 @@ reproducibility:
 failure_policy:
   continue_on_task_failure: true
   continue_on_strategy_failure: true
-  continue_on_repo_prepare_failure: false
+  continue_on_repo_prepare_failure: true
   mark_generation_timeout_as_pass_fail: true
   write_error_records: true
 
 jsonl_schema_versions:
   retrieval: 1
-  generation: 1
+  generation: 2
   hallucination: 1
 
 artifact_naming:

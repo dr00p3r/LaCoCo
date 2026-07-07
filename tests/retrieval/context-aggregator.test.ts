@@ -66,7 +66,8 @@ describe("ContextAggregator", () => {
 
   describe("truncado por tokens", () => {
     it("trunca cuando la suma estimada supera maxTokens", () => {
-      const longText = "word ".repeat(1000); // ~1000 palabras ≈ 1333 tokens
+      // 1000 palabras "word " => ~1001 tokens con cl100k_base
+      const longText = "word ".repeat(1000);
       const chunks: ContextChunk[] = [
         chunk("A", 0.9, longText),
         chunk("B", 0.8, longText),
@@ -75,8 +76,9 @@ describe("ContextAggregator", () => {
       ];
 
       const result = aggregator.aggregate(chunks, 2000);
-      // Cada chunk ~1333 tokens, así que solo cabe 1
+      // Cada chunk ~1001 tokens; con budget 2000 cabe 1
       expect(result.length).toBeLessThanOrEqual(2);
+      expect(result.length).toBe(1);
     });
 
     it("no trunca si todos los chunks caben", () => {
@@ -96,6 +98,9 @@ describe("ContextAggregator", () => {
     });
 
     it("omite un chunk demasiado grande y conserva los siguientes que caben", () => {
+      // 100 palabras "word " => ~101 tokens con cl100k_base
+      // "short text" => 2 tokens
+      // budget 10 -> no cabe A (~101), cabe B (2)
       const chunks: ContextChunk[] = [
         chunk("A", 0.9, "word ".repeat(100)),
         chunk("B", 0.8, "short text"),
@@ -103,6 +108,19 @@ describe("ContextAggregator", () => {
 
       const result = aggregator.aggregate(chunks, 10);
       expect(result.map((item) => item.nodeId)).toEqual(["B"]);
+    });
+
+    it("cabe mas contenido que con la heuristica words/0.75 (delta de truncado)", () => {
+      // Con la heuristica vieja, 1000 palabras = ~1333 tokens, budget 1000 -> 0 chunks.
+      // Con cl100k_base, 1000 palabras = ~1001 tokens, budget 1000 -> 0 chunks tambien,
+      // pero con budget 1100 cabe 1 chunk (antes no cabia).
+      const longText = "word ".repeat(1000);
+      const chunks: ContextChunk[] = [
+        chunk("A", 0.9, longText),
+        chunk("B", 0.8, longText),
+      ];
+      const result = aggregator.aggregate(chunks, 1100);
+      expect(result.length).toBe(1);
     });
   });
 });

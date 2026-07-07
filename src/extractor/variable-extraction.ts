@@ -16,15 +16,16 @@
 import {
   Node,
   type SourceFile,
-  type ArrowFunction,
   type ObjectLiteralExpression,
-  type MethodDeclaration,
+  type Node as MorphNode,
 } from "ts-morph";
 import { type ExtractionCallbacks } from "./types.js";
 import {
   isDeprecated,
   buildArrowSignature,
   getMethodSignature,
+  resolveSymbolToId,
+  resolveTypeToId,
 } from "./utilities.js";
 import { analyzeCallable, extractDataFlow, traverseAst } from "./callable-analysis.js";
 
@@ -66,6 +67,7 @@ function extractObjectLiteralMethods(
           signature: buildArrowSignature(propName, init),
           isDeprecated: 0,
         });
+        cb.insertEdge(parentId, propId, "DECLARES");
         extractDataFlow(init, propId, cb);
         traverseAst(init, propId, cb);
       } else if (Node.isObjectLiteralExpression(init)) {
@@ -77,6 +79,7 @@ function extractObjectLiteralMethods(
           signature: `${propName}: { ... }`,
           isDeprecated: 0,
         });
+        cb.insertEdge(parentId, propId, "DECLARES");
         extractObjectLiteralMethods(init, propId, filePath, cb);
       }
     } else if (Node.isMethodDeclaration(prop)) {
@@ -90,6 +93,7 @@ function extractObjectLiteralMethods(
         signature: getMethodSignature(prop),
         isDeprecated: isDeprecated(prop.getSymbol()),
       });
+      cb.insertEdge(parentId, methodId, "DECLARES");
       analyzeCallable(prop, methodId, cb);
     }
   }
@@ -100,7 +104,7 @@ function extractObjectLiteralMethods(
 // ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * Extrae variables exportadas del módulo que contienen lógica de dominio.
+ * Extrae variables exportadas del módulo y sus dependencias estáticas.
  *
  * Solo se procesan declaraciones exportadas (las no-exportadas son internas).
  */
@@ -142,6 +146,38 @@ export function extractVariableDeclarations(
         isDeprecated: isDeprecated(varDecl.getSymbol()),
       });
       extractObjectLiteralMethods(initializer, nodeId, filePath, cb);
+    } else {
+      cb.insertNode({
+        id: nodeId,
+        kind: "VARIABLE",
+        name: varName,
+        filepath: filePath,
+        signature: varDecl.getText(),
+        isDeprecated: isDeprecated(varDecl.getSymbol()),
+      });
+      if (Node.isNewExpression(initializer)) {
+        const targetId = resolveTypeToId(initializer.getType());
+        if (targetId) cb.insertEdge(nodeId, targetId, "INSTANTIATES");
+      }
     }
+
+    extractInitializerReferences(initializer, nodeId, cb);
   }
+}
+
+function extractInitializerReferences(
+  root: MorphNode,
+  sourceId: string,
+  cb: ExtractionCallbacks,
+): void {
+  const seen = new Set<string>();
+  const visit = (node: MorphNode): void => {
+    if (!Node.isIdentifier(node)) return;
+    const targetId = resolveSymbolToId(node.getSymbol());
+    if (!targetId || targetId === sourceId || seen.has(targetId)) return;
+    seen.add(targetId);
+    cb.insertEdge(sourceId, targetId, "REFERENCES");
+  };
+  visit(root);
+  root.forEachDescendant(visit);
 }

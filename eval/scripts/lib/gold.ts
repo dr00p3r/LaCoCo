@@ -1,5 +1,6 @@
 import { asNumber, asRecord, asString } from "./config.js";
 import type { GraphLookup } from "./graph-reader.js";
+import { resolveNodeId } from "./node-id.js";
 import type { TaskDefinition } from "./types.js";
 
 export interface RetrievalCandidate {
@@ -146,7 +147,8 @@ export function renderGroundTruthWorksheet(
     "### Deterministic input",
     "",
     "```yaml",
-    `clean_query: ${JSON.stringify(task.deterministic_input.clean_query)}`,
+    `retrieval_query: ${JSON.stringify(task.deterministic_input.retrieval_input.query)}`,
+    `oracle_query: ${JSON.stringify(task.deterministic_input.oracle_input?.query ?? null)}`,
     `embedding_input: ${JSON.stringify(task.deterministic_input.embedding_input)}`,
     `intent: ${JSON.stringify(task.deterministic_input.intent)}`,
     "dimensions:",
@@ -173,12 +175,14 @@ export function renderGroundTruthWorksheet(
     "- `multihop_nodes` debe ser subconjunto de `relevant_nodes`.",
     "- No marcar `ready` si `relevant_nodes` esta vacio.",
     "- Copiar `target_tests` al campo de nivel tarea `target_tests` en `tasks.yaml`.",
+    "- Anotar `translation_gold.relevant_terms` manualmente; los candidatos no son gold.",
     "",
     "## Editable annotation",
     "",
     "```yaml",
     "gold:",
     "  status: ready",
+    `  primary_anchor: ${JSON.stringify(task.gold.primary_anchor)}`,
     "  relevant_nodes:",
     ...yamlList(task.gold.relevant_nodes),
     "  multihop_nodes:",
@@ -186,6 +190,14 @@ export function renderGroundTruthWorksheet(
     "  target_tests:",
     ...yamlList(task.target_tests),
     `  annotation_notes: ${JSON.stringify(task.gold.annotation_notes)}`,
+    "```",
+    "",
+    "```yaml",
+    "translation_gold:",
+    "  status: ready",
+    "  relevant_terms:",
+    ...yamlList(task.translation_gold.relevant_terms),
+    `  annotation_notes: ${JSON.stringify(task.translation_gold.annotation_notes)}`,
     "```",
     "",
   ].join("\n");
@@ -204,13 +216,42 @@ function emptyStringIssues(field: string, values: string[]): ValidationIssue[] {
 export function validateTaskGold(
   task: TaskDefinition,
   graph: GraphLookup | null,
+  repoPath: string,
   graphWarning?: string,
 ): TaskGoldValidation {
   const issues: ValidationIssue[] = [
     ...emptyStringIssues("relevant_nodes", task.gold.relevant_nodes),
     ...emptyStringIssues("multihop_nodes", task.gold.multihop_nodes),
     ...emptyStringIssues("target_tests", task.target_tests),
+    ...emptyStringIssues("translation_gold.relevant_terms", task.translation_gold.relevant_terms),
+    ...(task.regression
+      ? emptyStringIssues("regression.grading_tests", task.regression.grading_tests)
+      : []),
   ];
+  if (task.gold.status === "ready" && task.regression === undefined) {
+    issues.push({
+      level: "warning",
+      code: "regression_required_for_generation",
+      message: "ready task without regression: cannot be used in generation_pilot_regression; "
+        + "see eval/manifests/regression/STATUS.md for tasks excluded from the regression pilot",
+    });
+  }
+  if (task.regression !== undefined) {
+    if (!/^[0-9a-f]{40}$/i.test(task.regression.base_commit)) {
+      issues.push({
+        level: "error",
+        code: "regression_invalid_base_commit",
+        message: `regression.base_commit must be a 40-char SHA-1: ${task.regression.base_commit}`,
+      });
+    }
+  }
+  if (task.translation_gold.status === "ready" && task.translation_gold.relevant_terms.length === 0) {
+    issues.push({
+      level: "error",
+      code: "ready_without_translation_terms",
+      message: "ready translation gold must contain at least one relevant term",
+    });
+  }
   const relevant = new Set(task.gold.relevant_nodes);
   for (const nodeId of task.gold.multihop_nodes) {
     if (!relevant.has(nodeId)) {
@@ -221,6 +262,9 @@ export function validateTaskGold(
       });
     }
   }
+  const anchor = task.gold.primary_anchor === null || task.gold.primary_anchor.trim().length === 0
+    ? null
+    : task.gold.primary_anchor.trim();
   if (task.gold.status === "ready") {
     if (task.gold.relevant_nodes.length === 0) {
       issues.push({
@@ -236,12 +280,30 @@ export function validateTaskGold(
         message: "ready task must define target_tests before generation",
       });
     }
+    if (anchor === null) {
+      issues.push({
+        level: "error",
+        code: "ready_without_primary_anchor",
+        message: "ready task must annotate gold.primary_anchor so multihop distances are auditable",
+      });
+    } else if (!relevant.has(anchor)) {
+      issues.push({
+        level: "error",
+        code: "anchor_not_relevant",
+        message: `primary_anchor must also appear in relevant_nodes: ${anchor}`,
+      });
+    }
   }
 
-  const annotatedNodeIds = [...new Set([
+  // Gold node ids are repo-relative; resolve to absolute to compare against the
+  // graph (which stores absolute paths). Keep the relative id for messages.
+  const uniqueRelIds = [...new Set([
     ...task.gold.relevant_nodes,
     ...task.gold.multihop_nodes,
+    ...(anchor === null ? [] : [anchor]),
   ].filter((value) => value.trim().length > 0))];
+  const absById = new Map(uniqueRelIds.map((rel) => [rel, resolveNodeId(rel, repoPath)]));
+
   if (graph === null) {
     issues.push({
       level: "warning",
@@ -249,20 +311,50 @@ export function validateTaskGold(
       message: graphWarning ?? "graph database is unavailable; node IDs were not checked",
     });
   } else {
-    for (const nodeId of graph.findMissingNodeIds(annotatedNodeIds)) {
-      issues.push({
-        level: "error",
-        code: "node_not_in_graph",
-        message: `annotated node does not exist in graph: ${nodeId}`,
-      });
+    const missingAbs = new Set(graph.findMissingNodeIds([...absById.values()]));
+    for (const [rel, abs] of absById) {
+      if (missingAbs.has(abs)) {
+        issues.push({
+          level: "error",
+          code: rel === anchor ? "anchor_not_in_graph" : "node_not_in_graph",
+          message: `annotated node does not exist in graph: ${rel}`,
+        });
+      }
     }
-  }
-  if (task.gold.multihop_nodes.length > 0) {
-    issues.push({
-      level: "warning",
-      code: "multihop_distance_not_checked",
-      message: "multihop distance was not checked because no primary anchor is annotated",
-    });
+    // Recompute multihop distances from the anchor so M6 gold is auditable.
+    const anchorAbs = anchor === null ? null : absById.get(anchor)!;
+    if (anchorAbs !== null && !missingAbs.has(anchorAbs)) {
+      const distances = graph.distancesFrom(anchorAbs);
+      for (const rel of task.gold.multihop_nodes) {
+        if (rel.trim().length === 0 || missingAbs.has(absById.get(rel)!)) continue;
+        const distance = distances.get(absById.get(rel)!);
+        if (distance === undefined) {
+          issues.push({
+            level: "error",
+            code: "multihop_unreachable",
+            message: `multihop node is not reachable from the anchor in the graph: ${rel}`,
+          });
+        } else if (distance < 2) {
+          issues.push({
+            level: "error",
+            code: "multihop_distance_lt_2",
+            message: `multihop node is at distance ${distance} (<2) from the anchor: ${rel}`,
+          });
+        }
+      }
+      // Relevant-but-disconnected nodes are legitimate (types/consts with no
+      // static edge) but cannot be recalled via graph traversal; surface them.
+      for (const rel of task.gold.relevant_nodes) {
+        if (rel.trim().length === 0 || rel === anchor || missingAbs.has(absById.get(rel)!)) continue;
+        if (!distances.has(absById.get(rel)!)) {
+          issues.push({
+            level: "warning",
+            code: "relevant_node_disconnected",
+            message: `relevant node is disconnected from the anchor subgraph: ${rel}`,
+          });
+        }
+      }
+    }
   }
 
   const invalid = issues.some(({ level }) => level === "error");

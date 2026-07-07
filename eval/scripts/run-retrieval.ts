@@ -14,7 +14,24 @@ import { loadManifests } from "./lib/load-manifests.js";
 import { PROJECT_ROOT } from "./lib/paths.js";
 import { readRepositoriesLock, type LockedRepository } from "./lib/repo-lock.js";
 import {
+  EMBEDDING_MODEL,
+  EMBEDDING_DIM,
+  EMBEDDING_QUANTIZED,
+} from "../../src/embeddings/embedding-config.js";
+import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
+import { resolveDbPath } from "../../src/cli/storage-paths.js";
+import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
+import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
+import { AgentIntermediary1 } from "../../src/retriever/utilities/mini-agents/agent-intermediary/index.js";
+import { SlmClassifier } from "../../src/retriever/utilities/mini-agents/agent-intermediary/classifier.js";
+import { QueryGrounder } from "../../src/semantic-profile/query-grounder.js";
+import { SemanticProfileStore } from "../../src/semantic-profile/semantic-profile-store.js";
+import type { QueryGrounding } from "../../src/semantic-profile/types.js";
+import { OllamaService } from "../../src/slms/ollama-service.js";
+import {
   parseRetrievalJson,
+  type ParsedClassification,
+  type ParsedGrounding,
   type RankedNode,
   type RetrievalError,
 } from "./lib/retrieval-record.js";
@@ -25,12 +42,26 @@ interface RetrievalSettings {
   enabled: boolean;
   timeoutMs: number;
   useDeterministicInput: boolean;
+  sanitizerVariants: SanitizerVariant[];
   schemaVersion: number;
   taskIds?: Set<string>;
   repoIds?: Set<string>;
   strategyIds: Set<string>;
+  requireGoldStatus?: string;
   continueOnTaskFailure: boolean;
   continueOnStrategyFailure: boolean;
+}
+
+type SanitizerVariant = "deterministic" | "baseline" | "grounded" | "oracle";
+type RecordedSanitizerVariant = SanitizerVariant | "agent_intermediary";
+
+interface QuerySelection {
+  query: string;
+  query_source: RetrievalRecord["query_source"];
+  sanitizer_source: RetrievalRecord["sanitizer_source"];
+  sanitizerVariant: RecordedSanitizerVariant;
+  encodedSanitizer: string;
+  sanitizerDurationMs: number;
 }
 
 interface RetrievalArtifactPaths {
@@ -50,6 +81,7 @@ interface RetrievalRecord {
   query: string;
   query_source: "task.prompt" | "deterministic_input.embedding_input";
   sanitizer_source: "agent_intermediary" | "task.deterministic_input";
+  sanitizer_variant: RecordedSanitizerVariant;
   gold_status: string;
   metrics_eligibility: {
     m3_m6: boolean;
@@ -57,10 +89,16 @@ interface RetrievalRecord {
   };
   ranked_nodes: RankedNode[];
   effective_parameters: Record<string, number> | null;
-  timings_ms: { total: number };
+  classification: ParsedClassification | null;
+  grounding: ParsedGrounding | null;
+  timings_ms: {
+    total: number;
+    sanitizer: number;
+    retrieval: number;
+  };
   exit_code: number | null;
   error: RetrievalError | null;
-  artifact_paths: RetrievalArtifactPaths;
+  artifact_paths: RetrievalArtifactPaths & { sanitizer_json: string | null };
 }
 
 function optionalSelection(
@@ -95,6 +133,18 @@ function readSettings(runManifest: Record<string, unknown>, requestedSplit?: str
   const strategyIds = splitStrategies === undefined
     ? phaseStrategies
     : new Set([...phaseStrategies].filter((id) => splitStrategies.has(id)));
+  const variantValues = split.sanitizer_variants === undefined
+    ? asStringArray(retrieval.sanitizer_variants, "run.yaml.phases.retrieval.sanitizer_variants")
+    : asStringArray(split.sanitizer_variants, `run.yaml.splits.${splitName}.sanitizer_variants`);
+  const sanitizerVariants = variantValues.map((value): SanitizerVariant => {
+    if (value !== "deterministic" && value !== "baseline" && value !== "grounded" && value !== "oracle") {
+      throw new Error(`unsupported sanitizer variant: ${value}`);
+    }
+    return value;
+  });
+  const requireGoldStatus = split.require_gold_status === undefined
+    ? undefined
+    : asString(split.require_gold_status, `run.yaml.splits.${splitName}.require_gold_status`);
 
   return {
     splitName,
@@ -104,10 +154,12 @@ function readSettings(runManifest: Record<string, unknown>, requestedSplit?: str
       retrieval.use_deterministic_sanitizer,
       "run.yaml.phases.retrieval.use_deterministic_sanitizer",
     ),
+    sanitizerVariants,
     schemaVersion: asNumber(versions.retrieval, "run.yaml.jsonl_schema_versions.retrieval"),
     ...(taskIds === undefined ? {} : { taskIds }),
     ...(repoIds === undefined ? {} : { repoIds }),
     strategyIds,
+    ...(requireGoldStatus === undefined ? {} : { requireGoldStatus }),
     continueOnTaskFailure: asBoolean(
       failure.continue_on_task_failure,
       "run.yaml.failure_policy.continue_on_task_failure",
@@ -146,6 +198,7 @@ function assertRequestedIdsExist(
 function selectTasks(tasks: TaskDefinition[], settings: RetrievalSettings): TaskDefinition[] {
   return tasks.filter((task) =>
     task.enabled !== false &&
+    (settings.requireGoldStatus === undefined || task.gold.status === settings.requireGoldStatus) &&
     (settings.taskIds === undefined || settings.taskIds.has(task.id)) &&
     (settings.repoIds === undefined || settings.repoIds.has(task.repo_id)),
   );
@@ -163,57 +216,117 @@ function selectStrategies(
   );
 }
 
-function selectQuery(
+function encodeSanitizer(sanitizer: SanitizerOutput): string {
+  return Buffer.from(JSON.stringify(sanitizer), "utf8").toString("base64url");
+}
+
+function deterministicQuerySelection(
   task: TaskDefinition,
-  useDeterministicInput: boolean,
-): Pick<RetrievalRecord, "query" | "query_source" | "sanitizer_source"> & {
-  deterministicSanitizer?: string;
-} {
-  if (useDeterministicInput) {
-    const sanitizer = {
-      route: "RAG",
-      clean_query: task.deterministic_input.clean_query,
-      embedding_input: task.deterministic_input.embedding_input,
-      intent: task.deterministic_input.intent,
-      dimensions: task.deterministic_input.dimensions,
-      confidence: 1,
-    };
-    return {
-      query: task.deterministic_input.embedding_input,
-      query_source: "deterministic_input.embedding_input",
-      sanitizer_source: "task.deterministic_input",
-      deterministicSanitizer: Buffer.from(JSON.stringify(sanitizer), "utf8").toString("base64url"),
-    };
+  variant: "deterministic" | "oracle",
+): QuerySelection {
+  const cleanQuery = variant === "oracle"
+    ? task.deterministic_input.oracle_input?.query
+    : task.deterministic_input.retrieval_input.query;
+  if (cleanQuery === undefined) {
+    throw new Error(`task ${task.id} has no oracle_input.query required by the oracle sanitizer variant`);
   }
+  const sanitizer = {
+    route: "RAG",
+    clean_query: cleanQuery,
+    embedding_input: task.deterministic_input.embedding_input,
+    intent: task.deterministic_input.intent,
+    dimensions: task.deterministic_input.dimensions,
+    confidence: 1,
+  } as SanitizerOutput;
   return {
+    query: task.deterministic_input.embedding_input,
+    query_source: "deterministic_input.embedding_input",
+    sanitizer_source: "task.deterministic_input",
+    sanitizerVariant: variant,
+    encodedSanitizer: encodeSanitizer(sanitizer),
+    sanitizerDurationMs: 0,
+  };
+}
+
+function recordedSlmVariant(variant: SanitizerVariant): RecordedSanitizerVariant {
+  return variant === "deterministic" ? "agent_intermediary" : variant;
+}
+
+function dryRunSlmSelection(task: TaskDefinition, variant: SanitizerVariant): QuerySelection {
+  const placeholder = deterministicQuerySelection(task, "deterministic");
+  return {
+    ...placeholder,
     query: task.prompt,
     query_source: "task.prompt",
     sanitizer_source: "agent_intermediary",
+    sanitizerVariant: recordedSlmVariant(variant),
   };
+}
+
+async function freezeSlmQuery(
+  task: TaskDefinition,
+  variant: SanitizerVariant,
+  repoPath: string,
+): Promise<{ selection: QuerySelection; sanitizer: SanitizerOutput; grounding: QueryGrounding | null }> {
+  const ollama = new OllamaService(
+    resolveStringConfig("agent.endpoint"),
+    resolveStringConfig("agent.model"),
+    resolveNumberConfig("timeout.ms"),
+  );
+  let db: LaCoCoDatabase | undefined;
+  try {
+    if (!await ollama.isAvailable()) {
+      throw new Error("Ollama no disponible para congelar el sanitizer de la tarea");
+    }
+    const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
+    let grounding: QueryGrounding | null = null;
+    let sanitizer: SanitizerOutput;
+    const startedAt = performance.now();
+    if (variant === "grounded") {
+      db = new LaCoCoDatabase(resolveDbPath(repoPath));
+      grounding = new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(task.prompt);
+      sanitizer = (await intermediary.sanitizeDetailed(task.prompt, grounding)).output;
+    } else {
+      sanitizer = await intermediary.sanitize(task.prompt);
+    }
+    const sanitizerDurationMs = Math.round(performance.now() - startedAt);
+    if (sanitizer.route !== "RAG") {
+      throw new Error(`task ${task.id}: el sanitizer congelado produjo route=${sanitizer.route}; retrieval requiere RAG`);
+    }
+    return {
+      selection: {
+        query: task.prompt,
+        query_source: "task.prompt",
+        sanitizer_source: "agent_intermediary",
+        sanitizerVariant: recordedSlmVariant(variant),
+        encodedSanitizer: encodeSanitizer(sanitizer),
+        sanitizerDurationMs,
+      },
+      sanitizer,
+      grounding,
+    };
+  } finally {
+    db?.close();
+    ollama.abort();
+  }
+}
+
+function usesSlm(variant: SanitizerVariant, explicitUseSlm: boolean): boolean {
+  return explicitUseSlm || variant === "baseline" || variant === "grounded";
 }
 
 function buildCommand(
   repoPath: string,
   query: string,
   lacocoStrategy: string,
-  deterministicSanitizer?: string,
+  encodedSanitizer: string,
 ): string {
-  if (deterministicSanitizer !== undefined) {
-    return [
-      "npm run --silent eval:retrieve:deterministic --",
-      shellQuote(repoPath),
-      shellQuote(query),
-      shellQuote(lacocoStrategy),
-      shellQuote(deterministicSanitizer),
-    ].join(" ");
-  }
   return [
-    "npm run dev -- retrieve",
+    "npm run --silent eval:retrieve:deterministic --",
     shellQuote(repoPath),
     shellQuote(query),
-    "--strategy",
     shellQuote(lacocoStrategy),
-    "--json",
+    shellQuote(encodedSanitizer),
   ].join(" ");
 }
 
@@ -221,8 +334,9 @@ function artifactPaths(
   artifactsDirectory: string,
   taskId: string,
   strategyId: string,
+  sanitizerVariant: RecordedSanitizerVariant,
 ): { absolute: RetrievalArtifactPaths; relative: RetrievalArtifactPaths } {
-  const directory = join(artifactsDirectory, taskId, strategyId);
+  const directory = join(artifactsDirectory, taskId, strategyId, sanitizerVariant);
   const absolute = {
     context_json: join(directory, "context.json"),
     stdout_log: join(directory, "stdout.log"),
@@ -238,6 +352,35 @@ function artifactPaths(
       command_log: relative(PROJECT_ROOT, absolute.command_log),
     },
   };
+}
+
+function writeFrozenSanitizerArtifact(
+  artifactsDirectory: string,
+  task: TaskDefinition,
+  selection: QuerySelection,
+  sanitizer: SanitizerOutput,
+  grounding: QueryGrounding | null,
+): string {
+  const outputPath = join(
+    artifactsDirectory,
+    task.id,
+    "_sanitizer",
+    `${selection.sanitizerVariant}.json`,
+  );
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, `${JSON.stringify({
+    schema_version: 1,
+    task_id: task.id,
+    repo_id: task.repo_id,
+    query: selection.query,
+    query_source: selection.query_source,
+    sanitizer_source: selection.sanitizer_source,
+    sanitizer_variant: selection.sanitizerVariant,
+    duration_ms: selection.sanitizerDurationMs,
+    output: sanitizer,
+    grounding,
+  }, null, 2)}\n`, "utf8");
+  return relative(PROJECT_ROOT, outputPath);
 }
 
 function describeExecution(
@@ -272,6 +415,8 @@ async function executeRetrieval(
   result: CommandResult;
   rankedNodes: RankedNode[];
   effectiveParameters: Record<string, number> | null;
+  classification: ParsedClassification | null;
+  grounding: ParsedGrounding | null;
   error: RetrievalError | null;
 }> {
   let result: CommandResult;
@@ -315,6 +460,8 @@ async function executeRetrieval(
     result,
     rankedNodes: parsed.rankedNodes,
     effectiveParameters: parsed.effectiveParameters,
+    classification: parsed.classification,
+    grounding: parsed.grounding,
     error,
   };
 }
@@ -341,8 +488,9 @@ function createRecord(
   runId: string,
   task: TaskDefinition,
   strategy: StrategyDefinition & { lacoco_strategy: string },
-  querySelection: Pick<RetrievalRecord, "query" | "query_source" | "sanitizer_source">,
+  querySelection: QuerySelection,
   paths: RetrievalArtifactPaths,
+  sanitizerArtifactPath: string | null,
   execution: Awaited<ReturnType<typeof executeRetrieval>>,
 ): RetrievalRecord {
   const eligible = task.gold.status === "ready";
@@ -351,9 +499,15 @@ function createRecord(
     run_id: runId,
     task_id: task.id,
     repo_id: task.repo_id,
-    strategy_id: strategy.id,
+    strategy_id: querySelection.sanitizerVariant === "deterministic"
+      || querySelection.sanitizerVariant === "agent_intermediary"
+      ? strategy.id
+      : `${strategy.id}@${querySelection.sanitizerVariant}`,
     lacoco_strategy: strategy.lacoco_strategy,
-    ...querySelection,
+    query: querySelection.query,
+    query_source: querySelection.query_source,
+    sanitizer_source: querySelection.sanitizer_source,
+    sanitizer_variant: querySelection.sanitizerVariant,
     gold_status: task.gold.status,
     metrics_eligibility: {
       m3_m6: eligible,
@@ -361,10 +515,16 @@ function createRecord(
     },
     ranked_nodes: execution.rankedNodes,
     effective_parameters: execution.effectiveParameters,
-    timings_ms: { total: execution.result.durationMs },
+    classification: execution.classification,
+    grounding: execution.grounding,
+    timings_ms: {
+      total: execution.result.durationMs + querySelection.sanitizerDurationMs,
+      sanitizer: querySelection.sanitizerDurationMs,
+      retrieval: execution.result.durationMs,
+    },
     exit_code: execution.result.exitCode,
     error: execution.error,
-    artifact_paths: paths,
+    artifact_paths: { ...paths, sanitizer_json: sanitizerArtifactPath },
   };
 }
 
@@ -376,6 +536,8 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
     "--task-id",
     "--strategy-id",
     "--split",
+    "--sanitizer-variant",
+    "--use-slm",
   ]);
   const manifests = loadManifests();
   assertRequestedIdsExist(options, manifests);
@@ -388,11 +550,20 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   const strategies = selectStrategies(manifests.strategies.strategies, settings).filter(
     ({ id }) => options.strategyId === undefined || id === options.strategyId,
   );
+  const sanitizerVariants = settings.sanitizerVariants.filter((variant) =>
+    options.sanitizerVariant === undefined || variant === options.sanitizerVariant
+  );
   if (tasks.length === 0) {
     throw new Error(`no tasks matched the combined filters for split ${settings.splitName}`);
   }
   if (strategies.length === 0) {
     throw new Error(`no strategies matched the combined filters for split ${settings.splitName}`);
+  }
+  if (sanitizerVariants.length === 0) {
+    throw new Error(`sanitizer variant filter matched no entries: ${String(options.sanitizerVariant)}`);
+  }
+  if (options.useSlm === true && sanitizerVariants.includes("oracle")) {
+    throw new Error("--use-slm cannot be combined with the oracle sanitizer variant");
   }
   const selectedRepoIds = [...new Set(tasks.map(({ repo_id }) => repo_id))].sort();
   const outputPath = join(layout.runDirectory, "retrieval.jsonl");
@@ -405,7 +576,9 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   console.log(`Selected repositories (${selectedRepoIds.length}): ${selectedRepoIds.join(", ")}`);
   console.log(`Selected tasks (${tasks.length}): ${tasks.map(({ id }) => id).join(", ")}`);
   console.log(`Selected strategies (${strategies.length}): ${strategies.map(({ id }) => id).join(", ")}`);
-  console.log(`Combinations: ${tasks.length * strategies.length}`);
+  console.log(`Sanitizer variants (${sanitizerVariants.length}): ${sanitizerVariants.join(", ")}`);
+  console.log(`SLM intermediary: ${options.useSlm === true ? `active and frozen once per task (${resolveStringConfig("agent.model")})` : "selected by sanitizer variant"}`);
+  console.log(`Combinations: ${tasks.length * strategies.length * sanitizerVariants.length}`);
   if (!settings.enabled) {
     console.log("Retrieval phase is disabled by run.yaml.");
     return;
@@ -440,6 +613,22 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
     mkdirSync(layout.runDirectory, { recursive: true });
     mkdirSync(layout.artifactsDirectory, { recursive: true });
     writeFileSync(outputPath, "", "utf8");
+    // Registra qué embedding produjo este retrieval, para comparar corridas
+    // (p. ej. baseline all-MiniLM vs code-aware) sin ambigüedad.
+    writeFileSync(
+      join(layout.runDirectory, "embedding-metadata.json"),
+      `${JSON.stringify(
+        {
+          embedding_model: EMBEDDING_MODEL,
+          embedding_dim: EMBEDDING_DIM,
+          embedding_quantized: EMBEDDING_QUANTIZED,
+          generated_at: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
   }
 
   const failures: string[] = [];
@@ -453,53 +642,92 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
       continue;
     }
 
-    for (const strategy of strategies) {
-      const querySelection = selectQuery(task, settings.useDeterministicInput);
-      const command = buildCommand(
-        locked.repoPath,
-        querySelection.query,
-        strategy.lacoco_strategy,
-        querySelection.deterministicSanitizer,
-      );
-      const paths = artifactPaths(layout.artifactsDirectory, task.id, strategy.id);
-      describeExecution(task, strategy, querySelection.query, command, paths.relative);
-      if (options.dryRun) {
+    for (const sanitizerVariant of sanitizerVariants) {
+      let querySelection: QuerySelection;
+      let sanitizerArtifactPath: string | null = null;
+      try {
+        if (usesSlm(sanitizerVariant, options.useSlm === true)) {
+          if (options.dryRun) {
+            querySelection = dryRunSlmSelection(task, sanitizerVariant);
+          } else {
+            const frozen = await freezeSlmQuery(task, sanitizerVariant, locked.repoPath);
+            querySelection = frozen.selection;
+            sanitizerArtifactPath = writeFrozenSanitizerArtifact(
+              layout.artifactsDirectory,
+              task,
+              frozen.selection,
+              frozen.sanitizer,
+              frozen.grounding,
+            );
+          }
+        } else {
+          if (sanitizerVariant !== "deterministic" && sanitizerVariant !== "oracle") {
+            throw new Error(`sanitizer variant ${sanitizerVariant} requires the SLM intermediary`);
+          }
+          querySelection = deterministicQuerySelection(task, sanitizerVariant);
+        }
+      } catch (error) {
+        failures.push(`${task.id} x ${sanitizerVariant}: no se pudo congelar el sanitizer: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(failures.at(-1));
+        if (!settings.continueOnTaskFailure) stop = true;
+        if (stop) break;
         continue;
       }
 
-      try {
-        const execution = await executeRetrieval(
-          command,
-          settings.timeoutMs,
-          paths,
-          strategy.parameters,
+      for (const strategy of strategies) {
+        const command = buildCommand(
+          locked.repoPath,
+          querySelection.query,
+          strategy.lacoco_strategy,
+          querySelection.encodedSanitizer,
         );
-        const record = createRecord(
-          settings,
-          layout.runId,
-          task,
-          strategy,
-          querySelection,
-          paths.relative,
-          execution,
+        const paths = artifactPaths(
+          layout.artifactsDirectory,
+          task.id,
+          strategy.id,
+          querySelection.sanitizerVariant,
         );
-        appendFileSync(outputPath, `${JSON.stringify(record)}\n`, "utf8");
-        if (record.error !== null) {
-          failures.push(`${task.id} x ${strategy.id}: ${record.error.message}`);
+        describeExecution(task, strategy, querySelection.query, command, paths.relative);
+        if (options.dryRun) {
+          continue;
+        }
+
+        try {
+          const execution = await executeRetrieval(
+            command,
+            settings.timeoutMs,
+            paths,
+            strategy.parameters,
+          );
+          const record = createRecord(
+            settings,
+            layout.runId,
+            task,
+            strategy,
+            querySelection,
+            paths.relative,
+            sanitizerArtifactPath,
+            execution,
+          );
+          appendFileSync(outputPath, `${JSON.stringify(record)}\n`, "utf8");
+          if (record.error !== null) {
+            failures.push(`${task.id} x ${strategy.id} x ${querySelection.sanitizerVariant}: ${record.error.message}`);
+            console.error(failures.at(-1));
+            if (!settings.continueOnStrategyFailure) {
+              stop = true;
+              break;
+            }
+          }
+        } catch (error) {
+          failures.push(`${task.id} x ${strategy.id} x ${querySelection.sanitizerVariant}: ${error instanceof Error ? error.message : String(error)}`);
           console.error(failures.at(-1));
           if (!settings.continueOnStrategyFailure) {
             stop = true;
             break;
           }
         }
-      } catch (error) {
-        failures.push(`${task.id} x ${strategy.id}: ${error instanceof Error ? error.message : String(error)}`);
-        console.error(failures.at(-1));
-        if (!settings.continueOnStrategyFailure) {
-          stop = true;
-          break;
-        }
       }
+      if (stop) break;
     }
     if (stop || (failures.length > 0 && !settings.continueOnTaskFailure)) {
       break;

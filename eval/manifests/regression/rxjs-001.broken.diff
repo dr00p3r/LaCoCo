@@ -1,0 +1,12 @@
+diff --git a/src/internal/operators/mergeInternals.ts b/src/internal/operators/mergeInternals.ts
+--- a/src/internal/operators/mergeInternals.ts
++++ b/src/internal/operators/mergeInternals.ts
+@@ -44,7 +44,7 @@ export function mergeInternals<T, R>(
+     // If the outer has completed, and nothing is left in the buffer,
+     // and we don't have any active inner subscriptions, then we can
+     // Emit the state and complete.
+-    if (isComplete && !buffer.length && !active) {
++    if (isComplete && !buffer.length) {
+       subscriber.complete();
+     }
+   };

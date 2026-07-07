@@ -18,6 +18,10 @@
     "eval:retrieve:deterministic": "node --import tsx eval/scripts/deterministic-retrieve.ts",
     "eval:retrieval": "node --import tsx eval/scripts/run-retrieval.ts",
     "eval:metrics:retrieval": "node --import tsx eval/scripts/compute-retrieval-metrics.ts",
+    "eval:metrics:semantic-profile": "node --import tsx eval/scripts/compute-semantic-profile-metrics.ts",
+    "eval:generation": "node --import tsx eval/scripts/run-generation.ts",
+    "eval:hallucination": "node --import tsx eval/scripts/analyze-hallucinations.ts",
+    "eval:metrics:generation": "node --import tsx eval/scripts/compute-generation-metrics.ts",
     "eval:gold:worksheet": "node --import tsx eval/scripts/create-ground-truth-worksheet.ts",
     "eval:gold:validate": "node --import tsx eval/scripts/validate-ground-truth.ts",
     "test": "vitest run --config vitest.lacoco.config.ts",
@@ -38,6 +42,7 @@
     "better-sqlite3": "^12.8.0",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
+    "gpt-tokenizer": "^3.4.0",
     "ts-morph": "^27.0.2"
   },
   "overrides": {

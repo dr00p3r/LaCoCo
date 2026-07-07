@@ -252,7 +252,24 @@ function validateTasks(value: unknown, file: string): TasksManifest {
     const path = `tasks[${index}]`;
     const item = record(entry, file, path);
     const deterministic = record(item.deterministic_input, file, `${path}.deterministic_input`);
+    // retrieval_input.query is the principal (natural) query. Fall back to the
+    // legacy `clean_query` field so pre-migration manifests still load.
+    const retrievalInput = deterministic.retrieval_input === undefined
+      ? { query: string(deterministic.clean_query, file, `${path}.deterministic_input.clean_query`) }
+      : (() => {
+        const ri = record(deterministic.retrieval_input, file, `${path}.deterministic_input.retrieval_input`);
+        return { query: string(ri.query, file, `${path}.deterministic_input.retrieval_input.query`) };
+      })();
+    const oracleInput = deterministic.oracle_input === undefined || deterministic.oracle_input === null
+      ? null
+      : (() => {
+        const oi = record(deterministic.oracle_input, file, `${path}.deterministic_input.oracle_input`);
+        return { query: string(oi.query, file, `${path}.deterministic_input.oracle_input.query`) };
+      })();
     const gold = record(item.gold, file, `${path}.gold`);
+    const translationGold = item.translation_gold === undefined
+      ? { status: "pending_manual_annotation", relevant_terms: [], annotation_notes: "Pendiente de anotación manual." }
+      : record(item.translation_gold, file, `${path}.translation_gold`);
     return {
       ...item,
       id: string(item.id, file, `${path}.id`),
@@ -262,7 +279,8 @@ function validateTasks(value: unknown, file: string): TasksManifest {
       difficulty: string(item.difficulty, file, `${path}.difficulty`),
       prompt: string(item.prompt, file, `${path}.prompt`),
       deterministic_input: {
-        clean_query: string(deterministic.clean_query, file, `${path}.deterministic_input.clean_query`),
+        retrieval_input: retrievalInput,
+        oracle_input: oracleInput,
         embedding_input: string(deterministic.embedding_input, file, `${path}.deterministic_input.embedding_input`),
         intent: string(deterministic.intent, file, `${path}.deterministic_input.intent`),
         dimensions: strings(deterministic.dimensions, file, `${path}.deterministic_input.dimensions`),
@@ -271,10 +289,47 @@ function validateTasks(value: unknown, file: string): TasksManifest {
       target_tests: strings(item.target_tests, file, `${path}.target_tests`),
       gold: {
         status: string(gold.status, file, `${path}.gold.status`),
+        primary_anchor: gold.primary_anchor === undefined || gold.primary_anchor === null
+          ? null
+          : string(gold.primary_anchor, file, `${path}.gold.primary_anchor`),
         relevant_nodes: strings(gold.relevant_nodes, file, `${path}.gold.relevant_nodes`),
         multihop_nodes: strings(gold.multihop_nodes, file, `${path}.gold.multihop_nodes`),
         annotation_notes: string(gold.annotation_notes, file, `${path}.gold.annotation_notes`),
       },
+      translation_gold: {
+        status: string(translationGold.status, file, `${path}.translation_gold.status`),
+        relevant_terms: strings(
+          translationGold.relevant_terms,
+          file,
+          `${path}.translation_gold.relevant_terms`,
+        ),
+        annotation_notes: string(
+          translationGold.annotation_notes,
+          file,
+          `${path}.translation_gold.annotation_notes`,
+        ),
+      },
+      ...(item.regression === undefined
+        ? {}
+        : {
+            regression: {
+              base_commit: string(
+                (item.regression as Record<string, unknown>).base_commit,
+                file,
+                `${path}.regression.base_commit`,
+              ),
+              broken_patch: string(
+                (item.regression as Record<string, unknown>).broken_patch,
+                file,
+                `${path}.regression.broken_patch`,
+              ),
+              grading_tests: strings(
+                (item.regression as Record<string, unknown>).grading_tests ?? [],
+                file,
+                `${path}.regression.grading_tests`,
+              ),
+            },
+          }),
     } satisfies TaskDefinition;
   });
   assertUniqueIds(tasks, file, "tasks");

@@ -1,6 +1,6 @@
 # LaCoCo: propuestas de retrieval y estado actual
 
-> Estado verificado contra el código el 2026-06-27.
+> Estado verificado contra el código el 2026-07-05.
 >
 > Este documento reemplaza a `DEFERRED.md` y `considerations.md`. El primero
 > describía una auditoría ya resuelta y el segundo había quedado desactualizado
@@ -472,6 +472,7 @@ exploratorio separado.
 | Agentic | `src/retriever/strategies/agentic-strategy.ts` | `tests/retrieval/agentic-strategy.test.ts` |
 | Agregación | `src/retriever/utilities/filters/context-aggregator.ts` | `tests/retrieval/context-aggregator.test.ts` |
 | Pipeline CLI | `src/cli/pipeline.ts` | `tests/cli/retrieve-cli.test.ts` |
+| Project Semantic Profile | `src/semantic-profile/` | `tests/retrieval/semantic-profile.test.ts` |
 
 La cobertura actual prueba integración funcional y contratos básicos. No prueba
 todavía calidad de ranking sobre un corpus etiquetado ni complejidad en grafos
@@ -492,22 +493,40 @@ grandes; esas conclusiones pertenecen al benchmark, no a los tests unitarios.
   filas sin indexar; conserva siete días de versiones y reporta mantenimiento
   mediante `health()`.
 
+## Project Semantic Profile
+
+Esta capa aplica retrieval ligero a la transformación del prompt. Un inventario
+determinístico obtiene símbolos, archivos y dependencias reales; un SLM local
+les asigna alias bilingües, descripciones y hasta tres dominios canónicos. Los
+datos viven en un índice SQLite separado y nunca contaminan el grafo.
+
+En consulta, `QueryGrounder` fusiona coincidencias exactas y FTS5 mediante RRF.
+El grounding acotado se entrega a `SlmClassifier`, que conserva la autoridad
+sobre route, clean_query, embedding_input, dimensiones e intent. El validador
+solo comprueba procedencia: una cláusula debe venir del prompt o de una
+evidencia recuperada. Ante incumplimiento pide reparación al SLM y no aplica
+fallback local.
+
+La función permanece opt-in. El split `semantic_profile_ab` compara variantes
+`baseline` y `grounded`; `eval:metrics:semantic-profile` calcula candidate
+recall, precisión/recall de traducción, términos no soportados, reparaciones y
+latencia. Los términos relevantes requieren anotación manual.
+
 ## Backlog vigente
 
 ### Alta: completar la validación experimental
 
-El pipeline `eval/` ya define repositorios, tareas, estrategias y métricas M1-M7,
+El pipeline `eval/` ya define repositorios, tareas, estrategias y métricas M1-M13,
 pero no existe aún evidencia oficial comparable:
 
-- las tareas siguen con `gold.status: pending_manual_annotation`;
+- todavía no hay 20 tareas con gold completo de retrieval y traducción;
 - la corrida está marcada `official: false`;
 - generación y detección de alucinaciones están deshabilitadas;
 - falta ejecutar al menos 20 tareas con gold listo para el gate oficial;
-- el runner usa `embedding_input` como proxy y todavía no puede inyectar de
-  forma determinista `clean_query`, `intent` y `dimensions` por la CLI.
+- falta ejecutar y revisar manualmente la comparación `baseline` vs `grounded`.
 
 Criterio de cierre: publicar una corrida reproducible con commits fijados,
-ground truth manual, M3-M7 para retrieval y, si se evalúa generación, M1-M2.
+ground truth manual, M3-M13 para retrieval/grounding y, si se evalúa generación, M1-M2.
 
 ### Baja: exponer tuning solo después del benchmark
 
@@ -527,6 +546,7 @@ npm test
 npm run build
 npm run dev -- retrieve --help
 npm run dev -- inspect-query --help
+npm run dev -- profile --help
 ```
 
 Para evaluar propuestas, el contrato experimental vive en `eval/README.md` y en

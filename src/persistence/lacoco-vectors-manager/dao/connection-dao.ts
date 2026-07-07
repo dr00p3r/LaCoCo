@@ -1,4 +1,5 @@
 import * as lancedb from "@lancedb/lancedb";
+import { EMBEDDING_DIM } from "../../../embeddings/embedding-config.js";
 
 export class ConnectionDao {
   async connect(dbPath: string): Promise<{ db: lancedb.Connection; table: lancedb.Table }> {
@@ -8,7 +9,7 @@ export class ConnectionDao {
     if (!existingTables.includes("node_embeddings")) {
       const dummyRecord = {
         node_id: "__schema_init__",
-        embedding: new Float32Array(384),
+        embedding: new Float32Array(EMBEDDING_DIM),
         dimension: "CPG" as const,
         sub_type: "dummy",
         file_path: "/dev/null",

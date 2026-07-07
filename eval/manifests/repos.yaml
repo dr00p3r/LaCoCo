@@ -70,6 +70,9 @@ repositories:
       - "tsconfig.lacoco-eval.json"
     language_scope:
       - "typescript"
+    reset_excludes:
+      - "node_modules"
+      - ".pnpm"
     lacoco_tsconfig_overrides:
       compilerOptions:
         module: "NodeNext"
@@ -91,26 +94,51 @@ repositories:
 
   - id: inversify
     display_name: "InversifyJS"
-    url: "https://github.com/inversify/InversifyJS.git"
-    ref: "v7.0.0"
+    url: "https://github.com/inversify/monorepo.git"
+    ref: "@inversifyjs/container@1.5.2"
     version_label: "v7"
     size_class: medium
     expected_loc: 14000
-    framework_from_plan: "mocha"
-    framework_verified: "mocha"
-    package_manager: "npm"
-    workspace: false
-    install_command: "npm ci"
-    build_command: "npm run build"
-    test_command: "npm test"
-    focused_test_command_template: "npx mocha {test_files} --require ts-node/register --reporter spec --exit"
+    framework_from_plan: "vitest"
+    framework_verified: "vitest"
+    package_manager: "pnpm"
+    workspace: true
+    install_command: "pnpm install"
+    build_command: "pnpm --filter @inversifyjs/common --filter @inversifyjs/prototype-utils --filter @inversifyjs/reflect-metadata-utils --filter @inversifyjs/core --filter @inversifyjs/container build"
+    test_command: "pnpm --filter @inversifyjs/core --filter @inversifyjs/container test"
+    focused_test_command_template: "npx jest --config=jest.config.mjs --runInBand {test_files}"
     source_roots:
-      - "src"
+      - "packages/container/libraries/common/src"
+      - "packages/container/libraries/container/src"
+      - "packages/container/libraries/core/src"
     tsconfig_candidates:
-      - "tsconfig.json"
-      - "tsconfig.cjs.json"
+      - "tsconfig.lacoco-eval.json"
+    reset_excludes:
+      - "node_modules"
+      - ".pnpm"
+      - "packages/container/libraries/common/lib"
+      - "packages/container/libraries/prototype-utils/lib"
+      - "packages/container/libraries/reflect-metadata-utils/lib"
+      - "packages/container/libraries/core/lib"
+      - "packages/container/libraries/container/lib"
+      - "packages/foundation/libraries/prototype-utils/lib"
+      - "packages/foundation/libraries/reflect-metadata-utils/lib"
     language_scope:
       - "typescript"
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        module: "NodeNext"
+        moduleResolution: "NodeNext"
+      include:
+        - "packages/container/libraries/common/src/**/*.ts"
+        - "packages/container/libraries/container/src/**/*.ts"
+        - "packages/container/libraries/core/src/**/*.ts"
+      exclude:
+        - "**/*.spec.ts"
+        - "**/*.int.spec.ts"
+    index_notes:
+      - "InversifyJS v7.0.0 (repo inversify/InversifyJS) es solo un cascaron de re-exports; su src/ real vive en los paquetes @inversifyjs/* publicados desde el monorepo inversify/monorepo. Por eso el id 'inversify' apunta al monorepo, tag @inversifyjs/container@1.5.2 (commit be5d342a), donde coexisten las versiones exactas que fija v7.0.0: common@1.5.0, container@1.5.2, core@4.0.0."
+      - "El indice se enfoca en packages/container/libraries/{common,container,core}/src (sin *.spec.ts) porque ahi vive la logica de ServiceIdentifier, binding, decoradores, metadata y planning/resolution que evaluan inversify-001/002."
     tags:
       - "dependency-injection"
       - "decorators"
@@ -129,7 +157,7 @@ repositories:
     workspace: false
     install_command: "npm ci"
     build_command: "npm run compile"
-    test_command: "npm test"
+    test_command: "npx mocha --config spec/support/.mocharc.js spec/operators/mergeMap-spec.ts spec/operators/delay-spec.ts"
     focused_test_command_template: "npx mocha --config spec/support/.mocharc.js {test_files}"
     source_roots:
       - "src"
@@ -139,8 +167,11 @@ repositories:
       - "tsconfig.mocha.json"
     language_scope:
       - "typescript"
+    reset_excludes:
+      - "node_modules"
     notes:
       - "El documento academico lo marca como Jest; el package.json verificado de 7.8.2 usa Mocha para npm test."
+      - "El gate baseline usa las dos suites focalizadas del piloto; npm test completo tiene dos fallos dependientes del runtime en ajax/WebSocket ajenos a las tareas evaluadas."
     tags:
       - "reactive-programming"
       - "operators"

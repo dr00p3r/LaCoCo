@@ -12,6 +12,7 @@ export interface EvalLayout {
   runsDirectory: string;
   runDirectory: string;
   artifactsDirectory: string;
+  generationArtifactsDirectory: string;
   lockFile: string;
   prepareLogsDirectory: string;
   indexLogsDirectory: string;
@@ -82,6 +83,7 @@ export function resolveEvalLayout(
   const runDirectory = resolve(runsDirectory, runId);
   const artifactsTemplate = asString(paths.artifacts, "run.yaml.paths.artifacts");
   const artifactsDirectory = absoluteProjectPath(artifactsTemplate.replaceAll("{run_id}", runId));
+  const generationArtifactsDirectory = resolve(runDirectory, "generation-artifacts");
 
   return {
     runId,
@@ -91,6 +93,7 @@ export function resolveEvalLayout(
     runsDirectory,
     runDirectory,
     artifactsDirectory,
+    generationArtifactsDirectory,
     lockFile,
     prepareLogsDirectory: resolve(runDirectory, "logs", "prepare"),
     indexLogsDirectory: resolve(runDirectory, "logs", "index"),

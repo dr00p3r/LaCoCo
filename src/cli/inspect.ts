@@ -10,6 +10,8 @@ import { computeStats, findRootNodes, loadEdges, loadNodes } from "./inspect/dat
 import { generateHtml } from "./inspect/html-renderer.js";
 import { getCytoscapeTag } from "./inspect/cytoscape-cache.js";
 import type { InspectOptions, InspectQueryOptions } from "./inspect/types.js";
+import { SemanticProfileStore } from "../semantic-profile/semantic-profile-store.js";
+import { QueryGrounder } from "../semantic-profile/query-grounder.js";
 
 export type { Focus, InspectMode, InspectOptions, InspectQueryOptions } from "./inspect/types.js";
 
@@ -52,8 +54,13 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
   let lanceDb: LaCoCoLanceDb | undefined;
 
   try {
-    const sanitized = await new AgentIntermediary1(new SlmClassifier(ollama))
-      .sanitize(options.prompt);
+    const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
+    const grounding = options.grounding
+      ? new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(options.prompt)
+      : undefined;
+    const sanitized = grounding
+      ? (await intermediary.sanitizeDetailed(options.prompt, grounding)).output
+      : await intermediary.sanitize(options.prompt);
     if (sanitized.route === "LLM_DIRECT") {
       throw new Error("El prompt no requiere RAG; no hay subgrafo que visualizar");
     }

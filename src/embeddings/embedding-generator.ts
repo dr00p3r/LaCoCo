@@ -6,8 +6,11 @@
  */
 
 import { pipeline } from "@xenova/transformers";
+import { EMBEDDING_MODEL, EMBEDDING_DIM, EMBEDDING_QUANTIZED } from "./embedding-config.js";
 
-export const EMBEDDING_DIM = 384;
+// Re-exportado por compatibilidad con importadores actuales. La fuente de verdad
+// es embedding-config.
+export { EMBEDDING_DIM };
 
 /** Tipo opaco del pipeline de feature-extraction */
 type EmbeddingPipeline = Awaited<ReturnType<typeof pipeline>>;
@@ -27,8 +30,8 @@ export class EmbeddingGenerator {
     if (!this.modelPromise) {
       this.modelPromise = pipeline(
         "feature-extraction",
-        "Xenova/all-MiniLM-L6-v2",
-        { quantized: true }
+        EMBEDDING_MODEL,
+        { quantized: EMBEDDING_QUANTIZED }
       );
     }
     return this.modelPromise;

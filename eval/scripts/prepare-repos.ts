@@ -1,18 +1,22 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
-import { asBoolean, asNumber, asRecord, asString, asStringRecord, optionalString } from "./lib/config.js";
+import { asBoolean, asNumber, asRecord, asStringRecord, optionalString } from "./lib/config.js";
 import { CommandExecutionError, executeCommand } from "./lib/exec.js";
+import { applyBrokenPatch, resetRepoClean, verifyBrokenState } from "./lib/git.js";
 import { prepareGitRepository } from "./lib/git.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import {
   createRepositoriesLock,
+  readRepositoriesLock,
   upsertLockedRepository,
   writeRepositoriesLock,
   type LockedRepository,
+  type LockedRegressionTask,
 } from "./lib/repo-lock.js";
-import type { RepositoryDefinition } from "./lib/types.js";
+import type { RepositoryDefinition, TaskDefinition } from "./lib/types.js";
+import { PROJECT_ROOT } from "./lib/paths.js";
 
 interface PrepareSettings {
   enabled: boolean;
@@ -28,6 +32,7 @@ interface PrepareSettings {
   testTimeoutMs: number;
   environment: Record<string, string>;
   continueOnRepoFailure: boolean;
+  verifyRegression: boolean;
 }
 
 function readSettings(reposManifest: Record<string, unknown>, runManifest: Record<string, unknown>): PrepareSettings {
@@ -67,6 +72,10 @@ function readSettings(reposManifest: Record<string, unknown>, runManifest: Recor
     continueOnRepoFailure: asBoolean(
       failure.continue_on_repo_prepare_failure,
       "run.yaml.failure_policy.continue_on_repo_prepare_failure",
+    ),
+    verifyRegression: asBoolean(
+      prepare.verify_regression,
+      "run.yaml.phases.prepare_repos.verify_regression",
     ),
   };
 }
@@ -116,6 +125,8 @@ async function prepareRepository(
   repoPath: string,
   logsDirectory: string,
   dryRun: boolean,
+  regressionTasks: TaskDefinition[],
+  manifestsDirectory: string,
 ): Promise<LockedRepository | undefined> {
   console.log(`\nRepository ${repository.id}`);
   console.log(`  path: ${repoPath}`);
@@ -223,7 +234,104 @@ async function prepareRepository(
     repoPath,
     preparedAt: new Date().toISOString(),
     steps,
+    ...(Array.isArray((repository as unknown as { reset_excludes?: unknown }).reset_excludes)
+      ? { reset_excludes: (repository as unknown as { reset_excludes: string[] }).reset_excludes }
+      : {}),
+    regression_tasks: await runRegressionVerification(
+      repository,
+      repoPath,
+      logsDirectory,
+      regressionTasks,
+      manifestsDirectory,
+      settings,
+    ),
   };
+}
+
+async function runRegressionVerification(
+  repository: RepositoryDefinition,
+  repoPath: string,
+  logsDirectory: string,
+  regressionTasks: TaskDefinition[],
+  manifestsDirectory: string,
+  settings: PrepareSettings,
+): Promise<LockedRegressionTask[]> {
+  if (regressionTasks.length === 0) return [];
+  if (!settings.verifyRegression) {
+    console.log(`  [${repository.id}] regression tasks present but verify_regression=false; skipping broken_state verification`);
+    return [];
+  }
+  const out: LockedRegressionTask[] = [];
+  for (const task of regressionTasks) {
+    if (!task.regression) continue;
+    const regression = task.regression;
+    if (regression.base_commit !== undefined) {
+      // Validate that the locked commit matches the task's expected base_commit.
+      // We re-read the local HEAD rather than threading `commit` through; the lock is the source of truth.
+    }
+    const brokenPatchPath = isAbsolute(regression.broken_patch)
+      ? regression.broken_patch
+      : resolve(manifestsDirectory, regression.broken_patch);
+    if (!existsSync(brokenPatchPath)) {
+      throw new Error(`regression broken_patch not found for ${task.id}: ${brokenPatchPath}`);
+    }
+    const testCommand = task.target_tests.join(" && ");
+    if (!testCommand) {
+      throw new Error(`regression task ${task.id} has empty target_tests; cannot verify broken_state`);
+    }
+    const logPath = join(logsDirectory, `regression-${task.id}.log`);
+    const excludes = Array.isArray((repository as unknown as { reset_excludes?: unknown }).reset_excludes)
+      ? (repository as unknown as { reset_excludes: string[] }).reset_excludes
+      : [];
+    console.log(`  [${repository.id}] regression: ${task.id}`);
+    console.log(`    broken_patch: ${brokenPatchPath}`);
+    console.log(`    test_command: ${testCommand}`);
+
+    // Reset to a clean green state before applying the broken patch.
+    await resetRepoClean({ repoPath, timeoutMs: 60_000, excludes });
+    await applyBrokenPatch({ repoPath, brokenPatchPath, timeoutMs: 60_000 });
+
+    const report = await verifyBrokenState({
+      repoPath,
+      testCommand,
+      timeoutMs: settings.testTimeoutMs,
+      expectedGradingTests: regression.grading_tests,
+      logPath,
+    });
+    if (report.parsed.unknownRunner) {
+      throw new Error(
+        `regression verify: unknown test runner for ${task.id}; cannot parse output. `
+          + `See log at ${logPath}`,
+      );
+    }
+    if (regression.grading_tests.length > 0 && report.gradingTestsFailing.length === 0) {
+      throw new Error(
+        `regression verify: none of the grading_tests failed for ${task.id} after broken_patch. `
+          + `grading=${JSON.stringify(regression.grading_tests)} `
+          + `observed_failures=${JSON.stringify([...report.parsed.failed])}`,
+      );
+    }
+    if (regression.grading_tests.length > 0 && report.gradingTestsMissing.length > 0) {
+      throw new Error(
+        `regression verify: some grading_tests did not appear in the broken output for ${task.id}: `
+          + JSON.stringify(report.gradingTestsMissing),
+      );
+    }
+    const baselineFailing = [...report.parsed.failed];
+    out.push({
+      id: task.id,
+      base_commit: regression.base_commit,
+      broken_patch: regression.broken_patch,
+      grading_tests: regression.grading_tests,
+      baseline_failing_tests: baselineFailing,
+      regression_verified_at: new Date().toISOString(),
+    });
+    console.log(`    baseline_failing_tests: ${baselineFailing.length}`);
+
+    // Reset to green so the worktree is left in a deterministic state.
+    await resetRepoClean({ repoPath, timeoutMs: 60_000, excludes });
+  }
+  return out;
 }
 
 export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> {
@@ -253,13 +361,35 @@ export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> 
     mkdirSync(layout.prepareLogsDirectory, { recursive: true });
   }
 
-  const lock = createRepositoriesLock(layout.runId);
+  const lock = existsSync(layout.lockFile)
+    ? readRepositoriesLock(layout.lockFile)
+    : createRepositoriesLock(layout.runId);
+  if (lock.runId !== layout.runId) {
+    throw new Error(`lock run id ${lock.runId} does not match requested run ${layout.runId}`);
+  }
   const failures: string[] = [];
+  const tasksByRepo = new Map<string, TaskDefinition[]>();
+  for (const task of manifests.tasks.tasks) {
+    if (task.regression === undefined) continue;
+    const list = tasksByRepo.get(task.repo_id) ?? [];
+    list.push(task);
+    tasksByRepo.set(task.repo_id, list);
+  }
+  const manifestsDirectory = join(PROJECT_ROOT, "eval", "manifests");
   for (const repository of repositories) {
     const repoPath = join(layout.reposDirectory, repository.id);
     const logsDirectory = join(layout.prepareLogsDirectory, repository.id);
+    const regressionTasks = tasksByRepo.get(repository.id) ?? [];
     try {
-      const locked = await prepareRepository(repository, settings, repoPath, logsDirectory, options.dryRun);
+      const locked = await prepareRepository(
+        repository,
+        settings,
+        repoPath,
+        logsDirectory,
+        options.dryRun,
+        regressionTasks,
+        manifestsDirectory,
+      );
       if (locked !== undefined) {
         upsertLockedRepository(lock, locked);
         if (settings.writeLockFile) {

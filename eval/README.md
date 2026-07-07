@@ -29,7 +29,7 @@ eval/
   README.md
   manifests/
     agents.yaml       # Agentes externos y modo de invocacion
-    metrics.yaml      # Definicion formal de metricas M1-M7
+    metrics.yaml      # Definicion formal de metricas M1-M13
     repos.yaml        # Repositorios de evaluacion, versiones y comandos
     run.yaml          # Configuracion global de ejecucion
     strategies.yaml   # Estrategias LaCoCo y baselines
@@ -44,7 +44,7 @@ eval/
 | `manifests/repos.yaml` | Define repositorios, refs, gestores de paquetes, comandos de instalacion, pruebas e indexacion. |
 | `manifests/strategies.yaml` | Define las estrategias que se comparan: `no_context`, `hybrid`, `ictd`, `clcr`, `rpr` y `agentic`. |
 | `manifests/agents.yaml` | Define adaptadores para agentes externos, inicialmente OpenCode, Codex CLI, Claude Code, modo manual y dry-run. |
-| `manifests/metrics.yaml` | Formaliza M1-M7: Pass@1, Hallucination Rate, Precision@5, Recall@5, MRR, Multi-hop Dependency Recall y Latency P95. |
+| `manifests/metrics.yaml` | Formaliza M1-M13 para generacion, retrieval y grounding semantico. |
 | `manifests/run.yaml` | Controla rutas, repeticiones, timeouts, semillas, politicas de limpieza, formato de salida y gates de ejecucion. |
 | `manifests/tasks.yaml` | Contiene las tareas experimentales y su ground truth. Los nodos relevantes deben anotarse manualmente antes de calcular M3-M6. |
 
@@ -66,34 +66,50 @@ read repos.yaml
 lacoco init <repo_path>
 lacoco index_graph <tsconfig> --db <run>/indexes/<repo>/tensor.sqlite
 lacoco index_vectors <tsconfig> --lancedb <run>/indexes/<repo>/lancedb
+lacoco profile rebuild <repo_path> --json # solo para el A/B semantico
 ```
 
 ### 3. Recuperacion
 
-Para cada tarea y estrategia:
+Para cada tarea y variante de sanitizer:
 
 ```text
 read task prompt + deterministic sanitizer fields
-  -> inject route=RAG, clean_query, embedding_input, intent and dimensions
-     when use_deterministic_sanitizer=true
-  -> run LaCoCo retrieval without invoking AgentIntermediary1
-  -> save ranked nodes, scores, metadata, timings
-  -> compute M3, M4, M5, M6 when gold is available
+  -> materialize one complete sanitizer output per task
+  -> persist it under artifacts/<task>/_sanitizer/
+  -> reuse the same encoded output for every retrieval strategy
+  -> save context.json, ranked nodes, scores, metadata and timings
+  -> compute M3, M4, M5 and M6 when gold is available
 ```
 
 El modo determinista vive en `eval/` y reutiliza el pipeline y el registro de
-estrategias de LaCoCo. Si `use_deterministic_sanitizer=false`, el runner usa el
-comando publico `retrieve` y evalua el pipeline completo con el intermediario
-local. `retrieval.jsonl.sanitizer_source` distingue ambos casos.
+estrategias de LaCoCo. Con `--use-slm`, el runner ejecuta `AgentIntermediary1`
+una sola vez por tarea y variante, persiste el contrato completo y lo inyecta
+en todas las estrategias. `retrieval.jsonl.sanitizer_source` distingue ambos
+casos y `sanitizer_variant: agent_intermediary` identifica la variante SLM
+principal. La duracion del sanitizer congelado se suma por igual al tiempo total
+de cada estrategia para mantener comparable M7.
+
+El split `semantic_profile_ab` ejecuta las variantes `baseline` y `grounded`
+sin confundirlas con estrategias:
+
+```bash
+npm run eval:index -- --run-id <run> --repo-id <repo> --profile
+npm run eval:retrieval -- --run-id <run> --split semantic_profile_ab --sanitizer-variant grounded
+npm run eval:metrics:semantic-profile -- --run-id <run>
+```
 
 ### 4. Generacion
 
 Para cada tarea, estrategia y agente:
 
 ```text
-reset repo to clean checkout
+validate every required retrieval context before writing generation.jsonl
+  -> reset repo to clean checkout
   -> build enriched prompt
   -> invoke external coding agent
+  -> persist the effective model as generation.jsonl.model_id
+  -> persist provider-reported cost as generation.jsonl.cost_usd
   -> save stdout/stderr/session artifacts
   -> save git diff
   -> run focused tests
@@ -121,6 +137,7 @@ El ground truth no debe inventarse automaticamente. Para cada tarea se deben reg
 - `multihop_nodes`: subconjunto de nodos relevantes que estan a distancia mayor o igual a dos saltos en el grafo.
 - `target_tests`: comandos o archivos de prueba que validan la solucion.
 - `annotation_notes`: justificacion breve de por que esos nodos son necesarios.
+- `translation_gold.relevant_terms`: términos canónicos esperados en la traducción; se anotan manualmente.
 
 Mientras una tarea tenga `gold.status: pending_manual_annotation`, el pipeline puede ejecutarla para inspeccion, pero debe excluirla de metricas M3-M6.
 
@@ -136,15 +153,33 @@ eval/runs/2026-xx-xx/
   summary.csv
   artifacts/
     zod-001/
+      _sanitizer/
+        agent_intermediary.json
       hybrid/
-        context.json
-        context.md
-        prompt.md
-        agent.stdout.log
-        agent.stderr.log
-        patch.diff
-        tests.log
+        agent_intermediary/context.json
+  generation-artifacts/
+    zod-001/
+      hybrid/
+        opencode/
+          context.json
+          prompt.md
+          agent.stdout.log
+          agent.stderr.log
+          patch.diff
+          tests.log
 ```
+
+Retrieval y generacion usan raices de artefactos separadas. Una estrategia con
+retrieval nunca degrada a un placeholder si falta `context.json`: el preflight
+falla antes de truncar `generation.jsonl` o modificar un repositorio. Solo
+`no_context` conserva el placeholder explicito de la Opcion B.
+
+`eval:generation -- --resume` conserva `generation.jsonl`, suma el costo ya
+reportado y omite celdas existentes para el mismo task, estrategia, agente y
+modelo. `--max-budget-usd` usa los eventos `step_finish.part.cost` de OpenCode y
+detiene la corrida si no puede medir el costo. Los limites `max_diff_bytes` y
+`max_changed_files` se aplican antes de ejecutar las pruebas; una violacion
+queda registrada como `patch_limit_exceeded` y cuenta como fallo M1.
 
 ## Criterio minimo antes de ejecutar una corrida oficial
 

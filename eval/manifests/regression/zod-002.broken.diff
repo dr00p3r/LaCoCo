@@ -1,0 +1,24 @@
+diff --git a/packages/zod/src/v3/types.ts b/packages/zod/src/v3/types.ts
+--- a/packages/zod/src/v3/types.ts
++++ b/packages/zod/src/v3/types.ts
+@@ -2510,19 +2510,12 @@
+       if (unknownKeys === "passthrough") {
+         for (const key of extraKeys) {
+           pairs.push({
+             key: { status: "valid", value: key },
+             value: { status: "valid", value: ctx.data[key] },
+           });
+         }
+       } else if (unknownKeys === "strict") {
+-        if (extraKeys.length > 0) {
+-          addIssueToContext(ctx, {
+-            code: ZodIssueCode.unrecognized_keys,
+-            keys: extraKeys,
+-          });
+-          status.dirty();
+-        }
+       } else if (unknownKeys === "strip") {
+       } else {
+         throw new Error(`Internal ZodObject error: invalid unknownKeys value.`);
+       }
+     } else {

@@ -12,20 +12,23 @@ import {
   summarizeTaskMetrics,
   type GoldInput,
 } from "./lib/metrics.js";
+import { resolveNodeId } from "./lib/node-id.js";
 import { PROJECT_ROOT } from "./lib/paths.js";
 import { renderSummaryCsv, renderSummaryMarkdown } from "./lib/summary.js";
 
 interface MetricsCliOptions {
   runId?: string;
   runDir?: string;
+  inputFile?: string;
 }
 
 function parseOptions(argv: string[]): MetricsCliOptions {
   let runId: string | undefined;
   let runDir: string | undefined;
+  let inputFile: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument !== "--run-id" && argument !== "--run-dir") {
+    if (argument !== "--run-id" && argument !== "--run-dir" && argument !== "--input-file") {
       throw new Error(`unknown argument: ${String(argument)}`);
     }
     const value = argv[index + 1];
@@ -33,13 +36,17 @@ function parseOptions(argv: string[]): MetricsCliOptions {
       throw new Error(`${argument} requires a value`);
     }
     if (argument === "--run-id") runId = value;
-    else runDir = value;
+    else if (argument === "--run-dir") runDir = value;
+    else inputFile = value;
     index += 1;
   }
   if ((runId === undefined) === (runDir === undefined)) {
     throw new Error("provide exactly one of --run-id or --run-dir");
   }
-  return runId === undefined ? { runDir: runDir! } : { runId };
+  const base = runId === undefined ? { runDir: runDir! } : { runId };
+  // --input-file (default retrieval.jsonl) permite medir sobre una variante
+  // normalizada (p. ej. retrieval.normalized.jsonl) sin mutar el JSONL crudo.
+  return inputFile === undefined ? base : { ...base, inputFile };
 }
 
 function resolveRun(
@@ -86,7 +93,8 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
     schemaVersions.retrieval,
     "run.yaml.jsonl_schema_versions.retrieval",
   );
-  const inputPath = join(run.runDirectory, "retrieval.jsonl");
+  const reposDirectory = resolveEvalLayout(manifests.run, run.runId).reposDirectory;
+  const inputPath = join(run.runDirectory, options.inputFile ?? "retrieval.jsonl");
   const metricsPath = join(run.runDirectory, "retrieval-metrics.json");
   const csvPath = join(run.runDirectory, "summary.csv");
   const markdownPath = join(run.runDirectory, "summary.md");
@@ -111,10 +119,11 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
         `${inputPath}:${line}: repo_id ${record.repoId} does not match task repo ${task.repo_id}`,
       );
     }
+    const repoPath = join(reposDirectory, task.repo_id);
     const gold: GoldInput = {
       status: task.gold.status,
-      relevantNodes: task.gold.relevant_nodes,
-      multihopNodes: task.gold.multihop_nodes,
+      relevantNodes: task.gold.relevant_nodes.map((id) => resolveNodeId(id, repoPath)),
+      multihopNodes: task.gold.multihop_nodes.map((id) => resolveNodeId(id, repoPath)),
     };
     return computeExecutionMetrics(record, gold, precisionCutoff, multihopCutoff);
   });

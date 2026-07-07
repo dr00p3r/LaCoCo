@@ -9,9 +9,11 @@ export const RELATION_TO_DIM: Readonly<Record<string, Dimension>> = {
   INJECTS: "CPG",
   CALLS: "CPG",
   INSTANTIATES: "CPG",
+  DECLARES: "CPG",
   CONSUMES_DATA: "DTG",
   PRODUCES: "DTG",
   MUTATES_STATE: "DTG",
+  REFERENCES: "DTG",
 };
 
 export const KIND_TO_DIM: Readonly<Record<string, Dimension>> = {

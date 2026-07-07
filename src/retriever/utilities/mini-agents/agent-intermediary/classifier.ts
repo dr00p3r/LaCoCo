@@ -2,6 +2,9 @@ import type { ChatMessage, ChatOptions, LlmClient } from "../../../../slms/llm-c
 import { DIMENSIONS } from "../../../../domain/dimensions.js";
 import type { IntentTag } from "../../../models/utilities/types.js";
 import type { ClassificationResult } from "./types.js";
+import { normalizeSemanticText } from "../../../../semantic-profile/semantic-profile-store.js";
+import type { QueryGrounding } from "../../../../semantic-profile/types.js";
+import { splitFts5OrClauses } from "../../search/bm25-service.js";
 
 const ROUTES = ["RAG", "LLM_DIRECT"] as const;
 const INTENTS: IntentTag[] = [
@@ -43,7 +46,7 @@ const CLASSIFICATION_OPTIONS: ChatOptions = {
 };
 const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 
-Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: tu salida será utilizada directamente para búsqueda FTS5, embeddings y selección dimensional.
+Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: el código solo valida estructura, sintaxis y procedencia, y puede pedirte una reparación sin corregir semánticamente tu salida. El resultado válido será utilizado para búsqueda FTS5, embeddings y selección dimensional.
 
 Responde SOLO con un objeto JSON válido, sin markdown ni texto adicional, con exactamente estos campos:
 
@@ -111,16 +114,24 @@ export class SlmClassifier {
 
   constructor(private readonly ollama: LlmClient) {}
 
-  async classify(prompt: string): Promise<ClassificationResult> {
+  async classify(prompt: string, grounding?: QueryGrounding): Promise<ClassificationResult> {
+    return (await this.classifyDetailed(prompt, grounding)).output;
+  }
+
+  async classifyDetailed(prompt: string, grounding?: QueryGrounding): Promise<DetailedClassification> {
+    const groundingInstruction = grounding ? createGroundingInstruction(grounding) : "";
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: `Prompt: ${JSON.stringify(prompt)}\nSalida:` },
+      {
+        role: "user",
+        content: `Prompt: ${JSON.stringify(prompt)}\n${groundingInstruction}Salida:`,
+      },
     ];
-    const initial = await this.#classifyWithRepair(prompt, messages);
+    const initial = await this.#classifyWithRepair(prompt, messages, grounding);
 
-    if (initial.route !== "LLM_DIRECT") return initial;
+    if (initial.output.route !== "LLM_DIRECT") return initial;
 
-    return this.#classifyWithRepair(prompt, [
+    const verified = await this.#classifyWithRepair(prompt, [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
@@ -129,20 +140,35 @@ export class SlmClassifier {
           "LLM_DIRECT omite todo acceso al repositorio, por lo que solo es correcto si la petición puede resolverse completamente sin leer ni modificar el proyecto actual. " +
           "Devuelve el objeto completo corregido, no una explicación.\n" +
           `Prompt original: ${JSON.stringify(prompt)}\n` +
-          `Propuesta a verificar: ${JSON.stringify(initial)}\nSalida final:`,
+          `${groundingInstruction}` +
+          `Propuesta a verificar: ${JSON.stringify(initial.output)}\nSalida final:`,
       },
-    ]);
+    ], grounding);
+    return {
+      ...verified,
+      repairCount: initial.repairCount + verified.repairCount,
+      initialUnsupportedClauses: [
+        ...initial.initialUnsupportedClauses,
+        ...verified.initialUnsupportedClauses,
+      ],
+    };
   }
 
   async #classifyWithRepair(
     prompt: string,
     messages: ChatMessage[],
-  ): Promise<ClassificationResult> {
+    grounding?: QueryGrounding,
+  ): Promise<DetailedClassification> {
     const response = await this.ollama.chat(messages, CLASSIFICATION_OPTIONS);
 
     try {
-      return this.#parseResponse(response);
+      const output = this.#parseResponse(response);
+      const provenance = validateGroundedClassification(output, grounding, prompt);
+      return { output, ...provenance, initialUnsupportedClauses: [], repairCount: 0 };
     } catch (firstError) {
+      const unsupported = firstError instanceof GroundingValidationError
+        ? firstError.unsupportedClauses
+        : [];
       const repairedResponse = await this.ollama.chat([
         { role: "system", content: SYSTEM_PROMPT },
         {
@@ -151,12 +177,21 @@ export class SlmClassifier {
             `Prompt original: ${JSON.stringify(prompt)}\n` +
             "Tu respuesta anterior no fue JSON válido o incumplió el contrato. " +
             "Genera nuevamente el objeto completo conforme al esquema.\n" +
+            `${grounding ? createGroundingInstruction(grounding) : ""}` +
+            `Error de validación: ${firstError instanceof Error ? firstError.message : String(firstError)}\n` +
             `Respuesta inválida: ${JSON.stringify(response)}\nSalida:`,
         },
       ], CLASSIFICATION_OPTIONS);
 
       try {
-        return this.#parseResponse(repairedResponse);
+        const output = this.#parseResponse(repairedResponse);
+        const provenance = validateGroundedClassification(output, grounding, prompt);
+        return {
+          output,
+          ...provenance,
+          initialUnsupportedClauses: unsupported,
+          repairCount: 1,
+        };
       } catch (secondError) {
         throw new Error(
           "El SLM no produjo una salida JSON válida después de dos intentos",
@@ -173,13 +208,22 @@ export class SlmClassifier {
     if (!jsonMatch) throw new Error("No se pudo extraer JSON de la respuesta del SLM");
 
     const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    const expectedKeys = [...CLASSIFICATION_SCHEMA.required as string[]].sort();
+    const actualKeys = Object.keys(parsed).sort();
+    if (
+      actualKeys.length !== expectedKeys.length ||
+      actualKeys.some((key, index) => key !== expectedKeys[index])
+    ) {
+      throw new Error("El SLM devolvió propiedades inesperadas o incompletas");
+    }
 
     if (!ROUTES.includes(parsed.route as (typeof ROUTES)[number])) throw new Error("El SLM devolvió una ruta inválida");
     if (!INTENTS.includes(parsed.intent as IntentTag)) throw new Error("El SLM devolvió una intención inválida");
 
-    if (!Array.isArray(parsed.dimensions) || parsed.dimensions.some(
-      (dimension) => !DIMENSIONS.includes(dimension as (typeof DIMENSIONS)[number])
-    )) {
+    if (!Array.isArray(parsed.dimensions) || parsed.dimensions.length > DIMENSIONS.length ||
+      new Set(parsed.dimensions).size !== parsed.dimensions.length || parsed.dimensions.some(
+        (dimension) => !DIMENSIONS.includes(dimension as (typeof DIMENSIONS)[number])
+      )) {
       throw new Error("El SLM devolvió dimensiones inválidas");
     }
 
@@ -214,4 +258,79 @@ export class SlmClassifier {
     };
     
   }
+}
+
+export interface DetailedClassification {
+  output: ClassificationResult;
+  usedTermIds: string[];
+  initialUnsupportedClauses: string[];
+  repairCount: number;
+}
+
+class GroundingValidationError extends Error {
+  constructor(readonly unsupportedClauses: string[]) {
+    super(`clean_query contiene cláusulas sin evidencia: ${unsupportedClauses.join(", ")}`);
+  }
+}
+
+function createGroundingInstruction(grounding: QueryGrounding): string {
+  const candidates: Array<Record<string, unknown>> = [];
+  for (const candidate of grounding.candidates) {
+    const compact = {
+      id: candidate.termId,
+      term: candidate.canonicalTerm,
+      aliases: candidate.matchedAliases.length > 0
+        ? candidate.matchedAliases
+        : candidate.aliases.slice(0, 2).map(({ value }) => value),
+      ...(candidate.path ? { path: candidate.path } : {}),
+      domains: candidate.domains.map(({ name }) => name),
+    };
+    const next = [...candidates, compact];
+    if (JSON.stringify(next).length / 4 > 400 && candidates.length > 0) break;
+    candidates.push(compact);
+  }
+  return `Perfil semántico recuperado del proyecto:\n${JSON.stringify({
+    domains: grounding.domains,
+    candidates,
+  })}\n` +
+    "Prioriza términos canónicos respaldados por estas evidencias. Los aliases son vocabulario de búsqueda, no símbolos reales. " +
+    "Cada cláusula de clean_query debe proceder de un candidato, de uno de sus aliases o aparecer explícitamente en el prompt. " +
+    "No uses los dominios como filtro excluyente.\n";
+}
+
+function validateGroundedClassification(
+  output: ClassificationResult,
+  grounding: QueryGrounding | undefined,
+  prompt: string,
+): { usedTermIds: string[] } {
+  if (!grounding || output.route === "LLM_DIRECT") return { usedTermIds: [] };
+  const promptText = normalizeSemanticText(prompt);
+  const used = new Set<string>();
+  const unsupported: string[] = [];
+  for (const clause of splitCleanQuery(output.clean_query)) {
+    const normalizedClause = normalizeSemanticText(clause);
+    let supported = promptText.includes(normalizedClause);
+    for (const candidate of grounding.candidates) {
+      const candidateTerms = [
+        candidate.canonicalTerm,
+        ...candidate.aliases.map(({ value }) => value),
+      ].map(normalizeSemanticText);
+      if (candidateTerms.includes(normalizedClause)) {
+        supported = true;
+        used.add(candidate.termId);
+      }
+    }
+    if (!supported) unsupported.push(clause);
+  }
+  if (unsupported.length > 0) throw new GroundingValidationError(unsupported);
+  return { usedTermIds: [...used].sort() };
+}
+
+function splitCleanQuery(query: string): string[] {
+  return splitFts5OrClauses(query)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+    .map((clause) => clause.startsWith('"') && clause.endsWith('"')
+      ? clause.slice(1, -1).replace(/""/g, '"')
+      : clause);
 }

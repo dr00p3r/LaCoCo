@@ -4,13 +4,16 @@
  * Responsabilidades:
  *   1. Deduplicar por chunkId (conservar el chunk con mayor score)
  *   2. Ordenar por score descendente
- *   3. Truncar cuando la suma aproximada de tokens supere maxTokens
+ *   3. Truncar cuando la suma estimada de tokens supere maxTokens
+ *
+ * El conteo de tokens delega en `tokenizer.ts` (cl100k_base de OpenAI
+ * como aproximacion). Ver `TOKENIZER_NOTE` para los limites de esta
+ * eleccion.
  */
 
 import { type ContextChunk } from "../../models/strategies/types.js";
+import { estimateTokens } from "./tokenizer.js";
 
-/** Estimación conservadora: 1 token ≈ 0.75 palabras en inglés/espanol técnico */
-const WORDS_PER_TOKEN = 0.75;
 export const DEFAULT_CONTEXT_MAX_TOKENS = 4000;
 
 export class ContextAggregator {
@@ -42,20 +45,18 @@ export class ContextAggregator {
     // 3. Ordenar por score descendente
     const sorted = filtered.sort((a, b) => b.score - a.score);
 
-    // 4. Truncar por tokens aproximados
+    // 4. Truncar por tokens reales (cl100k_base)
     const result: ContextChunk[] = [];
     let tokensUsed = 0;
 
     for (const chunk of sorted) {
 
-      const estimatedTokens = Math.ceil(
-        chunk.text.split(/\s+/).length / WORDS_PER_TOKEN
-      );
+      const chunkTokens = estimateTokens(chunk.text);
 
-      if (tokensUsed + estimatedTokens > maxTokens) continue;
+      if (tokensUsed + chunkTokens > maxTokens) continue;
 
       result.push(chunk);
-      tokensUsed += estimatedTokens;
+      tokensUsed += chunkTokens;
     }
 
     return result;

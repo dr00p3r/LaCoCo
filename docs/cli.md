@@ -57,6 +57,19 @@ Opciones:
 
 Ambos comandos registran automaticamente el proyecto y guardan las rutas de almacenamiento en el registro.
 
+### Project Semantic Profile
+
+```bash
+lacoco profile rebuild [project] --json
+lacoco profile ground [project] "<consulta>" --json
+lacoco profile status [project] --verify --json
+```
+
+`profile rebuild` consume el grafo y un inventario acotado del proyecto,
+genera alias bilingues y dominios mediante Ollama y promueve el resultado
+atomicamente. `profile ground` inspecciona candidatos sin ejecutar el
+clasificador ni retrieval. Reindexar el grafo deja el perfil `stale`.
+
 ## Retrieval
 
 Recupera contexto relevante del proyecto indexado usando una de cinco estrategias.
@@ -76,6 +89,7 @@ Opciones:
 - `--chunks <number>` — máximo de chunks producido por la estrategia
 - `--max-tokens <number>` — presupuesto del agregador (defecto: 4000)
 - `--ollama <url>` — endpoint de Ollama (defecto: `agent.endpoint` de config)
+- `--grounding` / `--no-grounding` — activa o desactiva el perfil semantico
 - `--json` — devuelve un unico documento JSON estructurado para hooks
 - `-v, --verbose` — diagnostico del pipeline en stderr
 
@@ -86,7 +100,7 @@ lacoco retrieve extractor "<consulta>" --strategy hybrid --json \
   | jq -r '.enrichedPrompt'
 ```
 
-El contrato JSON usa `schemaVersion: 1` e incluye clasificacion, chunks,
+El contrato JSON usa `schemaVersion: 2` e incluye clasificacion, grounding, chunks,
 parametros efectivos de estrategia, `maxTokens`, almacenamiento y prompt enriquecido. Los diagnosticos se escriben en stderr,
 por lo que stdout permanece parseable. En errores retorna `ok: false` y
 mantiene un exit code distinto de cero.
@@ -105,6 +119,7 @@ Opciones:
 - `--chunks <number>` — máximo de chunks producido por la estrategia
 - `--max-tokens <number>` — presupuesto del agregador (defecto: 4000)
 - `--ollama <url>` — endpoint de Ollama
+- `--grounding` / `--no-grounding` — controla el grounding semantico
 - `--json` — imprime metadatos JSON
 - `-v, --verbose` — diagnostico
 
@@ -138,6 +153,7 @@ Opciones:
 - `-o, --output <path>` — archivo HTML (defecto: inspect-query.html)
 - `--cdn` — usar CDN para Cytoscape.js
 - `--ollama <url>` — endpoint de Ollama
+- `--grounding` / `--no-grounding` — controla el grounding semantico
 
 ## Estrategias de recuperacion
 
@@ -194,6 +210,7 @@ Claves principales:
 | `paths.data` | string | `.lacoco` | Directorio de datos (relativo al proyecto) |
 | `timeout.ms` | number | `30000` | Timeout para Ollama |
 | `watcher.debounceMs` | number | `80` | Debounce del watcher |
+| `profile.groundingEnabled` | boolean | `false` | Activa grounding por defecto |
 
 Precedencia: variable de entorno > `--local` > `--global` > defecto.
 
@@ -203,12 +220,14 @@ Variables de entorno equivalentes:
 LACOCO_STRATEGY=hybrid
 LACOCO_AGENT_ENDPOINT=http://localhost:11434
 LACOCO_AGENT_MODEL=qwen2.5-coder:1.5b
+LACOCO_PROFILE_GROUNDING=true
 ```
 
 ## Pipeline de consulta
 
 ```text
 prompt original
+  -> QueryGrounder opcional (FTS5 sobre evidencias y alias del proyecto)
   -> AgentIntermediary1 (SLM genera route, clean_query, embedding_input, intent, dimensions)
   -> RecoveryStrategy (recupera contexto)
   -> ContextAggregator (deduplica, ordena, trunca a presupuesto de tokens)
@@ -218,7 +237,7 @@ prompt original
 
 ## Almacenamiento
 
-- **SQLite** (`tensor.sqlite`): grafo de codigo (nodos + aristas + FTS5). Por defecto en `paths.data/tensor.sqlite`.
+- **SQLite** (`tensor.sqlite`): grafo y perfil semantico en tablas/FTS5 separados. Por defecto en `paths.data/tensor.sqlite`.
 - **LanceDB** (`lancedb/`): embeddings vectoriales con indice HNSW. Por defecto en `paths.data/lancedb`.
 - **Registro de proyectos**: `$XDG_STATE_HOME/lacoco/projects.json` (Linux: `~/.local/state/lacoco/projects.json`).
 

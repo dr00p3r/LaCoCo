@@ -44,10 +44,12 @@ export type EdgeRelation =
   | "INJECTS"
   | "CALLS"
   | "INSTANTIATES"
+  | "DECLARES"
   // DTG
   | "CONSUMES_DATA"
   | "PRODUCES"
-  | "MUTATES_STATE";
+  | "MUTATES_STATE"
+  | "REFERENCES";
 
 /** Callbacks que los módulos de extracción usan para persistir nodos y aristas. */
 export interface ExtractionCallbacks {

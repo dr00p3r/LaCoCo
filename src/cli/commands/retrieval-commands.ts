@@ -7,7 +7,7 @@ import {
   type ContextExportCliOptions,
   type RetrieveCliOptions,
 } from "../pipeline.js";
-import { resolveNumberConfig, resolveStringConfig } from "../config.js";
+import { resolveBooleanConfig, resolveNumberConfig, resolveStringConfig } from "../config.js";
 import { resolveDbPath, resolveLanceDbPath } from "../storage-paths.js";
 import { inspectProject } from "../state/project-registry.js";
 
@@ -31,6 +31,8 @@ function registerContextExport(program: Command): void {
     .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
     .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
+    .option("--grounding", "Usa el Project Semantic Profile", undefined)
+    .option("--no-grounding", "Desactiva el Project Semantic Profile")
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
     .option("--json", "Imprime JSON válido", false)
     .action(async (project: string | undefined, query: string, options: ContextExportCliOptions) => {
@@ -47,6 +49,8 @@ function registerRetrieve(program: Command): void {
     .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
     .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
+    .option("--grounding", "Usa el Project Semantic Profile", undefined)
+    .option("--no-grounding", "Desactiva el Project Semantic Profile")
     .option("--json", "Imprime un resultado JSON estructurado para hooks", false)
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
     .action(async (project: string | undefined, query: string, options: RetrieveCliOptions) => {
@@ -91,6 +95,8 @@ function registerInspectQuery(program: Command): void {
     .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
     .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
     .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
+    .option("--grounding", "Usa el Project Semantic Profile", undefined)
+    .option("--no-grounding", "Desactiva el Project Semantic Profile")
     .action(async (project: string | undefined, prompt: string, options: InspectQueryCliOptions) => {
       const budget = parseBudget(options.budget);
       if (budget === null) return;
@@ -111,6 +117,7 @@ function registerInspectQuery(program: Command): void {
         ollama: ollamaEndpoint,
         model: resolveStringConfig("agent.model"),
         timeoutMs: resolveNumberConfig("timeout.ms"),
+        grounding: options.grounding ?? resolveBooleanConfig("profile.groundingEnabled"),
         ...(options.chunks === undefined ? {} : { chunks: options.chunks }),
       });
     });
@@ -149,6 +156,7 @@ interface InspectQueryCliOptions {
   cdn: boolean;
   ollama?: string;
   chunks?: number;
+  grounding?: boolean;
 }
 
 function resolveInspectQueryProjectPath(project?: string): string {

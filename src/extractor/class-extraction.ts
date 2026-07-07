@@ -5,12 +5,11 @@
  *  §3 CPG: INJECTS, propiedades, accessors, métodos
  */
 
-import { Node, type ClassDeclaration, type MethodDeclaration } from "ts-morph";
+import { Node, type ClassDeclaration } from "ts-morph";
 import { type ExtractionCallbacks } from "./types.js";
 import {
   resolveTypeToId,
   isDeprecated,
-  safeGetText,
   getMethodSignature,
 } from "./utilities.js";
 import { analyzeCallable } from "./callable-analysis.js";
@@ -97,6 +96,7 @@ export function extractClassProperties(
       signature: prop.getText(),
       isDeprecated: isDeprecated(prop.getSymbol()),
     });
+    cb.insertEdge(classId, propId, "DECLARES");
   }
 }
 
@@ -127,6 +127,7 @@ export function extractClassAccessors(
       signature: accessor.getText().split("{")[0]?.trimEnd() ?? "",
       isDeprecated: isDeprecated(accessor.getSymbol()),
     });
+    cb.insertEdge(classId, accessorId, "DECLARES");
   }
 }
 
@@ -158,6 +159,7 @@ export function extractClassMethods(
       signature,
       isDeprecated: isDeprecated(method.getSymbol()),
     });
+    cb.insertEdge(classId, methodId, "DECLARES");
 
     analyzeCallable(method, methodId, cb);
   }

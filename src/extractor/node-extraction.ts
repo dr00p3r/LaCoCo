@@ -5,14 +5,17 @@
  * Salida: nodos persistidos para interfaces, types, enums, funciones, clases, y variables.
  */
 
-import { type SourceFile } from "ts-morph";
+import { Node, type SourceFile, type Node as MorphNode } from "ts-morph";
 import { type ExtractionCallbacks } from "./types.js";
 import {
   buildInterfaceSignature,
   buildClassSignature,
   getFunctionSignature,
   isDeprecated,
+  resolveSymbolToId,
+  resolveTypeToId,
 } from "./utilities.js";
+
 import {
   extractSysRelations,
   extractConstructorInjections,
@@ -22,6 +25,23 @@ import {
 } from "./class-extraction.js";
 import { analyzeCallable } from "./callable-analysis.js";
 import { extractVariableDeclarations } from "./variable-extraction.js";
+
+function extractNodeReferences(
+  root: MorphNode,
+  sourceId: string,
+  cb: ExtractionCallbacks,
+): void {
+  const seen = new Set<string>();
+  const visit = (node: MorphNode): void => {
+    if (!Node.isIdentifier(node)) return;
+    const targetId = resolveSymbolToId(node.getSymbol());
+    if (!targetId || targetId === sourceId || seen.has(targetId)) return;
+    seen.add(targetId);
+    cb.insertEdge(sourceId, targetId, "REFERENCES");
+  };
+  visit(root);
+  root.forEachDescendant(visit);
+}
 
 // ───────────────────────────────────────────────────────────────────────────────
 // §1.1 — Interfaces
@@ -44,6 +64,12 @@ function extractInterfaces(
       signature,
       isDeprecated: isDeprecated(iface.getSymbol()),
     });
+
+    for (const base of iface.getExtends()) {
+      const targetId = resolveTypeToId(base.getType());
+      if (targetId && targetId !== nodeId) cb.insertEdge(nodeId, targetId, "EXTENDS");
+    }
+    for (const member of iface.getMembers()) extractNodeReferences(member, nodeId, cb);
   }
 }
 
@@ -67,6 +93,8 @@ function extractTypeAliases(
       signature: typeAlias.getText(),
       isDeprecated: isDeprecated(typeAlias.getSymbol()),
     });
+    const typeNode = typeAlias.getTypeNode();
+    if (typeNode) extractNodeReferences(typeNode, nodeId, cb);
   }
 }
 
@@ -94,14 +122,16 @@ function extractEnums(
 
     for (const member of enumDecl.getMembers()) {
       const memberName = member.getName();
+      const memberId = `${enumId}.${memberName}`;
       cb.insertNode({
-        id: `${enumId}.${memberName}`,
+        id: memberId,
         kind: "ENUM_MEMBER",
         name: memberName,
         filepath: filePath,
         signature: member.getText(),
         isDeprecated: 0,
       });
+      cb.insertEdge(enumId, memberId, "DECLARES");
     }
   }
 }

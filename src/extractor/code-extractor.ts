@@ -6,8 +6,9 @@
  *
  *   ┌─────────────────────────────────────────────────────────────────┐
  *   │  SYS  (Ecosistema)   EXTENDS · IMPLEMENTS · IMPORTS_EXTERNAL   │
- *   │  CPG  (Estructura)   INJECTS · CALLS · INSTANTIATES            │
+ *   │  CPG  (Estructura)   INJECTS · CALLS · INSTANTIATES · DECLARES │
  *   │  DTG  (Flujo datos)  CONSUMES_DATA · PRODUCES · MUTATES_STATE  │
+ *   │                       · REFERENCES                               │
  *   └─────────────────────────────────────────────────────────────────┘
  *
  * REGLAS ESTRICTAS:
@@ -19,7 +20,7 @@
  *   - node-extraction.ts    → interfaces, types, enums, funciones, clases
  *   - class-extraction.ts   → SYS + CPG para clases
  *   - callable-analysis.ts  → DTG + recorrido profundo AST
- *   - variable-extraction.ts → arrow functions exportadas y objetos literales
+ *   - variable-extraction.ts → variables exportadas y sus dependencias
  *   - utilities.ts          → firmas, resolución de tipos, JSDoc, helpers
  */
 

@@ -4,7 +4,7 @@
  * Extraído de CodeExtractor §4.1 (DTG: Data-flow Graph) y §4.2 (recorrido profundo AST).
  *
  * Genera aristas de las tres capas:
- *   - **DTG** → CONSUMES_DATA, PRODUCES
+ *   - **DTG** → CONSUMES_DATA, PRODUCES, REFERENCES
  *   - **CPG** → CALLS, INSTANTIATES
  *   - **SYS** → IMPORTS_EXTERNAL
  */
@@ -16,11 +16,10 @@ import {
   type MethodDeclaration,
   type ArrowFunction,
   type ParameterDeclaration,
-  type Type,
   type Symbol as MorphSymbol,
+  type Node as MorphNode,
 } from "ts-morph";
 import {
-  type NodeRow,
   type ExtractionCallbacks,
   MUTABLE_METHODS,
 } from "./types.js";
@@ -30,6 +29,8 @@ import {
   safeGetText,
   isDeprecated,
   unwrapGenericWrapper,
+  resolveAliasedSymbol,
+  resolveSymbolToId,
 } from "./utilities.js";
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -48,6 +49,8 @@ export function extractDataFlow(
 ): void {
   for (const param of func.getParameters()) {
     consumesFromParam(param, sourceId, cb);
+    const initializer = param.getInitializer();
+    if (initializer) extractValueReferences(initializer, sourceId, cb);
   }
   producesFromReturnType(func, sourceId, cb);
 }
@@ -156,7 +159,7 @@ export function traverseAst(
       }
 
       // CPG/SYS: CALLS | IMPORTS_EXTERNAL
-      handleCallExpression(calleeExpr.getSymbol(), calleeExpr.getType(), sourceId, cb);
+      handleCallExpression(calleeExpr.getSymbol(), sourceId, cb);
       return;
     }
 
@@ -184,28 +187,19 @@ export function traverseAst(
   });
 }
 
-function isTargetableNode(declaration: Node): boolean {
-  if (Node.isImportSpecifier(declaration) || Node.isExportSpecifier(declaration))
-    return false;
-  if (Node.isVariableDeclaration(declaration))
-    return declaration.getVariableStatement()?.isExported() ?? false;
-  const exportable = declaration as { isExported?: () => boolean };
-  return exportable.isExported?.() ?? false;
-}
-
 /**
  * Analiza una llamada a función para determinar si es interna (CALLS)
  * o externa de node_modules (IMPORTS_EXTERNAL).
  */
 function handleCallExpression(
   symbol: MorphSymbol | undefined,
-  calleeType: Type,
   sourceId: string,
   cb: ExtractionCallbacks,
 ): void {
-  if (!symbol) return;
+  const resolved = resolveAliasedSymbol(symbol);
+  if (!resolved) return;
 
-  const declarations = symbol.getDeclarations();
+  const declarations = resolved.getDeclarations();
   if (declarations.length === 0) return;
 
   const firstDecl = declarations[0];
@@ -215,23 +209,38 @@ function handleCallExpression(
 
   if (declFilePath.includes("node_modules")) {
     const pkgName = extractPackageName(declFilePath);
-    const libId = `lib#${pkgName}#${symbol.getName()}`;
+    const libId = `lib#${pkgName}#${resolved.getName()}`;
     cb.insertNode({
       id: libId,
       kind: "EXTERNAL_LIB",
-      name: `${pkgName}::${symbol.getName()}`,
+      name: `${pkgName}::${resolved.getName()}`,
       filepath: declFilePath,
       signature: safeGetText(firstDecl),
-      isDeprecated: isDeprecated(symbol),
+      isDeprecated: isDeprecated(resolved),
     });
 
     cb.insertEdge(sourceId, libId, "IMPORTS_EXTERNAL");
   } else {
-    const symbolName = symbol.getName();
-    if (symbolName && !symbolName.startsWith("__") && isTargetableNode(firstDecl)) {
-      cb.insertEdge(sourceId, `${declFilePath}#${symbolName}`, "CALLS");
-    }
+    const targetId = resolveSymbolToId(resolved);
+    if (targetId && targetId !== sourceId) cb.insertEdge(sourceId, targetId, "CALLS");
   }
+}
+
+function extractValueReferences(
+  root: MorphNode,
+  sourceId: string,
+  cb: ExtractionCallbacks,
+): void {
+  const seen = new Set<string>();
+  const visit = (node: MorphNode): void => {
+    if (!Node.isIdentifier(node)) return;
+    const targetId = resolveSymbolToId(node.getSymbol());
+    if (!targetId || targetId === sourceId || seen.has(targetId)) return;
+    seen.add(targetId);
+    cb.insertEdge(sourceId, targetId, "REFERENCES");
+  };
+  visit(root);
+  root.forEachDescendant(visit);
 }
 
 /**
@@ -258,7 +267,7 @@ function analyzeArrowFunction(
 /**
  * Analiza el cuerpo de una función o método y genera:
  *
- *   - **DTG** → CONSUMES_DATA, PRODUCES
+ *   - **DTG** → CONSUMES_DATA, PRODUCES, REFERENCES
  *   - **CPG** → CALLS, INSTANTIATES
  *   - **SYS** → IMPORTS_EXTERNAL
  */

@@ -3,12 +3,18 @@ import { pathToFileURL } from "node:url";
 
 export interface EvalCliOptions {
   dryRun: boolean;
-  runId?: string;
-  runDir?: string;
-  repoId?: string;
-  taskId?: string;
-  strategyId?: string;
-  split?: string;
+  runId?: string | undefined;
+  runDir?: string | undefined;
+  repoId?: string | undefined;
+  taskId?: string | undefined;
+  strategyId?: string | undefined;
+  agentId?: string | undefined;
+  split?: string | undefined;
+  sanitizerVariant?: string | undefined;
+  profile?: boolean | undefined;
+  useSlm?: boolean | undefined;
+  maxBudgetUsd?: number | undefined;
+  resume?: boolean | undefined;
 }
 
 export type EvalCliFlag =
@@ -18,7 +24,13 @@ export type EvalCliFlag =
   | "--repo-id"
   | "--task-id"
   | "--strategy-id"
-  | "--split";
+  | "--agent-id"
+  | "--split"
+  | "--sanitizer-variant"
+  | "--profile"
+  | "--use-slm"
+  | "--resume"
+  | "--max-budget-usd";
 
 const VALUE_FLAGS = {
   "--run-id": "runId",
@@ -26,7 +38,10 @@ const VALUE_FLAGS = {
   "--repo-id": "repoId",
   "--task-id": "taskId",
   "--strategy-id": "strategyId",
+  "--agent-id": "agentId",
   "--split": "split",
+  "--sanitizer-variant": "sanitizerVariant",
+  "--max-budget-usd": "maxBudgetUsd",
 } as const;
 
 export function parseEvalCliOptions(
@@ -34,6 +49,9 @@ export function parseEvalCliOptions(
   allowedFlags: readonly EvalCliFlag[] = ["--dry-run", "--run-id"],
 ): EvalCliOptions {
   let dryRun = false;
+  let profile = false;
+  let useSlm = false;
+  let resume = false;
   const values: Partial<Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>> = {};
   const allowed = new Set(allowedFlags);
   const seen = new Set<string>();
@@ -47,8 +65,11 @@ export function parseEvalCliOptions(
       throw new Error(`duplicate argument: ${String(argument)}`);
     }
     seen.add(argument!);
-    if (argument === "--dry-run") {
-      dryRun = true;
+    if (argument === "--dry-run" || argument === "--profile" || argument === "--use-slm" || argument === "--resume") {
+      if (argument === "--dry-run") dryRun = true;
+      if (argument === "--profile") profile = true;
+      if (argument === "--use-slm") useSlm = true;
+      if (argument === "--resume") resume = true;
       continue;
     }
     const property = VALUE_FLAGS[argument as keyof typeof VALUE_FLAGS];
@@ -60,7 +81,32 @@ export function parseEvalCliOptions(
     index += 1;
   }
 
-  return { dryRun, ...values };
+  // Convert max-budget-usd to number; remove from `values` to avoid
+  // double-typing with the string in the partial record.
+  let maxBudgetUsd: number | undefined;
+  if (values.maxBudgetUsd !== undefined) {
+    const parsed = Number(values.maxBudgetUsd);
+    if (Number.isNaN(parsed) || parsed < 0) {
+      throw new Error(`--max-budget-usd requires a non-negative number`);
+    }
+    maxBudgetUsd = parsed;
+    delete values.maxBudgetUsd;
+  }
+
+  // Drop undefined-valued string flags so they don't bleed into EvalCliOptions
+  const cleaned: Record<string, string> = {};
+  for (const [k, v] of Object.entries(values)) {
+    if (v !== undefined) cleaned[k] = v;
+  }
+
+  return {
+    dryRun,
+    ...(profile ? { profile: true } : {}),
+    ...(useSlm ? { useSlm: true } : {}),
+    ...(resume ? { resume: true } : {}),
+    ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
+    ...cleaned,
+  } as EvalCliOptions;
 }
 
 export function isEntrypoint(moduleUrl: string): boolean {

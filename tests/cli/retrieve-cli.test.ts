@@ -18,6 +18,7 @@ import {
   configureProjectStorage,
   type ProjectRecord,
 } from "../../src/cli/state/project-registry.js";
+import { SemanticProfileStore } from "../../src/semantic-profile/semantic-profile-store.js";
 
 interface CliResult {
   code: number;
@@ -194,7 +195,7 @@ describe("lacoco retrieve CLI", () => {
 
       expect(code).toBe(0);
       expect(result).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: true,
         query: "OrderService",
         strategy: "agentic",
@@ -204,6 +205,7 @@ describe("lacoco retrieve CLI", () => {
           dimensions: ["CPG"],
           cleanQuery: "OrderService",
         },
+        grounding: { enabled: false, profileBuildId: null },
         retrieval: {
           strategyParameters: { chunkLimit: 50 },
           maxTokens: 4000,
@@ -294,7 +296,7 @@ describe("lacoco retrieve CLI", () => {
 
       expect(code).toBe(1);
       expect(result).toEqual({
-        schemaVersion: 1,
+        schemaVersion: 2,
         ok: false,
         error: {
           stage: "intermediario",
@@ -302,6 +304,58 @@ describe("lacoco retrieve CLI", () => {
         },
       });
       expect(output.stderr).toContain("Error en pipeline RAG (intermediario)");
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("falla en query grounding cuando se solicita un perfil ausente", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "servicio de pedidos",
+        { strategy: "agentic", verbose: false, json: true, grounding: true },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+      expect(code).toBe(1);
+      expect(result).toMatchObject({
+        schemaVersion: 2,
+        ok: false,
+        error: { stage: "query grounding" },
+      });
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("inyecta candidatos del perfil y expone diagnósticos en JSON v2", async () => {
+    const temp = createTempIndexedDb();
+    try {
+      installSemanticProfile(temp.dbPath);
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "explica el servicio de pedidos",
+        { strategy: "agentic", verbose: false, json: true, grounding: true },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+      expect(code).toBe(0);
+      expect(result).toMatchObject({
+        schemaVersion: 2,
+        ok: true,
+        grounding: {
+          enabled: true,
+          usedTermIds: ["term-order-service"],
+          repairCount: 0,
+        },
+      });
+      expect(result.ok && result.grounding.candidates[0]?.canonicalTerm).toBe("OrderService");
     } finally {
       temp.cleanup();
     }
@@ -434,6 +488,23 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
           confidence: 0.9,
         };
       },
+      sanitizeDetailed: async (prompt, grounding) => {
+        const candidate = grounding?.candidates[0];
+        if (!candidate) throw new Error("Grounding sin candidatos");
+        return {
+          output: {
+            route: "RAG",
+            clean_query: candidate.canonicalTerm,
+            embedding_input: prompt.trim(),
+            dimensions: ["CPG"],
+            intent: "understand",
+            confidence: 0.9,
+          },
+          usedTermIds: [candidate.termId],
+          initialUnsupportedClauses: [],
+          repairCount: 0,
+        };
+      },
     }),
     createStrategy: async (
       strategyName,
@@ -462,6 +533,28 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
       };
     },
   };
+}
+
+function installSemanticProfile(dbPath: string): void {
+  const db = new LaCoCoDatabase(dbPath);
+  const store = new SemanticProfileStore(db.getRawDb());
+  const buildId = store.beginBuild("test-model", 1, "evidence-1");
+  store.completeBuild(buildId, [{
+    id: "term-order-service",
+    canonicalTerm: "OrderService",
+    normalizedTerm: "orderservice",
+    kind: "symbol",
+    nodeId: "file1#OrderService",
+    path: "src/order.service.ts",
+    dimensions: ["CPG"],
+    evidence: ["file1#OrderService"],
+    sourceHash: "hash-order-service",
+    aliases: [{ value: "servicio de pedidos", language: "es", confidence: 0.98 }],
+    domains: [{ name: "business-logic", score: 0.9 }],
+    description: "Servicio de dominio para pedidos.",
+    confidence: 0.95,
+  }]);
+  db.close();
 }
 
 function createBm25Strategy(db: LaCoCoDatabase): RecoveryStrategy {

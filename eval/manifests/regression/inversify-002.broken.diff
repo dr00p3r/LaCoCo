@@ -1,0 +1,25 @@
+diff --git a/packages/container/libraries/core/src/metadata/calculations/throwAtInvalidClassMetadata.ts b/packages/container/libraries/core/src/metadata/calculations/throwAtInvalidClassMetadata.ts
+--- a/packages/container/libraries/core/src/metadata/calculations/throwAtInvalidClassMetadata.ts
++++ b/packages/container/libraries/core/src/metadata/calculations/throwAtInvalidClassMetadata.ts
+@@ -36,19 +36,17 @@ export function throwAtInvalidClassMetadata(
+     }
+   }
+ 
+   if (errors.length === 0) {
+-    throw new InversifyCoreError(
+-      InversifyCoreErrorKind.unknown,
++    throw new Error(
+       `Unexpected class metadata for type "${type.name}" with uncompletion traces.
+ This might be caused by one of the following reasons:
+ 
+ 1. A third party library is targeting inversify reflection metadata.
+ 2. A bug is causing the issue. Consider submiting an issue to fix it.`,
+     );
+   }
+ 
+-  throw new InversifyCoreError(
+-    InversifyCoreErrorKind.missingInjectionDecorator,
++  throw new Error(
+     `Invalid class metadata at type ${type.name}:
+ 
+ ${errors.join('\n\n')}`,

@@ -11,7 +11,7 @@ export class SearchDao {
   private stmtSearchBM25 : Database.Statement;
   private stmtGetNodesByDimension : Database.Statement;
 
-  constructor(private readonly db: Database.Database) {
+  constructor(db: Database.Database) {
     this.stmtSearchBM25 = db.prepare(`
       SELECT node_id, rank as score
       FROM nodes_fts

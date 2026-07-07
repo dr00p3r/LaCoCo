@@ -39,6 +39,7 @@ agents:
       working_directory: "{repo_path}"
       args:
         - "run"
+        - "Implementa la tarea descrita en el archivo adjunto. Deja el repositorio listo para ejecutar las pruebas indicadas."
         - "--dir"
         - "{repo_path}"
         - "--model"
@@ -49,7 +50,6 @@ agents:
         - "json"
         - "--file"
         - "{prompt_file}"
-        - "Implementa la tarea descrita en el archivo adjunto. Usa el contexto de LaCoCo incluido en el prompt y deja el repositorio listo para ejecutar las pruebas indicadas."
       optional_args:
         attach_server:
           enabled: false
@@ -61,7 +61,7 @@ agents:
           args:
             - "--dangerously-skip-permissions"
     model:
-      default: "anthropic/claude-sonnet-4-5"
+      default: "opencode-go/qwen3.7-plus"
       env: "LACOCO_EVAL_OPENCODE_MODEL"
     agent_profile:
       default: "build"
