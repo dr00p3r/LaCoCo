@@ -22,14 +22,22 @@ interface MetricsCliOptions {
   runId?: string;
   runDir?: string;
   inputFile?: string;
+  strict?: boolean;
 }
 
 function parseOptions(argv: string[]): MetricsCliOptions {
   let runId: string | undefined;
   let runDir: string | undefined;
   let inputFile: string | undefined;
+  let strict = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    // --strict es un flag sin valor: convierte la advertencia de todo-cero (guard de
+    // invalidez silenciosa) en un exit≠0 para usarlo en CI/gates.
+    if (argument === "--strict") {
+      strict = true;
+      continue;
+    }
     if (argument !== "--run-id" && argument !== "--run-dir" && argument !== "--input-file") {
       throw new Error(`unknown argument: ${String(argument)}`);
     }
@@ -45,7 +53,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   if ((runId === undefined) === (runDir === undefined)) {
     throw new Error("provide exactly one of --run-id or --run-dir");
   }
-  const base = runId === undefined ? { runDir: runDir! } : { runId };
+  const base = runId === undefined ? { runDir: runDir!, strict } : { runId, strict };
   // --input-file (default retrieval.jsonl) permite medir sobre una variante
   // normalizada (p. ej. retrieval.normalized.jsonl) sin mutar el JSONL crudo.
   return inputFile === undefined ? base : { ...base, inputFile };
@@ -63,6 +71,43 @@ function resolveRun(
     ? resolve(options.runDir!)
     : resolve(PROJECT_ROOT, options.runDir!);
   return { runId: basename(runDirectory), runDirectory };
+}
+
+export interface AllZeroGuard {
+  triggered: boolean;
+  eligibleCells: number;
+  message: string | null;
+}
+
+/**
+ * Guard de invalidez silenciosa. Si hay celdas elegibles (M3 computada, es decir
+ * gold `ready` + exit 0) pero la precisión temprana (M3), el MRR (M5) y el multi-hop
+ * (M6) agregados son 0 en TODAS, casi siempre es un desajuste de árbol/prefijo (el
+ * gold se resolvió contra un repoPath que no es el árbol donde corrió el retrieval)
+ * o un gold mal resuelto — no un run genuinamente malo, que suele dejar algo de MRR
+ * no-cero en alguna estrategia. M6 se ignora si no tiene celdas computadas (tareas
+ * sin multihop gold → not_applicable).
+ */
+export function detectAllZeroRetrieval(
+  summary: ReturnType<typeof summarizeTaskMetrics>,
+): AllZeroGuard {
+  const global = summary.global.metrics;
+  const eligibleCells = global.M3.included_task_values;
+  const m6HasCells = global.M6.included_task_values > 0;
+  const triggered =
+    eligibleCells > 0 &&
+    global.M3.value === 0 &&
+    global.M5.value === 0 &&
+    (!m6HasCells || global.M6.value === 0);
+  return {
+    triggered,
+    eligibleCells,
+    message: triggered
+      ? `⚠ VALIDEZ: ${eligibleCells} celda(s) elegible(s) con M3/M5/M6=0 en TODAS — ` +
+        "probable desajuste de árbol/prefijo (revisa el repoPath del lock vs los ids de " +
+        "ranked_nodes) o gold mal resuelto. Pasa --strict para fallar (exit≠0) en este caso."
+      : null,
+  };
 }
 
 export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
@@ -103,9 +148,14 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   // run usó repos-jina/ produce un prefijo distinto → 0 matches en TODAS las celdas
   // (regresión introducida al migrar el gold a rutas relativas). Fallback a
   // `paths.repos` para runs cuyo lock no exista o no liste el repo.
+  // El lock vive DENTRO del propio run dir (`prepare_repos` lo escribe ahí). En modo
+  // --run-id eso coincide con layout.lockFile; en --run-dir apunta al dir provisto.
+  // Resolverlo contra run.runDirectory hace la resolución del gold correcta en ambos
+  // modos y testeable sin depender de eval/runs/.
+  const lockPath = join(run.runDirectory, basename(layout.lockFile));
   const lockRepoPathById = new Map<string, string>();
-  if (existsSync(layout.lockFile)) {
-    for (const repository of readRepositoriesLock(layout.lockFile).repositories) {
+  if (existsSync(lockPath)) {
+    for (const repository of readRepositoriesLock(lockPath).repositories) {
       lockRepoPathById.set(repository.id, repository.repoPath);
     }
   }
@@ -177,6 +227,16 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   console.log(`Metrics: ${metricsPath}`);
   console.log(`CSV: ${csvPath}`);
   console.log(`Markdown: ${markdownPath}`);
+
+  // Guard de invalidez silenciosa: advierte (o falla con --strict) si todas las
+  // celdas elegibles dan M3/M5/M6=0 — señal clásica de desajuste de árbol/prefijo.
+  const guard = detectAllZeroRetrieval(summary);
+  if (guard.triggered) {
+    console.error(guard.message);
+    if (options.strict === true) {
+      throw new Error("retrieval metrics all-zero guard failed under --strict");
+    }
+  }
 }
 
 if (isEntrypoint(import.meta.url)) {
