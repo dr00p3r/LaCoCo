@@ -27,6 +27,16 @@ inputs:
   metrics_manifest: "eval/manifests/metrics.yaml"
   tasks_manifest: "eval/manifests/tasks.yaml"
 
+# Perfil de embedding — FUENTE DE VERDAD ÚNICA del modelo de vectores del eval.
+# index-repos y run-retrieval lo resuelven y setean LACOCO_EMBEDDING_* para TODOS
+# los subprocesos (indexado y retrieval), y persisten `embedding.json` junto al
+# índice para verificar consistencia al recuperar. El operador ya NO exporta estas
+# variables a mano (antes se caían en silencio → query-MiniLM sobre índice-Jina).
+embedding:
+  model: "jinaai/jina-embeddings-v2-base-code"
+  dim: 768
+  quantized: false
+
 phases:
   prepare_repos:
     enabled: true

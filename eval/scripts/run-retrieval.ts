@@ -14,10 +14,12 @@ import { loadManifests } from "./lib/load-manifests.js";
 import { PROJECT_ROOT } from "./lib/paths.js";
 import { readRepositoriesLock, type LockedRepository } from "./lib/repo-lock.js";
 import {
-  EMBEDDING_MODEL,
-  EMBEDDING_DIM,
-  EMBEDDING_QUANTIZED,
-} from "../../src/embeddings/embedding-config.js";
+  applyEmbeddingEnv,
+  checkEmbeddingConsistency,
+  embeddingMetadataFromProfile,
+  readIndexEmbeddingMetadata,
+  resolveEmbeddingProfile,
+} from "./lib/embedding-profile.js";
 import { resolveIntermediaryModel, resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
 import { resolveDbPath } from "../../src/cli/storage-paths.js";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
@@ -574,8 +576,17 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   const selectedRepoIds = [...new Set(tasks.map(({ repo_id }) => repo_id))].sort();
   const outputPath = join(layout.runDirectory, "retrieval.jsonl");
 
+  // Perfil de embedding = fuente de verdad de run.yaml. Setear el env AQUÍ hace que
+  // el subproceso `eval:retrieve:deterministic` embeba el query con el mismo modelo
+  // que construyó el índice — sin exportar variables a mano.
+  const embeddingProfile = resolveEmbeddingProfile(manifests.run);
+  applyEmbeddingEnv(embeddingProfile);
+
   console.log(`Run: ${layout.runId}`);
   console.log(`Lock: ${layout.lockFile}`);
+  console.log(
+    `Embedding: ${embeddingProfile.model} (dim ${embeddingProfile.dim}, quantized ${embeddingProfile.quantized})`,
+  );
   console.log(`Artifacts: ${layout.artifactsDirectory}`);
   console.log(`Output: ${outputPath}`);
   console.log(`Split: ${settings.splitName}`);
@@ -620,21 +631,41 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
     mkdirSync(layout.artifactsDirectory, { recursive: true });
     writeFileSync(outputPath, "", "utf8");
     // Registra qué embedding produjo este retrieval, para comparar corridas
-    // (p. ej. baseline all-MiniLM vs code-aware) sin ambigüedad.
+    // (p. ej. baseline all-MiniLM vs code-aware) sin ambigüedad. Se escribe desde
+    // el perfil de run.yaml (no de constantes congeladas al importar).
     writeFileSync(
       join(layout.runDirectory, "embedding-metadata.json"),
       `${JSON.stringify(
-        {
-          embedding_model: EMBEDDING_MODEL,
-          embedding_dim: EMBEDDING_DIM,
-          embedding_quantized: EMBEDDING_QUANTIZED,
-          generated_at: new Date().toISOString(),
-        },
+        { ...embeddingMetadataFromProfile(embeddingProfile), generated_at: new Date().toISOString() },
         null,
         2,
       )}\n`,
       "utf8",
     );
+
+    // Assert de consistencia: el índice que abrirá el retrieval (resuelto por el
+    // mismo resolveDbPath que usa la pipeline) debe haberse construido con el modelo
+    // declarado. Un query-Jina sobre índice-MiniLM (o viceversa) NO da error, solo
+    // basura → invalidez silenciosa. Metadata ausente = índice legacy: warn, no bloquea.
+    for (const repoId of selectedRepoIds) {
+      const locked = lockedById.get(repoId);
+      if (locked === undefined) continue;
+      const indexDirectory = dirname(resolveDbPath(locked.repoPath));
+      const consistency = checkEmbeddingConsistency(
+        embeddingProfile,
+        readIndexEmbeddingMetadata(indexDirectory),
+      );
+      if (consistency.mismatch) {
+        throw new Error(
+          `embedding mismatch en ${repoId}: el índice (${indexDirectory}) NO coincide con el ` +
+            `perfil declarado (${embeddingProfile.model}/${embeddingProfile.dim}). ` +
+            `Detalle: ${consistency.reason}. Reindexa con eval:index o corrige run.yaml.embedding.`,
+        );
+      }
+      if (consistency.reason !== null) {
+        console.warn(`⚠ embedding ${repoId}: ${consistency.reason}`);
+      }
+    }
   }
 
   const failures: string[] = [];

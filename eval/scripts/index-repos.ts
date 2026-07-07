@@ -9,6 +9,12 @@ import { PROJECT_ROOT } from "./lib/paths.js";
 import { readRepositoriesLock, type LockedRepository } from "./lib/repo-lock.js";
 import { resolveRepositoryTsconfig } from "./lib/tsconfig.js";
 import type { RepositoryDefinition } from "./lib/types.js";
+import {
+  applyEmbeddingEnv,
+  resolveEmbeddingProfile,
+  writeIndexEmbeddingMetadata,
+  type EmbeddingProfile,
+} from "./lib/embedding-profile.js";
 
 interface IndexSettings {
   enabled: boolean;
@@ -107,6 +113,7 @@ async function indexRepository(
   logsDirectory: string,
   dryRun: boolean,
   buildProfile: boolean,
+  embeddingProfile: EmbeddingProfile,
 ): Promise<void> {
   const repoPath = locked.repoPath;
   const indexDirectory = join(indexesDirectory, repository.id);
@@ -172,6 +179,11 @@ async function indexRepository(
       settings.timeoutMs,
       dryRun,
     );
+    // Persiste con qué modelo se construyó el índice, junto al índice mismo, para
+    // que run-retrieval pueda verificar que recupera con el mismo embedding.
+    if (!dryRun) {
+      writeIndexEmbeddingMetadata(indexDirectory, embeddingProfile);
+    }
   }
 
   if (buildProfile) {
@@ -191,6 +203,11 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
   const options = parseEvalCliOptions(argv, ["--dry-run", "--run-id", "--repo-id", "--profile"]);
   const manifests = loadManifests();
   const settings = readSettings(manifests.repos, manifests.run);
+  // Perfil de embedding = fuente de verdad de run.yaml. Setear el env AQUÍ hace que
+  // el subproceso `index_vectors` embeba con el modelo correcto sin que el operador
+  // exporte nada a mano.
+  const embeddingProfile = resolveEmbeddingProfile(manifests.run);
+  applyEmbeddingEnv(embeddingProfile);
   const repositories = options.repoId === undefined
     ? manifests.repos.repositories
     : manifests.repos.repositories.filter(({ id }) => id === options.repoId);
@@ -201,6 +218,9 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
 
   console.log(`Run: ${layout.runId}`);
   console.log(`Lock: ${layout.lockFile}`);
+  console.log(
+    `Embedding: ${embeddingProfile.model} (dim ${embeddingProfile.dim}, quantized ${embeddingProfile.quantized})`,
+  );
   console.log(`Indexes: ${layout.indexesDirectory}`);
   console.log(`Logs: ${layout.indexLogsDirectory}`);
   console.log(`Selected repositories (${repositories.length}): ${repositories.map(({ id }) => id).join(", ")}`);
@@ -252,6 +272,7 @@ export async function indexRepos(argv = process.argv.slice(2)): Promise<void> {
         logsDirectory,
         options.dryRun,
         options.profile ?? false,
+        embeddingProfile,
       );
     } catch (error) {
       const message = `${repository.id}: ${error instanceof Error ? error.message : String(error)}`;
