@@ -23,3 +23,14 @@ export function resolveBooleanConfig(key: string): boolean {
   }
   return entry.value;
 }
+
+/**
+ * Modelo del agente intermediario (clasificador). `intermediary.model` vacío
+ * hereda `agent.model`, de modo que por defecto se usa el mismo SLM en todo el
+ * pipeline y basta con `lacoco config set intermediary.model <tag>` para darle
+ * uno propio (p. ej. gemma4:e4b) sin tocar la generación ni el enriquecedor.
+ */
+export function resolveIntermediaryModel(): string {
+  const explicit = resolveStringConfig("intermediary.model").trim();
+  return explicit.length > 0 ? explicit : resolveStringConfig("agent.model");
+}

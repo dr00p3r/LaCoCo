@@ -55,6 +55,15 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "agent.model debe ser un nombre no vacío",
   },
+  "intermediary.model": {
+    type: "string",
+    defaultValue: "",
+    env: "LACOCO_INTERMEDIARY_MODEL",
+    validate: (value) =>
+      typeof value === "string"
+        ? null
+        : "intermediary.model debe ser un string (vacío = hereda agent.model)",
+  },
   "strategy.default": {
     type: "string",
     defaultValue: "hybrid",

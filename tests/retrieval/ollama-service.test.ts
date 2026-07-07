@@ -133,6 +133,32 @@ describe("OllamaService", () => {
     expect(request.options).toEqual({ temperature: 0, seed: 42 });
   });
 
+  it("reenvía think en chat cuando se especifica", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ message: { content: "{}" } }),
+    } as Response);
+    const ollama = new OllamaService("http://localhost:11434", "test-model", 5_000);
+
+    await ollama.chat([{ role: "user", content: "clasifica" }], { think: false });
+
+    const request = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as Record<string, unknown>;
+    expect(request.think).toBe(false);
+  });
+
+  it("omite think en chat cuando no se especifica", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ message: { content: "{}" } }),
+    } as Response);
+    const ollama = new OllamaService("http://localhost:11434", "test-model", 5_000);
+
+    await ollama.chat([{ role: "user", content: "clasifica" }]);
+
+    const request = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string) as Record<string, unknown>;
+    expect("think" in request).toBe(false);
+  });
+
   it("rechaza generate con JSON de respuesta invalido", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
