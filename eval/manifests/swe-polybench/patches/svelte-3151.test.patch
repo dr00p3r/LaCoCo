@@ -1,0 +1,35 @@
+diff --git a/test/runtime/samples/shorthand-method-in-template/Foo.svelte b/test/runtime/samples/shorthand-method-in-template/Foo.svelte
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/shorthand-method-in-template/Foo.svelte
+@@ -0,0 +1,5 @@
++<script>
++	export let bar;
++</script>
++
++{bar.answer()}
+\ No newline at end of file
+diff --git a/test/runtime/samples/shorthand-method-in-template/_config.js b/test/runtime/samples/shorthand-method-in-template/_config.js
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/shorthand-method-in-template/_config.js
+@@ -0,0 +1,3 @@
++export default {
++	html: '42'
++};
+\ No newline at end of file
+diff --git a/test/runtime/samples/shorthand-method-in-template/main.svelte b/test/runtime/samples/shorthand-method-in-template/main.svelte
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/shorthand-method-in-template/main.svelte
+@@ -0,0 +1,9 @@
++<script>
++	import Foo from './Foo.svelte';
++</script>
++
++<Foo bar={{
++	answer() {
++		return 42;
++	}
++}} />
+\ No newline at end of file

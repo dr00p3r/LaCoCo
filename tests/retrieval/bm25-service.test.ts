@@ -83,10 +83,42 @@ describe("Bm25Service", () => {
       for (const hit of hits) {
         expect(hit).toHaveProperty("nodeId");
         expect(hit).toHaveProperty("score");
-        expect(hit).toHaveProperty("text");
         expect(typeof hit.score).toBe("number");
       }
     }
   });
 
+  it("encuentra nodos por fragmento de path (migración 005)", () => {
+    // Nodo con un path único que ningún otro nodo del fixture comparte.
+    // FTS5 con columna `path` debe matchearlo por el fragmento "uniquepathsegment".
+    db.insertNode({
+      id: "src/retriever/strategies/hybrid-strategy.ts#HybridStrategy",
+      kind: "CLASS",
+      name: "HybridStrategy",
+      filepath: "src/retriever/strategies/uniquepathsegment.ts",
+      signature: "class HybridStrategy",
+      isDeprecated: 0,
+    });
+
+    const hits = service.search("uniquepathsegment");
+    expect(hits.length).toBeGreaterThan(0);
+    const found = hits.some((h) => h.nodeId === "src/retriever/strategies/hybrid-strategy.ts#HybridStrategy");
+    expect(found).toBe(true);
+  });
+
+  it("encuentra nodos por subdirectorio del path", () => {
+    db.insertNode({
+      id: "src/extractor/daemon.ts#Daemon",
+      kind: "CLASS",
+      name: "Daemon",
+      filepath: "src/extractor/daemon.ts",
+      signature: "class Daemon",
+      isDeprecated: 0,
+    });
+
+    const hits = service.search("extractor");
+    expect(hits.length).toBeGreaterThan(0);
+    const found = hits.some((h) => h.nodeId === "src/extractor/daemon.ts#Daemon");
+    expect(found).toBe(true);
+  });
 });

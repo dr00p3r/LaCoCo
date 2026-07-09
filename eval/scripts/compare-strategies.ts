@@ -29,12 +29,13 @@ import { join } from "node:path";
 import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import { resolveEvalLayout } from "./lib/layout.js";
+import { resolveManifestsDir } from "./lib/paths.js";
 
 /** Estrategia base contra la que se comparan las demás. */
 const BASELINE = "no_context";
 
 /** Orden preferido de columnas/filas; estrategias no listadas van al final, ordenadas. */
-const STRATEGY_ORDER = ["no_context", "hybrid", "ictd", "clcr", "rpr"];
+const STRATEGY_ORDER = ["no_context", "hybrid", "ictd", "clcr", "rpr", "agentic"];
 
 interface StrategyAgg {
   m1_pass_rate: number;
@@ -42,6 +43,15 @@ interface StrategyAgg {
   m2_hallucination_rate: number | null;
   m2_unknown_ratio: number | null;
   m2_total_calls: number;
+  // Panel norte de tiempo/costo (compute-generation-metrics.ts). Opcionales para
+  // leer generation-metrics.json históricos (schema previo sin estos campos).
+  agent_duration_ms_mean?: number | null;
+  retrieval_overhead_ms_mean?: number;
+  end_to_end_ms_mean?: number | null;
+  end_to_end_ms_p95?: number | null;
+  cost_usd_mean?: number | null;
+  cost_usd_total?: number | null;
+  cost_cells?: number;
 }
 
 interface CellMetrics {
@@ -90,6 +100,26 @@ function orderStrategies(ids: string[]): string[] {
 
 function fmtRate(value: number | null): string {
   return value === null ? "N/A" : value.toFixed(3);
+}
+
+function fmtMs(value: number | null | undefined): string {
+  return value === null || value === undefined ? "N/A" : Math.round(value).toLocaleString("en-US");
+}
+
+function fmtUsd(value: number | null | undefined): string {
+  return value === null || value === undefined ? "N/A" : `$${value.toFixed(6)}`;
+}
+
+function fmtDeltaMs(value: number | null | undefined, base: number | null | undefined): string {
+  if (value === null || value === undefined || base === null || base === undefined) return "N/A";
+  const d = value - base;
+  return `${d > 0 ? "+" : ""}${Math.round(d).toLocaleString("en-US")}`;
+}
+
+function fmtDeltaUsd(value: number | null | undefined, base: number | null | undefined): string {
+  if (value === null || value === undefined || base === null || base === undefined) return "N/A";
+  const d = value - base;
+  return `${d > 0 ? "+" : ""}${d.toFixed(6)}`;
 }
 
 /** Delta con signo explícito; null si alguno de los operandos falta. */
@@ -208,6 +238,39 @@ function renderMarkdown(metrics: GenerationMetrics): string {
   lines.push("_ΔM1 > 0 = más tareas resueltas (mejor). ΔM2 < 0 = menos alucinación (mejor)._");
   lines.push("");
 
+  // --- Panel norte: tiempo y costo end-to-end vs baseline ---
+  lines.push("## Tiempo y costo vs baseline (end-to-end)");
+  lines.push("");
+  lines.push(
+    "El agente recibe el contexto YA inyectado, así que `agent` excluye la recuperación. " +
+      "`end-to-end` = overhead de recuperación (0 para `no_context`) + agente = costo real del flujo asistido. " +
+      "ΔE2E vs `no_context`: **< 0 = el contexto se paga solo** (el flujo asistido es más rápido en total).",
+  );
+  lines.push("");
+  lines.push(
+    "| estrategia | n | overhead ms | agent ms | end-to-end ms | ΔE2E | | cost usd | ΔCost | |",
+  );
+  lines.push("|---|---:|---:|---:|---:|---:|:-:|---:|---:|:-:|");
+  for (const s of strategies) {
+    const agg = metrics.by_strategy[s];
+    if (agg === undefined) continue;
+    const isBase = s === BASELINE;
+    const label = isBase ? `\`${s}\` (base)` : `\`${s}\``;
+    const dE2E = base ? delta(agg.end_to_end_ms_mean ?? null, base.end_to_end_ms_mean ?? null) : null;
+    const dCost = base ? delta(agg.cost_usd_mean ?? null, base.cost_usd_mean ?? null) : null;
+    lines.push(
+      `| ${label} | ${agg.m1_total} | ${fmtMs(agg.retrieval_overhead_ms_mean)} | ` +
+        `${fmtMs(agg.agent_duration_ms_mean)} | ${fmtMs(agg.end_to_end_ms_mean)} | ` +
+        `${isBase ? "—" : fmtDeltaMs(agg.end_to_end_ms_mean, base?.end_to_end_ms_mean)} | ` +
+        `${isBase ? "" : trend(dE2E, false)} | ${fmtUsd(agg.cost_usd_mean)} | ` +
+        `${isBase ? "—" : fmtDeltaUsd(agg.cost_usd_mean, base?.cost_usd_mean)} | ` +
+        `${isBase ? "" : trend(dCost, false)} |`,
+    );
+  }
+  lines.push("");
+  lines.push("_ΔE2E < 0 y ΔCost < 0 = mejor (menos tiempo/costo total que `no_context`)._");
+  lines.push("");
+
   // --- Vista pareada por tarea: M1 ---
   const tasks = [...new Map(metrics.cells.map((c) => [c.task_id, c.repo_id]))].sort(
     (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
@@ -298,13 +361,31 @@ function renderCsv(metrics: GenerationMetrics): string {
       isBase ? null : delta(agg.m2_hallucination_rate, base?.m2_hallucination_rate ?? null),
       agg.m2_total_calls,
     ]);
+    rows.push([
+      "strategy",
+      s,
+      "EndToEndMs",
+      agg.end_to_end_ms_mean ?? null,
+      base?.end_to_end_ms_mean ?? null,
+      isBase ? null : delta(agg.end_to_end_ms_mean ?? null, base?.end_to_end_ms_mean ?? null),
+      agg.m1_total,
+    ]);
+    rows.push([
+      "strategy",
+      s,
+      "CostUsd",
+      agg.cost_usd_mean ?? null,
+      base?.cost_usd_mean ?? null,
+      isBase ? null : delta(agg.cost_usd_mean ?? null, base?.cost_usd_mean ?? null),
+      agg.cost_cells ?? 0,
+    ]);
   }
   return `${[header.join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n")}\n`;
 }
 
 export function compareStrategies(argv = process.argv.slice(2)): void {
-  const options = parseEvalCliOptions(argv, ["--run-id"]);
-  const manifests = loadManifests();
+  const options = parseEvalCliOptions(argv, ["--run-id", "--manifests-dir"]);
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const layout = resolveEvalLayout(manifests.run, options.runId);
 
   const metricsPath = join(layout.runDirectory, "generation-metrics.json");

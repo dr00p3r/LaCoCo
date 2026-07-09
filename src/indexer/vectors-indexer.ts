@@ -29,7 +29,7 @@ export class VectorsIndexer {
       console.log(`[VectorsIndexer] Archivos encontrados: ${sourceFiles.length}`);
 
       const embedGen = new EmbeddingGenerator();
-      const generateEmbedding = (text: string) => embedGen.generate(text);
+      const generateEmbedding = (texts: string[]) => embedGen.generateBatch(texts);
 
       const callbacks = new VectorCallbacks(
         this.lanceDb,

@@ -43,6 +43,14 @@ embedding:
   dim: 768
   quantized: false
 
+# Grounding — construcción offline del Project Semantic Profile (Ollama).
+# `enrich_concurrency` = lotes de enriquecimiento en vuelo simultáneos; requiere
+# OLLAMA_NUM_PARALLEL>=ese valor en el server para que no encolen. Solo acelera la
+# construcción; el QueryGrounder en consulta es determinista, así que NO altera la
+# línea base del A/B de retrieval — únicamente el wall-clock del build.
+grounding:
+  enrich_concurrency: 6
+
 phases:
   prepare_repos:
     enabled: true
@@ -82,7 +90,6 @@ phases:
       - "ictd"
       - "clcr"
       - "rpr"
-    exploratory_strategies:
       - "agentic"
 
   generation:
@@ -94,6 +101,7 @@ phases:
       - "ictd"
       - "clcr"
       - "rpr"
+      - "agentic"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
@@ -148,6 +156,7 @@ splits:
       - "ictd"
       - "clcr"
       - "rpr"
+      - "agentic"
 
   generation_official:
     description: "Generacion con agente externo y pruebas focalizadas."
@@ -159,6 +168,7 @@ splits:
       - "ictd"
       - "clcr"
       - "rpr"
+      - "agentic"
     agents:
       - "opencode"
 
@@ -173,6 +183,35 @@ splits:
       - "ictd"
       - "clcr"
       - "rpr"
+      - "agentic"
+
+  retrieval_grounded:
+    description: "Retrieval con intermediario SLM 4b + Project Semantic Profile (solo grounded)."
+    require_gold_status: "ready"
+    sanitizer_variants:
+      - "grounded"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+
+  generation_grounded:
+    description: "Generación alimentada con el contexto grounded (SLM 4b). Requiere haber
+      corrido retrieval_grounded antes (produce los registros strategy@grounded)."
+    require_gold_status: "ready"
+    require_target_tests: true
+    sanitizer_variant: "grounded"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+    agents:
+      - "opencode"
 
   retrieval_natural_6:
     description: >-

@@ -96,4 +96,28 @@ describe("ground truth helpers", () => {
     expect(result.status).toBe("invalid");
     expect(result.issues.filter(({ code }) => code === "empty_string")).toHaveLength(3);
   });
+
+  it("permite multihop_nodes vacio cuando multihop_status=auto (BFS-2 no encontro nada)", () => {
+    // El traductor automatico devolvio multihop vacio por falta de alcanzables
+    // (caso legitimo). La tarea debe ser valida y la diferenciacion con M6
+    // (auto_empty vs not_applicable) se hace en compute-retrieval-metrics.
+    const task = {
+      ...baseTask,
+      target_tests: ["test"],
+      gold: {
+        ...baseTask.gold,
+        status: "ready",
+        relevant_nodes: ["node-a"],
+        multihop_nodes: [],
+        multihop_status: "auto" as const,
+      },
+    };
+    const result = validateTaskGold(task, null, "/repo");
+    // No debe haber error "empty_string" relacionado con multihop_nodes:
+    // el codigo acepta la lista vacia cuando multihop_status=auto.
+    const emptyMultihopIssues = result.issues.filter(
+      (issue) => issue.code === "empty_string" && issue.message.includes("multihop_nodes"),
+    );
+    expect(emptyMultihopIssues).toEqual([]);
+  });
 });

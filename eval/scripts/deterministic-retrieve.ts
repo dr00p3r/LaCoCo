@@ -8,6 +8,8 @@ import {
 } from "../../src/retriever/strategies/registry.js";
 import type { LlmClient } from "../../src/slms/llm-client.js";
 import { runRetrieve, type RetrieveRuntime } from "../../src/cli/pipeline.js";
+import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
+import { OllamaService } from "../../src/slms/ollama-service.js";
 import { isEntrypoint } from "./lib/cli.js";
 
 const INTENTS = new Set(["understand", "refactor", "create", "debug", "integrate", "unknown"]);
@@ -51,7 +53,18 @@ function createRuntime(sanitized: SanitizerOutput): RetrieveRuntime {
   const disabledLlm = new DisabledLlmClient();
   return {
     createDatabase: (dbPath) => new LaCoCoDatabase(dbPath),
-    createOllama: () => disabledLlm,
+    // Cliente Ollama REAL (igual que el runtime de producción en pipeline.ts).
+    // Solo la estrategia `agentic` lo usa para planificar; las demás estrategias
+    // operan sobre el sanitizer YA CONGELADO (createIntermediary), así que esto no
+    // reintroduce variabilidad en hybrid/ictd/clcr/rpr. Honra LACOCO_AGENT_ENDPOINT
+    // y LACOCO_AGENT_MODEL vía config. Si Ollama no está, `agentic` fallará con un
+    // error claro y el resto de estrategias sigue intacto.
+    createOllama: (endpoint) =>
+      new OllamaService(
+        endpoint ?? resolveStringConfig("agent.endpoint"),
+        resolveStringConfig("agent.model"),
+        resolveNumberConfig("timeout.ms"),
+      ),
     createIntermediary: () => ({ sanitize: async () => sanitized }),
     createStrategy: async (
       strategyName,

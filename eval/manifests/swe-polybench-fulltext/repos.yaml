@@ -1,0 +1,191 @@
+manifest_version: 1
+kind: repositories
+updated_at: "2026-07-07"
+
+selection:
+  description: >-
+    Repositorios open source JavaScript/TypeScript con Node.js usados para
+    evaluar LaCoCo en escenarios de recuperacion y generacion de codigo.
+  inclusion_criteria:
+    - "Open source"
+    - "Ecosistema JavaScript/TypeScript con Node.js"
+    - "Proyecto con pruebas automatizadas"
+    - "Popularidad alta o relevancia tecnica para repos de librerias"
+    - "Tamanos pequeno, mediano y grande"
+  notes:
+    - >-
+      Los valores expected_loc son aproximaciones metodologicas usadas para
+      clasificar el tamano. El pipeline debe calcular LOC reales en cada
+      corrida.
+    - >-
+      Cuando framework_from_plan y framework_verified difieren, prevalece
+      framework_verified para la ejecucion; framework_from_plan conserva la
+      trazabilidad con el documento academico.
+
+defaults:
+  clone:
+    depth: 0
+    fetch_tags: true
+    clean_before_task: true
+    clean_command: "git reset --hard HEAD && git clean -fdx"
+  runtime:
+    node_version: ">=20"
+    env:
+      CI: "true"
+      NO_COLOR: "1"
+  install:
+    timeout_ms: 900000
+  build:
+    timeout_ms: 900000
+    optional: true
+  test:
+    timeout_ms: 900000
+    run_before_generation: true
+    run_after_generation: true
+  lacoco_index:
+    graph_db_name: "tensor.sqlite"
+    vector_dir_name: "lancedb"
+    generate_eval_tsconfig_when_missing: true
+    eval_tsconfig_name: "tsconfig.lacoco-eval.json"
+
+repositories:
+  - id: svelte-510
+    display_name: svelte @ 4012414
+    url: https://github.com/sveltejs/svelte.git
+    ref: 4012414fa733628bb029be39195a278301da46be
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-728
+    display_name: svelte @ 5c4905a
+    url: https://github.com/sveltejs/svelte.git
+    ref: 5c4905a595ece6885dfed8c44b26be544130b6a6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-906
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-907
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1116
+    display_name: svelte @ 8057884
+    url: https://github.com/sveltejs/svelte.git
+    ref: 8057884cb64f6c2cdf837411bc3962daf69e2bb5
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1227
+    display_name: svelte @ dc4fdcf
+    url: https://github.com/sveltejs/svelte.git
+    ref: dc4fdcf77e6156da9579c03d83668f86b5a54c1a
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1310
+    display_name: svelte @ b4ade9d
+    url: https://github.com/sveltejs/svelte.git
+    ref: b4ade9d4b2e32657bbc95b4cdbfcd2322a8bdbef
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1923
+    display_name: svelte @ ff2a21e
+    url: https://github.com/sveltejs/svelte.git
+    ref: ff2a21e63ad243c6e19a7ac84e69021d3a788a9e
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-2185
+    display_name: svelte @ ea88317
+    url: https://github.com/sveltejs/svelte.git
+    ref: ea88317f84adb780075b8a689cf664249b09b42c
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-3151
+    display_name: svelte @ f341bef
+    url: https://github.com/sveltejs/svelte.git
+    ref: f341befacb92d821424889dfefbdccedc881bfe5
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript

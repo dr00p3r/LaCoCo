@@ -9,7 +9,7 @@ import {
 } from "./lib/gold.js";
 import { readJsonl } from "./lib/jsonl.js";
 import { loadManifests } from "./lib/load-manifests.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { selectTasks } from "./lib/task-selection.js";
 
 export function createGroundTruthWorksheets(argv = process.argv.slice(2)): void {
@@ -18,6 +18,7 @@ export function createGroundTruthWorksheets(argv = process.argv.slice(2)): void 
     "--repo-id",
     "--task-id",
     "--dry-run",
+    "--manifests-dir",
   ]);
   if (options.runDir === undefined) {
     throw new Error("--run-dir is required");
@@ -25,7 +26,7 @@ export function createGroundTruthWorksheets(argv = process.argv.slice(2)): void 
   const runDirectory = isAbsolute(options.runDir)
     ? resolve(options.runDir)
     : resolve(PROJECT_ROOT, options.runDir);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const tasks = selectTasks(manifests.tasks.tasks, {
     ...(options.repoId === undefined ? {} : { repoId: options.repoId }),
     ...(options.taskId === undefined ? {} : { taskId: options.taskId }),

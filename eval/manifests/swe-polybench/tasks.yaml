@@ -74,7 +74,32 @@ tasks:
 
           ```"
       oracle_input: null
-      embedding_input: Static else block references should be nulled out
+      embedding_input: >-
+        Static else block references should be nulled out
+
+        REPL — the reference to the removed else block needs to be nulled out:
+
+
+        ```diff
+
+        if ( each_block_value.length ) {
+
+        -  if ( each_block_else ) each_block_else.destroy( true );
+
+        +  if ( each_block_else ) {
+
+        +    each_block_else.destroy( true );
+
+        +    each_block_else = null;
+
+        +  }
+
+        } else if ( !each_block_else ) {
+          each_block_else = create_each_block_else( root, component );
+          each_block_else.mount( each_block_anchor.parentNode, each_block_anchor );
+        }
+
+        ```
       intent: debug
       dimensions:
         - CPG
@@ -86,13 +111,30 @@ tasks:
       - runtime inline helpers each-block-dynamic-else-static
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/generators/dom/visitors/EachBlock.js
+        edited_symbols:
+          - file: src/generators/dom/visitors/EachBlock.js
+            symbol: visitEachBlock
+            kind: function
+        touched_tests:
+          - test/runtime/samples/each-block-dynamic-else-static/_config.js
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/generators/dom/visitors/EachBlock.js#visitEachBlock
       relevant_nodes:
         - src/generators/dom/visitors/EachBlock.js#visitEachBlock
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-510), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-510). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 1 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -105,6 +147,8 @@ tasks:
       base_commit: 4012414fa733628bb029be39195a278301da46be
       pull_number: 510
       unmapped_count: 0
+      patch_ref: patches/svelte-510.patch
+      test_patch_ref: patches/svelte-510.test.patch
   - id: svelte-728
     repo_id: svelte-728
     title: SWE-PolyBench sveltejs__svelte-728
@@ -179,7 +223,32 @@ tasks:
           `bind:top=\"idToTop[object.id]\"`, `position=\"{{object.id}}\"`, or
           `.reverse()`, the issue doesn't happen."
       oracle_input: null
-      embedding_input: Some combination of keyed blocks and binding breaks array looping
+      embedding_input: >-
+        Some combination of keyed blocks and binding breaks array looping
+
+        Reproduction: 
+
+
+        When the number is increased, on every other change, only the first two
+        (after the reverse) elements are displayed.
+
+
+        Like the note in the repl says, if you remove any one of
+        `bind:top="idToTop[object.id]"`, `position="{{object.id}}"`, or
+        `.reverse()`, the issue doesn't happen.
+
+        Some combination of keyed blocks and binding breaks array looping
+
+        Reproduction: 
+
+
+        When the number is increased, on every other change, only the first two
+        (after the reverse) elements are displayed.
+
+
+        Like the note in the repl says, if you remove any one of
+        `bind:top="idToTop[object.id]"`, `position="{{object.id}}"`, or
+        `.reverse()`, the issue doesn't happen.
       intent: debug
       dimensions:
         - CPG
@@ -191,13 +260,32 @@ tasks:
       - runtime component-binding-blowback-c (inline helpers)
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/generators/dom/visitors/Component/Component.ts
+        edited_symbols:
+          - file: src/generators/dom/visitors/Component/Component.ts
+            symbol: visitComponent
+            kind: function
+        touched_tests:
+          - test/runtime/samples/component-binding-blowback-c/Nested.html
+          - test/runtime/samples/component-binding-blowback-c/_config.js
+          - test/runtime/samples/component-binding-blowback-c/main.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/generators/dom/visitors/Component/Component.ts#visitComponent
       relevant_nodes:
         - src/generators/dom/visitors/Component/Component.ts#visitComponent
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-728), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-728). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 3 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -210,6 +298,8 @@ tasks:
       base_commit: 5c4905a595ece6885dfed8c44b26be544130b6a6
       pull_number: 728
       unmapped_count: 0
+      patch_ref: patches/svelte-728.patch
+      test_patch_ref: patches/svelte-728.test.patch
   - id: svelte-906
     repo_id: svelte-906
     title: SWE-PolyBench sveltejs__svelte-906
@@ -368,8 +458,61 @@ tasks:
 
           </details>"
       oracle_input: null
-      embedding_input: Attribute name only (no value) CSS selector throws if html
-        attribute has a value.
+      embedding_input: >-
+        Attribute name only (no value) CSS selector throws if html attribute has
+        a value.
+
+        This is fine:
+
+
+        ```html
+
+        <button foo></button>
+
+
+        <style>
+
+        button[foo] {}
+
+        </style>
+
+        ```
+
+
+        But this throws `TypeError: operators[operator] is not a function`:
+
+
+        ```html
+
+        <button foo="bar"></button>
+
+
+        <style>
+
+        button[foo] {}
+
+        </style>
+
+        ```
+
+
+        REPL
+
+
+        <details>
+          <summary>Stack trace</summary>
+            TypeError: operators[operator] is not a function
+              at attributeMatches (Selector.ts:228)
+              at _loop_1 (Selector.ts:163)
+              at applySelector (Selector.ts:141)
+              at Selector.apply (Selector.ts:30)
+              at Stylesheet.ts:23
+              at Array.forEach (<anonymous>)
+              at Rule.apply (Stylesheet.ts:23)
+              at Stylesheet.apply (Stylesheet.ts:343)
+              at Element (preprocess.ts:427)
+              at preprocess.ts:482
+        </details>
       intent: debug
       dimensions:
         - CPG
@@ -380,13 +523,32 @@ tasks:
       - css attribute-selector-only-name
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/css/Selector.ts
+        edited_symbols:
+          - file: src/css/Selector.ts
+            symbol: attributeMatches
+            kind: function
+        touched_tests:
+          - test/css/samples/attribute-selector-only-name/_config.js
+          - test/css/samples/attribute-selector-only-name/expected.css
+          - test/css/samples/attribute-selector-only-name/input.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/css/Selector.ts#attributeMatches
       relevant_nodes:
         - src/css/Selector.ts#attributeMatches
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-906), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-906). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 3 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -399,6 +561,8 @@ tasks:
       base_commit: 1dad8f1936c5ac974854930b32814db907528f56
       pull_number: 906
       unmapped_count: 0
+      patch_ref: patches/svelte-906.patch
+      test_patch_ref: patches/svelte-906.test.patch
   - id: svelte-907
     repo_id: svelte-907
     title: SWE-PolyBench sveltejs__svelte-907
@@ -453,7 +617,18 @@ tasks:
 
           ```"
       oracle_input: null
-      embedding_input: async keyword is removed
+      embedding_input: |-
+        async keyword is removed
+        REPL. The `async` keyword is removed from the `oncreate` function:
+
+        ```js
+        export default {
+          async oncreate() {
+            const data = await fetch('foo.json').then(r => r.json());
+            console.log(data);
+          }
+        };
+        ```
       intent: debug
       dimensions:
         - CPG
@@ -469,13 +644,35 @@ tasks:
       - runtime oncreate-async (inline helpers)
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/generators/Generator.ts
+        edited_symbols:
+          - file: src/generators/Generator.ts
+            symbol: Generator.parseJs
+            kind: method
+        touched_tests:
+          - test/runtime/samples/oncreate-async-arrow-block/_config.js
+          - test/runtime/samples/oncreate-async-arrow-block/main.html
+          - test/runtime/samples/oncreate-async-arrow/_config.js
+          - test/runtime/samples/oncreate-async-arrow/main.html
+          - test/runtime/samples/oncreate-async/_config.js
+          - test/runtime/samples/oncreate-async/main.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/generators/Generator.ts#Generator.parseJs
       relevant_nodes:
         - src/generators/Generator.ts#Generator.parseJs
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-907), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-907). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 6 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -488,6 +685,8 @@ tasks:
       base_commit: 1dad8f1936c5ac974854930b32814db907528f56
       pull_number: 907
       unmapped_count: 0
+      patch_ref: patches/svelte-907.patch
+      test_patch_ref: patches/svelte-907.test.patch
   - id: svelte-1116
     repo_id: svelte-1116
     title: SWE-PolyBench sveltejs__svelte-1116
@@ -805,7 +1004,115 @@ tasks:
 
           ```"
       oracle_input: null
-      embedding_input: can't supply store to nested components server side
+      embedding_input: >-
+        can't supply store to nested components server side
+
+        Hey, I'm trying to pass a store to a nested component which works well
+        ordinarily, but it fails when server rendering it.
+
+
+        E.g. I have a manage account page like so:
+
+        ```html
+
+        <div class="page">
+            <h1>Manage Account</h1>
+
+            <div>
+                <h3>Two Factor Auth</h3>
+                <TwoFactorAuth />
+            </div>
+        </div>
+
+
+        <style>
+            .page {
+                width: 400px;
+                margin: 50px auto;
+            }
+        </style>
+
+
+        <script>
+            import TwoFactorAuth from './_components/TwoFactorAuth';
+
+            export default {
+                components: {
+                    TwoFactorAuth,
+                },
+            }
+        </script>
+
+        ```
+
+
+        And in the TwoFactorAuth component, using a store via svelte-redux
+
+        ```html
+
+        {{#if $hasTwoFactor}}
+
+        <div>yay its enabled</div>
+
+        {{else}}
+
+        <div>oh no its not enabled</div>
+
+        {{/if}}
+
+
+        <script>
+            import { connect } from '../../_redux';
+
+            export default {
+                store: connect(state => ({
+                    hasTwoFactor: state.user && state.user.hasTwoFactor,
+                })),
+            }
+        </script>
+
+        ```
+
+
+        As mentioned this fails on the server side, but not when navigation to
+        the page on the client side.
+
+
+        I dug into the generated code a bit and I see it generates the template
+        like so:
+
+        ```js
+
+        return `<div class="page" svelte-1782208320>
+            <h1>Manage Account</h1>
+
+            <div>
+                <h3>Two Factor Auth</h3>
+                ${__WEBPACK_IMPORTED_MODULE_0__components_TwoFactorAuth__["a" /* default */]._render(__result, {}, { store: options.store })}
+            </div>
+        </div>`
+
+        ```
+
+
+        This is bypassing `render` where the store would be initialised
+        ordinarily, and is instead just passing the parent store.
+
+
+        It errors on the following line in the TwoFactorAuth's `_render` method,
+        as the store is undefined
+
+        ```js
+
+        state = Object.assign(options.store._init(["hasTwoFactor"]), state);
+
+        ```
+
+        ```
+
+        Cannot read property '_init' of undefined
+
+        ```
       intent: debug
       dimensions:
         - CPG
@@ -816,13 +1123,32 @@ tasks:
       - ssr store-nested
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/generators/server-side-rendering/index.ts
+        edited_symbols:
+          - file: src/generators/server-side-rendering/index.ts
+            symbol: ssr
+            kind: function
+        touched_tests:
+          - test/runtime/samples/store-nested/Nested.html
+          - test/runtime/samples/store-nested/_config.js
+          - test/runtime/samples/store-nested/main.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/generators/server-side-rendering/index.ts#ssr
       relevant_nodes:
         - src/generators/server-side-rendering/index.ts#ssr
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-1116), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-1116). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 3 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -835,6 +1161,8 @@ tasks:
       base_commit: 8057884cb64f6c2cdf837411bc3962daf69e2bb5
       pull_number: 1116
       unmapped_count: 0
+      patch_ref: patches/svelte-1116.patch
+      test_patch_ref: patches/svelte-1116.test.patch
   - id: svelte-1227
     repo_id: svelte-1227
     title: SWE-PolyBench sveltejs__svelte-1227
@@ -917,7 +1245,36 @@ tasks:
 
           I've tried with depth of 3 and 4. Same behavior."
       oracle_input: null
-      embedding_input: CSS - Class not applied to child elements
+      embedding_input: >-
+        CSS - Class not applied to child elements
+
+        > Linux Mint 18.3 Cinnamon
+
+        > Google Chrome Version 65.0.3325.146 (Official Build) (64-bit)
+
+        > Firefox Quantum 58.0.2 (64-bit)
+
+        > svelte: ^1.57.1
+
+
+        Svelte REPL gist
+
+        ```html
+
+        <!-- DevTools Inspector -->
+
+        <div class="cl1 svelte-1rs9q0o">
+            Test 
+            <div class="cl2">Test 2</div> <!-- class svelte-1rs9q0o missing from element, if added in DevTools it works -->
+        </div>
+
+        ```
+
+
+        If I add `{{anyTag}}` inside any `div`, regardless of the depth, then
+        `svelte-1rs9q0o` is present and styles are applied.
+
+        I've tried with depth of 3 and 4. Same behavior.
       intent: debug
       dimensions:
         - CPG
@@ -928,13 +1285,33 @@ tasks:
       - css cascade-false-nested
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/generators/nodes/Element.ts
+        edited_symbols:
+          - file: src/generators/nodes/Element.ts
+            symbol: Element.build
+            kind: method
+        touched_tests:
+          - test/css/samples/cascade-false-nested/_config.js
+          - test/css/samples/cascade-false-nested/expected.css
+          - test/css/samples/cascade-false-nested/expected.html
+          - test/css/samples/cascade-false-nested/input.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/generators/nodes/Element.ts#Element.build
       relevant_nodes:
         - src/generators/nodes/Element.ts#Element.build
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-1227), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-1227). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 4 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -947,6 +1324,8 @@ tasks:
       base_commit: dc4fdcf77e6156da9579c03d83668f86b5a54c1a
       pull_number: 1227
       unmapped_count: 0
+      patch_ref: patches/svelte-1227.patch
+      test_patch_ref: patches/svelte-1227.test.patch
   - id: svelte-1310
     repo_id: svelte-1310
     title: SWE-PolyBench sveltejs__svelte-1310
@@ -1027,7 +1406,25 @@ tasks:
 
           `.foo` should be preserved; it isn't."
       oracle_input: null
-      embedding_input: Spread properties cause CSS to be DCE'd incorrectly
+      embedding_input: |-
+        Spread properties cause CSS to be DCE'd incorrectly
+        REPL
+
+        ```html
+        <div {{...props}} >
+        	Big red Comic Sans
+        </div>
+
+        <style>
+        	.foo {
+        		color: red;
+        		font-size: 2em;
+        		font-family: 'Comic Sans MS';
+        	}
+        </style>
+        ```
+
+        `.foo` should be preserved; it isn't.
       intent: debug
       dimensions:
         - CPG
@@ -1038,13 +1435,32 @@ tasks:
       - css spread
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/css/Selector.ts
+        edited_symbols:
+          - file: src/css/Selector.ts
+            symbol: attributeMatches
+            kind: function
+        touched_tests:
+          - test/css/samples/spread/_config.js
+          - test/css/samples/spread/expected.css
+          - test/css/samples/spread/input.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/css/Selector.ts#attributeMatches
       relevant_nodes:
         - src/css/Selector.ts#attributeMatches
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-1310), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-1310). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 3 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -1057,6 +1473,8 @@ tasks:
       base_commit: b4ade9d4b2e32657bbc95b4cdbfcd2322a8bdbef
       pull_number: 1310
       unmapped_count: 0
+      patch_ref: patches/svelte-1310.patch
+      test_patch_ref: patches/svelte-1310.test.patch
   - id: svelte-1923
     repo_id: svelte-1923
     title: SWE-PolyBench sveltejs__svelte-1923
@@ -1159,8 +1577,39 @@ tasks:
           (Aside: I can't believe this isn't a syntax error, and that I had to
           find this out by my app not working. Thanks, javascript.)"
       oracle_input: null
-      embedding_input: Event handlers not deconflicted when one is binding inside each
-        loop and one outside
+      embedding_input: >-
+        Event handlers not deconflicted when one is binding inside each loop and
+        one outside
+
+        ```html
+
+        <input bind:value={foo}>
+
+
+        {#each [] as bar}
+        	<input bind:value={bar}>
+        {/each}
+
+        ```
+
+
+        results in code that look like
+
+
+        ```javascript
+        	function input_input_handler() {
+        		foo = this.value;
+        		$$invalidate('foo', foo);
+        	}
+
+        	function input_input_handler({ bar, each_value, bar_index }) {
+        		each_value[bar_index] = this.value;
+        	}
+        ```
+
+
+        (Aside: I can't believe this isn't a syntax error, and that I had to
+        find this out by my app not working. Thanks, javascript.)
       intent: debug
       dimensions:
         - CPG
@@ -1172,13 +1621,31 @@ tasks:
       - runtime binding-input-text-contextual-deconflicted (with hydration)
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/compile/render-dom/wrappers/Element/index.ts
+        edited_symbols:
+          - file: src/compile/render-dom/wrappers/Element/index.ts
+            symbol: ElementWrapper.addBindings
+            kind: method
+        touched_tests:
+          - test/runtime/samples/binding-input-text-contextual-deconflicted/_config.js
+          - test/runtime/samples/binding-input-text-contextual-deconflicted/main.html
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/compile/render-dom/wrappers/Element/index.ts#ElementWrapper.addBindings
       relevant_nodes:
         - src/compile/render-dom/wrappers/Element/index.ts#ElementWrapper.addBindings
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-1923), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-1923). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 2 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -1191,6 +1658,8 @@ tasks:
       base_commit: ff2a21e63ad243c6e19a7ac84e69021d3a788a9e
       pull_number: 1923
       unmapped_count: 0
+      patch_ref: patches/svelte-1923.patch
+      test_patch_ref: patches/svelte-1923.test.patch
   - id: svelte-2185
     repo_id: svelte-2185
     title: SWE-PolyBench sveltejs__svelte-2185
@@ -1301,8 +1770,44 @@ tasks:
 
           A workaround: use `event.currentTarget` instead of `this`."
       oracle_input: null
-      embedding_input: Assigning to a property of `this` in a function triggers
-        invalidation of “undefined”
+      embedding_input: >-
+        Assigning to a property of `this` in a function triggers invalidation of
+        “undefined”
+
+        Minimal example:
+
+        ```html
+
+        <script>
+        	function make_uppercase() {
+        		this.value = this.value.toUpperCase();
+        	}
+        </script>
+
+        <input on:input={make_uppercase}>
+
+        ```
+
+
+        In that function, `this` will be the element the event was fired on.
+
+
+        Incorrect generated JS:
+
+
+        ```js
+
+        function make_uppercase() {
+        	this.value = this.value.toUpperCase(); $$invalidate('undefined', undefined);
+        }
+
+        ```
+
+
+        There should be no `$$invalid('undefined', undefined);`.
+
+
+        A workaround: use `event.currentTarget` instead of `this`.
       intent: debug
       dimensions:
         - CPG
@@ -1313,13 +1818,31 @@ tasks:
       - js dont-invalidate-this
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/compile/render-dom/index.ts
+        edited_symbols:
+          - file: src/compile/render-dom/index.ts
+            symbol: dom
+            kind: function
+        touched_tests:
+          - test/js/samples/dont-invalidate-this/expected.js
+          - test/js/samples/dont-invalidate-this/input.svelte
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/compile/render-dom/index.ts#dom
       relevant_nodes:
         - src/compile/render-dom/index.ts#dom
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-2185), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-2185). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 2 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -1332,6 +1855,8 @@ tasks:
       base_commit: ea88317f84adb780075b8a689cf664249b09b42c
       pull_number: 2185
       unmapped_count: 0
+      patch_ref: patches/svelte-2185.patch
+      test_patch_ref: patches/svelte-2185.test.patch
   - id: svelte-3151
     repo_id: svelte-3151
     title: SWE-PolyBench sveltejs__svelte-3151
@@ -1569,7 +2094,84 @@ tasks:
           https://svelte.dev/repl/6e2cf0c00f85488195f4a47eee22c1e0?version=3.4.\
           4"
       oracle_input: null
-      embedding_input: Shorthand methods in object literals disappear
+      embedding_input: >-
+        Shorthand methods in object literals disappear
+
+        This works fine:
+
+
+        ```html
+
+        <script>
+        	import Greeter from './Greeter.svelte';
+        	const object = {
+        		getName() {
+        			return 'foo';
+        		}
+        	};
+        </script>
+
+        <Greeter thing={object} />
+
+        ```
+
+
+        This breaks:
+
+
+        ```html
+
+        <script>
+        	import Greeter from './Greeter.svelte';
+        </script>
+
+        <Greeter thing={{
+        	getName() {
+        		return 'foo';
+        	}
+        }} />
+
+        ```
+
+
+        ```
+
+        Can't find variable: getNamefunc_1
+
+        ```
+
+
+        Looks like there's some too greedy function hoisting going on.
+
+
+        REPL: 
+
+
+        ---
+
+
+        EDIT: Another example of shorthand methods breaking in a different way:
+
+
+        ```html
+
+        <script>
+        	import Greeter from './Greeter.svelte';
+        	let name = 'foo';
+        </script>
+
+
+        <Greeter thing={{
+        	getName() {
+        		return name;
+        	}
+        }} />
+
+        ```
+
+
+        Compiler refuses to compile and says: `Unexpected token (Note that you
+        need plugins to import files that are not JavaScript)`
       intent: debug
       dimensions:
         - CPG
@@ -1581,13 +2183,32 @@ tasks:
       - runtime shorthand-method-in-template
     gold:
       status: ready
+      patch_evidence:
+        source: patch
+        edited_files:
+          - src/compiler/compile/nodes/shared/Expression.ts
+        edited_symbols:
+          - file: src/compiler/compile/nodes/shared/Expression.ts
+            symbol: Expression.render
+            kind: method
+        touched_tests:
+          - test/runtime/samples/shorthand-method-in-template/Foo.svelte
+          - test/runtime/samples/shorthand-method-in-template/_config.js
+          - test/runtime/samples/shorthand-method-in-template/main.svelte
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: src/compiler/compile/nodes/shared/Expression.ts#Expression.render
       relevant_nodes:
         - src/compiler/compile/nodes/shared/Expression.ts#Expression.render
       multihop_nodes: []
-      annotation_notes: Gold derivado de SWE-PolyBench (instance
-        sveltejs__svelte-3151), traducido por swe-polybench-nodes.ts. 1 nodo(s),
-        0 sin mapear.
+      multihop_status: manual
+      annotation_notes: "Gold derivado de SWE-PolyBench (instance
+        sveltejs__svelte-3151). Patch-evidence (fuente principal): 1 archivo(s),
+        1 símbolo(s), 3 test(s). Campos legacy (relevant_nodes/multihop) =
+        diagnóstico de grafo."
     translation_gold:
       status: pending_manual_annotation
       relevant_terms: []
@@ -1600,3 +2221,5 @@ tasks:
       base_commit: f341befacb92d821424889dfefbdccedc881bfe5
       pull_number: 3151
       unmapped_count: 0
+      patch_ref: patches/svelte-3151.patch
+      test_patch_ref: patches/svelte-3151.test.patch

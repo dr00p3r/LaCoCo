@@ -35,6 +35,33 @@ describe("loadManifests", () => {
     );
   });
 
+  it("tags every metric with a valid role and keeps gates gold/agent-only", () => {
+    const manifests = loadManifests();
+    const roleById = new Map(manifests.metrics.metrics.map((m) => [m.id, m.role]));
+    const gates = (manifests.metrics as { quality_gates?: Record<string, { required_metrics?: string[] }> })
+      .quality_gates ?? {};
+    for (const gate of Object.values(gates)) {
+      for (const metricId of gate.required_metrics ?? []) {
+        const role = roleById.get(metricId);
+        expect(role === undefined || (role !== "diagnostic" && role !== "legacy")).toBe(true);
+      }
+    }
+  });
+
+  it("rejects a gate that requires a diagnostic or legacy metric", () => {
+    const directory = mkdtempSync(join(tmpdir(), "lacoco-manifests-"));
+    cpSync(MANIFESTS_DIR, directory, { recursive: true });
+    const metricsPath = join(directory, "metrics.yaml");
+    // Inyecta una métrica diagnostic en required_metrics → debe fallar el gate.
+    const metrics = readFileSync(metricsPath, "utf8").replace(
+      /required_metrics:\n(\s+)- M1/,
+      "required_metrics:\n$1- GraphDistanceProfile\n$1- M1",
+    );
+    writeFileSync(metricsPath, metrics);
+
+    expect(() => loadManifests(directory)).toThrow(/diagnostic\/legacy metrics cannot gate a run/);
+  });
+
   it("rejects strategy parameters that drift from runtime defaults", () => {
     const directory = mkdtempSync(join(tmpdir(), "lacoco-manifests-"));
     cpSync(MANIFESTS_DIR, directory, { recursive: true });

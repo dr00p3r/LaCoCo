@@ -16,6 +16,7 @@ export interface EvalCliOptions {
   useSlm?: boolean | undefined;
   maxBudgetUsd?: number | undefined;
   resume?: boolean | undefined;
+  strict?: boolean | undefined;
 }
 
 export type EvalCliFlag =
@@ -32,6 +33,7 @@ export type EvalCliFlag =
   | "--profile"
   | "--use-slm"
   | "--resume"
+  | "--strict"
   | "--max-budget-usd";
 
 const VALUE_FLAGS = {
@@ -55,6 +57,7 @@ export function parseEvalCliOptions(
   let profile = false;
   let useSlm = false;
   let resume = false;
+  let strict = false;
   const values: Partial<Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>> = {};
   const allowed = new Set(allowedFlags);
   const seen = new Set<string>();
@@ -68,11 +71,12 @@ export function parseEvalCliOptions(
       throw new Error(`duplicate argument: ${String(argument)}`);
     }
     seen.add(argument!);
-    if (argument === "--dry-run" || argument === "--profile" || argument === "--use-slm" || argument === "--resume") {
+    if (argument === "--dry-run" || argument === "--profile" || argument === "--use-slm" || argument === "--resume" || argument === "--strict") {
       if (argument === "--dry-run") dryRun = true;
       if (argument === "--profile") profile = true;
       if (argument === "--use-slm") useSlm = true;
       if (argument === "--resume") resume = true;
+      if (argument === "--strict") strict = true;
       continue;
     }
     const property = VALUE_FLAGS[argument as keyof typeof VALUE_FLAGS];
@@ -107,6 +111,7 @@ export function parseEvalCliOptions(
     ...(profile ? { profile: true } : {}),
     ...(useSlm ? { useSlm: true } : {}),
     ...(resume ? { resume: true } : {}),
+    ...(strict ? { strict: true } : {}),
     ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
     ...cleaned,
   } as EvalCliOptions;

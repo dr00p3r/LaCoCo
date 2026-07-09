@@ -23,7 +23,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { asRecord, asString } from "./lib/config.js";
 import { loadManifests } from "./lib/load-manifests.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { resolveRepositoryTsconfig } from "./lib/tsconfig.js";
 import { isEntrypoint } from "./lib/cli.js";
 import {
@@ -49,9 +49,13 @@ function run(command: string): void {
 
 export function indexJina(argv = process.argv.slice(2)): void {
   let repoFilter: string | undefined;
+  let manifestsDir: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--repo-id") {
       repoFilter = argv[i + 1];
+      i += 1;
+    } else if (argv[i] === "--manifests-dir") {
+      manifestsDir = argv[i + 1];
       i += 1;
     } else {
       throw new Error(`unknown argument: ${String(argv[i])}`);
@@ -65,7 +69,7 @@ export function indexJina(argv = process.argv.slice(2)): void {
     );
   }
 
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(manifestsDir));
   const phases = asRecord(manifests.run.phases, "run.yaml.phases");
   const commands = asRecord(
     asRecord(phases.index_repos, "run.yaml.phases.index_repos").commands,

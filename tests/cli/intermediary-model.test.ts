@@ -26,4 +26,15 @@ describe("resolveIntermediaryModel", () => {
 
     expect(resolveIntermediaryModel()).toBe("qwen-personalizado");
   });
+
+  it("el default resuelto es qwen3:4b-instruct (sin env ni override)", () => {
+    delete process.env.LACOCO_INTERMEDIARY_MODEL;
+    delete process.env.LACOCO_AGENT_MODEL;
+
+    // El 4B es la línea base vigente para el intermediario: 2.74× más rápido
+    // que el 7B con métricas M3-M5 idénticas (ver AGENTS.md §Build del
+    // Semantic Profile), y produce JSON válido en prompts de retrieval donde
+    // el 1.5B entraba en bucle de repetición.
+    expect(resolveIntermediaryModel()).toBe("qwen3:4b-instruct");
+  });
 });

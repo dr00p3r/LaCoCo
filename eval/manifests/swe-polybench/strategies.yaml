@@ -155,12 +155,12 @@ strategies:
   - id: agentic
     label: "Agentic local planning"
     kind: "lacoco"
-    enabled: false
+    enabled: true
     lacoco_strategy: "agentic"
     requires_lancedb: false
     requires_ollama: true
     retrieval_enabled: true
-    generation_enabled: false
+    generation_enabled: true
     description: >-
       Estrategia que usa planificacion local mediante LlmClient/Ollama. Se deja
       desactivada por defecto en la comparacion principal porque introduce otra

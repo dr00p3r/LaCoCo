@@ -18,7 +18,7 @@ export class VectorCallbacks implements ExtractionCallbacks {
 
   constructor(
     private readonly lanceDb: VectorEmbeddingWriter,
-    private readonly generateEmbedding: (text: string) => Promise<Float32Array>,
+    private readonly generateEmbedding: (texts: string[]) => Promise<Float32Array[]>,
     private readonly inferDimension: (node: NodeRow) => Dimension = inferKind,
     batchSize = 32
   ) {
@@ -75,16 +75,22 @@ export class VectorCallbacks implements ExtractionCallbacks {
 
   async #flushNow(): Promise<void> {
     const batch = this.pending.splice(0, this.batchSize);
-    const records: NodeEmbeddingRecord[] = [];
+    // Una sola llamada al generador con todos los textos del batch. El runtime
+    // de transformers.js (y `EmbeddingGenerator.generateBatch`) acepta
+    // `string[]` y devuelve las embeddings en el mismo orden → zip directo
+    // con los nodos. Evita N round-trips al modelo y amortiza el cost fijo
+    // de carga del grafo de inferencia.
+    const texts = batch.map((node) => `${node.name} ${node.signature}`);
+    const embeddings = await this.generateEmbedding(texts);
 
-    for (const node of batch) {
-      const text = `${node.name} ${node.signature}`;
-      const embedding = await this.generateEmbedding(text);
-      const dimension = this.inferDimension(node);
+    const records: NodeEmbeddingRecord[] = [];
+    for (let i = 0; i < batch.length; i++) {
+      const node = batch[i]!;
+      const embedding = embeddings[i] ?? new Float32Array(0);
       records.push({
         node_id: node.id,
         embedding,
-        dimension,
+        dimension: this.inferDimension(node),
         sub_type: node.kind.toLowerCase(),
         file_path: node.filepath,
       });

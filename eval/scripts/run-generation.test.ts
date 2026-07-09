@@ -192,6 +192,15 @@ describe("generation retrieval context preflight", () => {
       [strategy("hybrid")],
     )).toThrow(/agent_intermediary cannot be deterministic/);
   });
+
+  it("marca la celda para saltar (sin lanzar) cuando la tarea no tiene registro de retrieval", () => {
+    // svelte-3151 style: la tarea no entró al retrieval → 0 registros. No debe
+    // abortar el run; se devuelve la celda en el set de skip (continue_on_task_failure).
+    const skip = validateRetrievalContexts([], [task()], [strategy("no_context"), strategy("hybrid")]);
+    expect(skip.has("task-001__hybrid")).toBe(true);
+    // no_context no requiere registro → no entra al set.
+    expect(skip.has("task-001__no_context")).toBe(false);
+  });
 });
 
 describe("OpenCode cost parsing", () => {

@@ -1,6 +1,18 @@
 manifest_version: 1
 kind: tasks
-updated_at: "2026-06-28"
+updated_at: "2026-07-08"
+
+# NOTA sobre status=legacy: las tareas zod-001/002, inversify-001/002 y
+# rxjs-001/002 son LEGACY y NO se usan en el pipeline production.
+# Su gold dependia de `broken_patch` + `baseline_failing_tests` anotados a
+# mano (fragil y costoso de mantener). El pipeline nuevo usa swe-polybench
+# (`eval/manifests/swe-polybench/`) como unica fuente de verdad para M1-M7.
+# Las tareas legacy se conservan aqui para:
+#   1. Reproducibilidad de los informes historicos (2026-07-05-*,
+#      2026-07-06-regression-pilot, 2026-07-07-grounding-ab-zod).
+#   2. Tests del harness (`metrics.test.ts`, `gold.test.ts`).
+# El campo `status: legacy` se preserva via [key: string]: unknown en
+# TaskDefinition; loadManifests no lo valida ni lo rechaza.
 
 annotation_policy:
   gold_source: "manual"
@@ -37,6 +49,7 @@ defaults:
 # resultados oficiales mientras gold.status no sea ready.
 tasks:
   - id: zod-001
+    status: legacy
     repo_id: zod
     title: "Rastrear validacion de strings no vacios"
     type: "feature_or_behavior_change"
@@ -63,6 +76,23 @@ tasks:
       - "pnpm vitest run packages/zod/src/v3/tests/string.test.ts"
     gold:
       status: "ready"
+      patch_evidence:
+        source: patch
+        edited_files:
+          - "packages/zod/src/v3/types.ts"
+        edited_symbols:
+          - file: "packages/zod/src/v3/types.ts"
+            symbol: "ZodString"
+            kind: "class"
+          - file: "packages/zod/src/v3/types.ts"
+            symbol: "ZodString.trim"
+            kind: "method"
+        touched_tests: []
+        introduced_refs: []
+        resolved_definitions: []
+        resolution:
+          fell_back_to_file_level: false
+          unresolved_refs: []
       primary_anchor: "packages/zod/src/v3/types.ts#ZodString"
       relevant_nodes:
         - "packages/zod/src/v3/types.ts#ZodString"
@@ -101,6 +131,7 @@ tasks:
       - "validation"
 
   - id: zod-002
+    status: legacy
     repo_id: zod
     title: "Inspeccionar interaccion entre object shape y strictness"
     type: "bugfix"
@@ -171,6 +202,7 @@ tasks:
       - "bugfix"
 
   - id: inversify-001
+    status: legacy
     repo_id: inversify
     title: "Resolver flujo de ServiceIdentifier en bindings"
     type: "bugfix"
@@ -245,6 +277,7 @@ tasks:
       - "regression_excluded"
 
   - id: inversify-002
+    status: legacy
     repo_id: inversify
     title: "Trazar metadata de decoradores en inyeccion"
     type: "understanding_plus_patch"
@@ -324,6 +357,7 @@ tasks:
       - "multi-hop"
 
   - id: rxjs-001
+    status: legacy
     repo_id: rxjs
     title: "Propagacion de error en operador"
     type: "bugfix"
@@ -394,6 +428,7 @@ tasks:
       - "error-flow"
 
   - id: rxjs-002
+    status: legacy
     repo_id: rxjs
     title: "Scheduler y temporizacion en pruebas"
     type: "feature_or_behavior_change"

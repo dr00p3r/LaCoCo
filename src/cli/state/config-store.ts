@@ -47,8 +47,12 @@ const CONFIG_DEFINITIONS = {
         : "agent.endpoint debe ser una URL no vacía",
   },
   "agent.model": {
+    // 4B es la línea base vigente (ver AGENTS.md §"Modelo de build del Project
+    // Semantic Profile"): es 2.74× más rápido que el 7B en build de perfil con
+    // métricas idénticas, y produce JSON estructurado válido en prompts de
+    // retrieval (a diferencia del 1.5B que entra en bucle de repetición).
     type: "string",
-    defaultValue: "qwen2.5-coder:1.5b",
+    defaultValue: "qwen3:4b-instruct",
     env: "LACOCO_AGENT_MODEL",
     validate: (value) =>
       typeof value === "string" && value.trim().length > 0
@@ -95,6 +99,15 @@ const CONFIG_DEFINITIONS = {
     type: "boolean",
     defaultValue: false,
     env: "LACOCO_PROFILE_GROUNDING",
+  },
+  "profile.enrichConcurrency": {
+    type: "number",
+    defaultValue: 4,
+    env: "LACOCO_ENRICH_CONCURRENCY",
+    validate: (value) =>
+      typeof value === "number" && Number.isInteger(value) && value > 0
+        ? null
+        : "profile.enrichConcurrency debe ser un entero positivo",
   },
   "paths.data": {
     type: "string",

@@ -9,13 +9,21 @@ import { loadManifests } from "./lib/load-manifests.js";
 import { readRepositoriesLock } from "./lib/repo-lock.js";
 import {
   computeExecutionMetrics,
+  DEFAULT_SWEEP_CUTOFFS,
   groupByTask,
+  METRIC_IDS,
   parseRetrievalInput,
   summarizeTaskMetrics,
   type GoldInput,
 } from "./lib/metrics.js";
 import { resolveNodeId } from "./lib/node-id.js";
-import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
+import type { PatchEvidenceGold, SymbolRef } from "./lib/types.js";
+import { getManifestPaths, MANIFESTS_DIR, PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
+import {
+  analyzeRetrievalCell,
+  summarizeRetrievalDiagnostics,
+  type RetrievalCellAnalysis,
+} from "./lib/retrieval-analysis.js";
 import { renderSummaryCsv, renderSummaryMarkdown } from "./lib/summary.js";
 
 interface MetricsCliOptions {
@@ -82,6 +90,42 @@ function resolveRun(
   return { runId: basename(runDirectory), runDirectory };
 }
 
+/** Node-id absoluto de un símbolo del gold (`${abs(file)}#${symbol}`). */
+function symbolNodeId(ref: SymbolRef, repoPath: string): string {
+  return resolveNodeId(`${ref.file}#${ref.symbol}`, repoPath);
+}
+
+/**
+ * Resuelve el patch-evidence gold repo-relativo del manifest a rutas absolutas
+ * (para comparar contra los node-ids del retrieval, que son absolutos). Un gold
+ * ausente o un `status` no-ready produce edit-site vacío → las métricas de gold
+ * quedan excluidas/invalidas, no un crash.
+ */
+export function buildPatchEvidenceGoldInput(
+  status: string,
+  evidence: PatchEvidenceGold | undefined,
+  repoPath: string,
+): GoldInput {
+  if (evidence === undefined) {
+    return {
+      status,
+      editSiteFiles: [],
+      editSiteSymbols: [],
+      testFiles: [],
+      refNodes: [],
+      definitionNodes: [],
+    };
+  }
+  return {
+    status,
+    editSiteFiles: evidence.edited_files.map((file) => resolveNodeId(file, repoPath)),
+    editSiteSymbols: evidence.edited_symbols.map((ref) => symbolNodeId(ref, repoPath)),
+    testFiles: evidence.touched_tests.map((file) => resolveNodeId(file, repoPath)),
+    refNodes: evidence.introduced_refs.map((ref) => symbolNodeId(ref, repoPath)),
+    definitionNodes: evidence.resolved_definitions.map((ref) => symbolNodeId(ref, repoPath)),
+  };
+}
+
 export interface AllZeroGuard {
   triggered: boolean;
   eligibleCells: number;
@@ -89,31 +133,29 @@ export interface AllZeroGuard {
 }
 
 /**
- * Guard de invalidez silenciosa. Si hay celdas elegibles (M3 computada, es decir
- * gold `ready` + exit 0) pero la precisión temprana (M3), el MRR (M5) y el multi-hop
- * (M6) agregados son 0 en TODAS, casi siempre es un desajuste de árbol/prefijo (el
- * gold se resolvió contra un repoPath que no es el árbol donde corrió el retrieval)
- * o un gold mal resuelto — no un run genuinamente malo, que suele dejar algo de MRR
- * no-cero en alguna estrategia. M6 se ignora si no tiene celdas computadas (tareas
- * sin multihop gold → not_applicable).
+ * Guard de invalidez silenciosa. Si hay celdas elegibles (EditSiteHit computada,
+ * es decir gold `ready` con edit-site + exit 0) pero el EditSiteHit, el EditSiteMRR
+ * y el PatchEvidenceHit agregados son 0 en TODAS, casi siempre es un desajuste de
+ * árbol/prefijo (el gold se resolvió contra un repoPath que no es el árbol donde
+ * corrió el retrieval) o un gold mal resuelto — no un run genuinamente malo, que
+ * suele dejar algo de señal no-cero en alguna estrategia.
  */
 export function detectAllZeroRetrieval(
   summary: ReturnType<typeof summarizeTaskMetrics>,
 ): AllZeroGuard {
   const global = summary.global.metrics;
-  const eligibleCells = global.M3.included_task_values;
-  const m6HasCells = global.M6.included_task_values > 0;
+  const eligibleCells = global.EditSiteHit.included_task_values;
   const triggered =
     eligibleCells > 0 &&
-    global.M3.value === 0 &&
-    global.M5.value === 0 &&
-    (!m6HasCells || global.M6.value === 0);
+    global.EditSiteHit.value === 0 &&
+    global.EditSiteMRR.value === 0 &&
+    global.PatchEvidenceHit.value === 0;
   return {
     triggered,
     eligibleCells,
     message: triggered
-      ? `⚠ VALIDEZ: ${eligibleCells} celda(s) elegible(s) con M3/M5/M6=0 en TODAS — ` +
-        "probable desajuste de árbol/prefijo (revisa el repoPath del lock vs los ids de " +
+      ? `⚠ VALIDEZ: ${eligibleCells} celda(s) elegible(s) con EditSiteHit/EditSiteMRR/PatchEvidenceHit=0 ` +
+        "en TODAS — probable desajuste de árbol/prefijo (revisa el repoPath del lock vs los ids de " +
         "ranked_nodes) o gold mal resuelto. Pasa --strict para fallar (exit≠0) en este caso."
       : null,
   };
@@ -121,26 +163,31 @@ export function detectAllZeroRetrieval(
 
 export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   const options = parseOptions(argv);
-  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
+  const manifestsDirectory = resolveManifestsDir(options.manifestsDir) ?? MANIFESTS_DIR;
+  const manifestPaths = getManifestPaths(manifestsDirectory);
+  const manifests = loadManifests(manifestsDirectory);
   const run = resolveRun(options, manifests.run);
   const aggregation = asRecord(
     manifests.metrics.aggregation_policy,
     "metrics.yaml.aggregation_policy",
   );
   const availableMetrics = new Set(manifests.metrics.metrics.map(({ id }) => id));
-  for (const metricId of ["M3", "M4", "M5", "M6", "M7"]) {
+  for (const metricId of METRIC_IDS) {
     if (!availableMetrics.has(metricId)) {
       throw new Error(`metrics.yaml is missing required retrieval metric ${metricId}`);
     }
   }
-  const precisionCutoff = asNumber(
+  const primaryCutoff = asNumber(
     aggregation.ranking_cutoff_primary,
     "metrics.yaml.aggregation_policy.ranking_cutoff_primary",
   );
-  const multihopCutoff = asNumber(
-    aggregation.multihop_cutoff_primary,
-    "metrics.yaml.aggregation_policy.multihop_cutoff_primary",
-  );
+  // Barrido de K opcional (curva cobertura/hit vs. tamaño de contexto). Si no se
+  // declara en el manifest, se usa el barrido por defecto de metrics.ts.
+  const sweepCutoffs = Array.isArray(aggregation.ranking_cutoff_sweep)
+    ? aggregation.ranking_cutoff_sweep.map((value, index) =>
+        asNumber(value, `metrics.yaml.aggregation_policy.ranking_cutoff_sweep[${index}]`),
+      )
+    : DEFAULT_SWEEP_CUTOFFS;
   const schemaVersions = asRecord(
     manifests.run.jsonl_schema_versions,
     "run.yaml.jsonl_schema_versions",
@@ -174,6 +221,7 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   const markdownPath = join(run.runDirectory, "summary.md");
   const taskById = new Map(manifests.tasks.tasks.map((task) => [task.id, task]));
 
+  const retrievalAnalysis: RetrievalCellAnalysis[] = [];
   const inputs = readJsonl(inputPath).map(({ line, value }) => {
     const record = parseRetrievalInput(value, `${inputPath}:${line}`);
     if (record.schemaVersion !== expectedSchemaVersion) {
@@ -194,37 +242,45 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
       );
     }
     const repoPath = lockRepoPathById.get(task.repo_id) ?? join(reposDirectory, task.repo_id);
-    const gold: GoldInput = {
-      status: task.gold.status,
-      relevantNodes: task.gold.relevant_nodes.map((id) => resolveNodeId(id, repoPath)),
-      multihopNodes: task.gold.multihop_nodes.map((id) => resolveNodeId(id, repoPath)),
-    };
-    return computeExecutionMetrics(record, gold, precisionCutoff, multihopCutoff);
+    const gold = buildPatchEvidenceGoldInput(task.gold.status, task.gold.patch_evidence, repoPath);
+    retrievalAnalysis.push(analyzeRetrievalCell(record, value, gold));
+    return computeExecutionMetrics(record, gold, primaryCutoff, sweepCutoffs);
   });
 
   const taskResults = groupByTask(inputs);
   const summary = summarizeTaskMetrics(taskResults);
   const output = {
-    schema_version: 1,
+    schema_version: 2,
     run_id: run.runId,
     generated_at: new Date().toISOString(),
     aggregation_policy: "macro_by_task_then_repo",
+    gold_source: "patch_evidence",
     cutoffs: {
-      precision_at: precisionCutoff,
-      recall_at: precisionCutoff,
-      multihop_recall_at: multihopCutoff,
+      primary_k: primaryCutoff,
+      sweep_k: sweepCutoffs,
       latency_percentile: 95,
+    },
+    bootstrap: {
+      iterations: 1000,
+      alpha: 0.05,
+      seed: 42,
+      notes: "IC bootstrap sobre valores task-level; CI es [alpha/2, 1-alpha/2] percentil de la media re-sampleada con mulberry32(seed=42). Degenerate (n<2 o unico valor) => ci_low/ci_high = null.",
     },
     inputs: {
       retrieval_jsonl: relative(PROJECT_ROOT, inputPath),
-      tasks_manifest: "eval/manifests/tasks.yaml",
-      metrics_manifest: "eval/manifests/metrics.yaml",
+      tasks_manifest: relative(PROJECT_ROOT, manifestPaths.tasks),
+      metrics_manifest: relative(PROJECT_ROOT, manifestPaths.metrics),
+      manifests_dir: relative(PROJECT_ROOT, manifestsDirectory),
     },
     counts: {
       executions: inputs.length,
       task_repo_strategy_groups: taskResults.length,
     },
     executions: inputs,
+    retrieval_analysis: {
+      cells: retrievalAnalysis,
+      by_strategy: summarizeRetrievalDiagnostics(retrievalAnalysis, inputs),
+    },
     task_results: taskResults,
     summary,
   };

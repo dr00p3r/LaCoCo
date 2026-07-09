@@ -219,9 +219,17 @@ export function validateTaskGold(
   repoPath: string,
   graphWarning?: string,
 ): TaskGoldValidation {
+  const multihopStatus = task.gold.multihop_status ?? "manual";
+  // multihop_status="auto" admite multihop_nodes vacio como caso valido (el
+  // traductor BFS-2 no encontro alcanzables): la tarea se excluye de M6.
+  // multihop_status="manual" o "pending" sigue exigiendo lista no-vacia
+  // para que un humano documente su intencion (comportamiento previo).
+  const allowEmptyMultihop = multihopStatus === "auto";
   const issues: ValidationIssue[] = [
     ...emptyStringIssues("relevant_nodes", task.gold.relevant_nodes),
-    ...emptyStringIssues("multihop_nodes", task.gold.multihop_nodes),
+    ...(allowEmptyMultihop
+      ? []
+      : emptyStringIssues("multihop_nodes", task.gold.multihop_nodes)),
     ...emptyStringIssues("target_tests", task.target_tests),
     ...emptyStringIssues("translation_gold.relevant_terms", task.translation_gold.relevant_terms),
     ...(task.regression
@@ -322,6 +330,11 @@ export function validateTaskGold(
       }
     }
     // Recompute multihop distances from the anchor so M6 gold is auditable.
+    // Para multihop_status="auto" el traductor ya garantiza distancia >= 2
+    // filtrada por CALLS/REFERENCES/DECLARES. El validador usa el grafo
+    // completo (sin filtro), que puede dar distancia 1 via EXTENDS para un
+    // nodo a distancia 2 filtrada: NO aplicamos la cota unfiltered>=2 en
+    // ese caso para no romper el contrato del traductor.
     const anchorAbs = anchor === null ? null : absById.get(anchor)!;
     if (anchorAbs !== null && !missingAbs.has(anchorAbs)) {
       const distances = graph.distancesFrom(anchorAbs);
@@ -334,7 +347,7 @@ export function validateTaskGold(
             code: "multihop_unreachable",
             message: `multihop node is not reachable from the anchor in the graph: ${rel}`,
           });
-        } else if (distance < 2) {
+        } else if (distance < 2 && multihopStatus !== "auto") {
           issues.push({
             level: "error",
             code: "multihop_distance_lt_2",

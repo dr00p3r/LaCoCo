@@ -45,6 +45,8 @@ import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.j
 import { readRepositoriesLock } from "./lib/repo-lock.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import { resolveEvalLayout } from "./lib/layout.js";
+import { resolveManifestsDir } from "./lib/paths.js";
+import { resolveGroundingProfile } from "./lib/grounding-profile.js";
 import { isEntrypoint } from "./lib/cli.js";
 import type { TaskDefinition } from "./lib/types.js";
 
@@ -53,6 +55,8 @@ interface Options {
   repoId?: string;
   verifyOnly: boolean;
   model?: string;
+  concurrency?: number;
+  manifestsDir?: string;
 }
 
 function parseOptions(argv: string[]): Options {
@@ -60,16 +64,33 @@ function parseOptions(argv: string[]): Options {
   let repoId: string | undefined;
   let verifyOnly = false;
   let model: string | undefined;
+  let concurrency: number | undefined;
+  let manifestsDir: string | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--lock" || arg === "--lock-run-id") { lockRunId = argv[++i]; continue; }
     if (arg === "--repo-id") { repoId = argv[++i]; continue; }
     if (arg === "--model") { model = argv[++i]; continue; }
+    if (arg === "--manifests-dir") { manifestsDir = argv[++i]; continue; }
+    if (arg === "--concurrency") {
+      concurrency = Number(argv[++i]);
+      if (!Number.isInteger(concurrency) || concurrency <= 0) {
+        throw new Error("--concurrency debe ser un entero positivo");
+      }
+      continue;
+    }
     if (arg === "--verify-only") { verifyOnly = true; continue; }
     throw new Error(`unknown argument: ${String(arg)}`);
   }
   if (!lockRunId) throw new Error("required: --lock <run-id> (p.ej. 2026-07-05-jina-code)");
-  return { lockRunId, ...(repoId ? { repoId } : {}), verifyOnly, ...(model ? { model } : {}) };
+  return {
+    lockRunId,
+    ...(repoId ? { repoId } : {}),
+    verifyOnly,
+    ...(model ? { model } : {}),
+    ...(concurrency ? { concurrency } : {}),
+    ...(manifestsDir ? { manifestsDir } : {}),
+  };
 }
 
 function countNodes(db: LaCoCoDatabase): number {
@@ -92,7 +113,7 @@ function sampleTaskPrompt(tasks: TaskDefinition[], repoId: string): string | und
 
 export async function buildGroundingProfiles(argv = process.argv.slice(2)): Promise<void> {
   const options = parseOptions(argv);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const layout = resolveEvalLayout(manifests.run, options.lockRunId);
   if (!existsSync(layout.lockFile)) {
     throw new Error(`lock no existe: ${layout.lockFile}`);
@@ -109,6 +130,10 @@ export async function buildGroundingProfiles(argv = process.argv.slice(2)): Prom
   // Este modelo SOLO afecta la construcción offline del perfil; el QueryGrounder en
   // tiempo de consulta es determinista, así que el A/B de retrieval no se ve alterado.
   const model = options.model ?? resolveStringConfig("agent.model");
+  // Concurrencia de lotes de enriquecimiento. --concurrency pisa el run.yaml.
+  // Requiere OLLAMA_NUM_PARALLEL>=este valor en el server; solo acelera el build,
+  // no altera la salida del perfil.
+  const enrichConcurrency = options.concurrency ?? resolveGroundingProfile(manifests.run).enrichConcurrency;
   // El enriquecedor genera JSON estructurado en CPU; una sola llamada de lote
   // puede tardar minutos. El timeout interactivo por defecto (30s) la aborta
   // ("This operation was aborted"). Piso generoso para el batch, respetando un
@@ -117,7 +142,7 @@ export async function buildGroundingProfiles(argv = process.argv.slice(2)): Prom
 
   console.log(`Lock: ${layout.lockFile} (runId=${lock.runId})`);
   console.log(`Modo: ${options.verifyOnly ? "verify-only" : "rebuild + verify"}`);
-  console.log(`Ollama: ${endpoint} model=${model}`);
+  console.log(`Ollama: ${endpoint} model=${model} concurrency=${enrichConcurrency}`);
   console.log(`Repos: ${repos.map((r) => r.id).join(", ")}\n`);
 
   const results: Array<{ id: string; nodes: number; terms: number; state: string; groundCandidates: number | "—" }> = [];
@@ -152,7 +177,7 @@ export async function buildGroundingProfiles(argv = process.argv.slice(2)): Prom
           }
           console.log(`  construyendo perfil (Ollama, puede tardar)...`);
           const started = performance.now();
-          const result = await new SemanticProfileBuilder(db.getRawDb(), repo.repoPath, ollama, model).rebuild();
+          const result = await new SemanticProfileBuilder(db.getRawDb(), repo.repoPath, ollama, model, enrichConcurrency).rebuild();
           const secs = ((performance.now() - started) / 1000).toFixed(1);
           console.log(`  ✓ rebuild: ${result.termCount} términos, ${result.aliasCount} aliases (${secs}s)`);
         } finally {

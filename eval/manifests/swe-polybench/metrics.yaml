@@ -8,15 +8,25 @@ aggregation_policy:
   report_confidence_intervals: true
   bootstrap_iterations: 1000
   missing_data_policy:
-    retrieval_without_gold: "exclude_from_m3_m6_and_report_as_pending"
+    retrieval_without_patch_evidence: "exclude_gold_metrics_and_report_as_pending"
+    retrieval_no_hit_mrr: "contributes_zero_task_still_counted"
     generation_timeout: "count_as_fail_for_m1_and_report_timeout"
     hallucination_unknown_symbol: "exclude_from_denominator_and_report_unknown"
-  ranking_cutoff_primary: 5
-  multihop_cutoff_primary: 20
+  # K primario del resumen (aproxima el contexto realmente inyectado).
+  ranking_cutoff_primary: 10
+  # Barrido de K (curva cobertura/hit vs. tamaño de contexto). Se reporta en el JSON
+  # por-celda (details.sweep) y en el benchmark-doctor, no en el resumen macro.
+  ranking_cutoff_sweep:
+    - 1
+    - 3
+    - 5
+    - 10
+    - 20
 
 metrics:
   - id: M1
     name: "Pass@1 (regression)"
+    role: "agent_outcome"
     dimension: "Generacion"
     stage: "generation"
     what_it_measures: >-
@@ -65,6 +75,7 @@ metrics:
 
   - id: M2
     name: "Hallucination Rate"
+    role: "agent_outcome"
     dimension: "Generacion"
     stage: "hallucination_detection"
     what_it_measures: >-
@@ -94,99 +105,200 @@ metrics:
       - "invalid_symbols"
       - "files_analyzed"
 
-  - id: M3
-    name: "Precision@5"
-    dimension: "Recuperacion"
-    stage: "retrieval"
-    what_it_measures: >-
-      De los primeros cinco nodos recuperados, cuantos pertenecen al conjunto de
-      nodos necesarios definido por ground truth.
-    formula: "|relevant_nodes ∩ retrieved_top_5| / 5"
-    unit: "ratio"
-    range:
-      min: 0
-      max: 1
-    better: "higher"
-    source: "manual_gold_or_crosscodeeval_style_gold"
-    denominator: 5
-    requires_gold: true
-    gold_fields:
-      - "tasks[].gold.relevant_nodes"
-    output_fields:
-      - "intersection_count"
-      - "retrieved_top_5"
-      - "relevant_nodes"
+  # --- Panel norte: tiempo y costo del agente (role: agent_outcome) ---------
+  # El agente recibe el contexto YA inyectado (sin hook vivo), así que
+  # AgentDurationMs excluye la recuperación. EndToEndMs = RetrievalOverheadMs
+  # (retrieval.jsonl timings_ms.total; 0 para no_context) + AgentDurationMs, y es
+  # la lectura justa de costo/tiempo frente a no_context. Informativas: no entran
+  # a required_metrics (no definen pass/fail).
 
-  - id: M4
-    name: "Recall@5"
-    dimension: "Recuperacion"
-    stage: "retrieval"
+  - id: AgentDurationMs
+    thesis_id: "M22"
+    name: "Agent duration (ms)"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "generation"
     what_it_measures: >-
-      De todos los nodos necesarios para resolver la tarea, cuantos aparecen en
-      los primeros cinco resultados recuperados.
-    formula: "|relevant_nodes ∩ retrieved_top_5| / |relevant_nodes|"
-    unit: "ratio"
-    range:
-      min: 0
-      max: 1
-    better: "higher"
-    source: "manual_gold_or_crosscodeeval_style_gold"
-    requires_gold: true
-    zero_denominator_policy: "invalid_task_gold"
-    gold_fields:
-      - "tasks[].gold.relevant_nodes"
+      Wall-clock del subproceso del agente (opencode). NO incluye recuperación (el
+      contexto llega pre-inyectado en el prompt). Media y P95 por estrategia.
+    formula: "mean/p95(agent_duration_ms)"
+    unit: "milliseconds"
+    better: "lower"
+    source: "automatic_timing"
 
-  - id: M5
-    name: "MRR"
+  - id: RetrievalOverheadMs
+    thesis_id: "M23"
+    name: "Retrieval overhead (ms)"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "retrieval"
+    what_it_measures: >-
+      Overhead pre-agente por celda = retrieval.jsonl timings_ms.total (sanitizer
+      SLM + recuperación). 0 para no_context. Media por estrategia.
+    formula: "mean(retrieval.timings_ms.total)"
+    unit: "milliseconds"
+    better: "lower"
+    source: "automatic_timing"
+
+  - id: EndToEndMs
+    thesis_id: "M24"
+    name: "End-to-end time (ms)"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "generation"
+    what_it_measures: >-
+      Costo real del flujo asistido = RetrievalOverheadMs + AgentDurationMs por
+      celda. ΔE2E < 0 vs no_context = el contexto se paga solo. Media y P95.
+    formula: "mean/p95(retrieval_overhead_ms + agent_duration_ms)"
+    unit: "milliseconds"
+    better: "lower"
+    source: "automatic_timing"
+
+  - id: CostUsd
+    thesis_id: "M25"
+    name: "Cost (USD)"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "generation"
+    what_it_measures: >-
+      Costo reportado por el proveedor (parseado del stdout de opencode). Media y
+      total por estrategia, solo sobre celdas que lo reportan.
+    formula: "mean/sum(cost_usd)"
+    unit: "usd"
+    better: "lower"
+    source: "provider_reported"
+
+  # --- Recuperación: gold_derived (contra patch-evidence gold) ---------------
+  # El gold sale del PATCH de referencia (lib/patch-evidence-gold.ts), no del
+  # grafo de LaCoCo, para evitar circularidad con estrategias graph-based. K
+  # primario = aggregation_policy.ranking_cutoff_primary. `id` == MetricId del
+  # motor (lib/metrics.ts); `thesis_id` es el número para el glosario de la tesis.
+
+  - id: EditSiteHit
+    thesis_id: "M14"
+    name: "EditSiteHit@K"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
     dimension: "Recuperacion"
     stage: "retrieval"
     what_it_measures: >-
-      Que tan temprano aparece el primer nodo relevante en el ranking producido
-      por una estrategia.
-    formula: "mean(1 / first_relevant_rank)"
+      Si en el top-K aparece el edit-site del patch, sea por archivo editado o por
+      símbolo editado. Métrica binaria por celda; el resumen es la tasa de hit.
+    formula: "any(edited_file ∈ top_k.files ∨ edited_symbol ∈ top_k.nodes)"
     unit: "ratio"
     range:
       min: 0
       max: 1
     better: "higher"
-    source: "manual_gold_or_crosscodeeval_style_gold"
-    requires_gold: true
-    no_relevant_found_value: 0
+    gold_fields:
+      - "tasks[].gold.patch_evidence.edited_files"
+      - "tasks[].gold.patch_evidence.edited_symbols"
+
+  - id: PatchEvidenceHit
+    thesis_id: "M15"
+    name: "PatchEvidenceHit@K"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      Si en el top-K aparece CUALQUIER evidencia del patch (archivos/símbolos
+      editados, tests tocados, imports/calls/types introducidos y sus
+      definiciones). Excluye nodos externos/genéricos (lib#…): nunca cuentan.
+    formula: "any(patch_evidence_element ∈ top_k, excluding external nodes)"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+
+  - id: MRR
+    thesis_id: "M16"
+    name: "MRR (patch-evidence)"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      Rank recíproco del PRIMER elemento de patch-evidence en el ranking.
+    formula: "mean(1 / first_patch_evidence_rank)"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    no_hit_value: 0
+    no_hit_policy: "contributes_zero_task_still_counted"
     rank_base: 1
-    gold_fields:
-      - "tasks[].gold.relevant_nodes"
 
-  - id: M6
-    name: "Multi-hop Dependency Recall"
-    dimension: "Cobertura"
+  - id: EditSiteMRR
+    thesis_id: "M17"
+    name: "EditSiteMRR"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
+    dimension: "Recuperacion"
     stage: "retrieval"
     what_it_measures: >-
-      De las dependencias relevantes a distancia mayor o igual a dos saltos en el
-      grafo, cuantas fueron recuperadas dentro del cutoff definido.
-    formula: "|gold_multihop_nodes ∩ retrieved_top_k| / |gold_multihop_nodes|"
+      Rank recíproco del primer elemento ESTRICTAMENTE edit-site. Discrimina
+      cuando un import trivial en rank 1 infla el MRR general pero el archivo
+      editado aparece muy abajo.
+    formula: "mean(1 / first_edit_site_rank)"
     unit: "ratio"
     range:
       min: 0
       max: 1
     better: "higher"
-    source: "manual_gold_20_tasks"
-    requires_gold: true
-    primary_k: 20
-    secondary_k:
-      - 5
-      - 50
-    gold_fields:
-      - "tasks[].gold.multihop_nodes"
-    hop_definition:
-      min_hops: 2
-      graph_dimensions:
-        - "SYS"
-        - "CPG"
-        - "DTG"
-    notes:
-      - "Esta metrica es central para diferenciar estrategias de grafo de recuperacion puramente lexica/vectorial."
+    no_hit_value: 0
+    rank_base: 1
 
-  - id: M7
+  - id: UsefulContextCoverage
+    thesis_id: "M18"
+    name: "UsefulContextCoverage@K"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      Cobertura del conjunto completo de patch-evidence en top-K. El resumen es el
+      agregado; el benchmark-doctor lo desglosa por estrato (edit_site / test /
+      ref / definition). OJO: 1 − coverage NO es "ruido" (ver ExternalNoiseRate).
+    formula: "|patch_evidence ∩ top_k| / |patch_evidence|"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "higher"
+    strata:
+      - "edit_site"
+      - "test"
+      - "ref"
+      - "definition"
+
+  - id: ExternalNoiseRate
+    thesis_id: "M19"
+    name: "ExternalNoiseRate@K"
+    role: "gold_derived"
+    gold_source: "patch_evidence"
+    source: "patch_evidence_gold"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: >-
+      Proporción de nodos externos/genéricos (lib#… o node_modules) en el top-K.
+      Acotado a externos, NO "todo lo que no es gold".
+    formula: "|external_nodes ∩ top_k| / |top_k|"
+    unit: "ratio"
+    range:
+      min: 0
+      max: 1
+    better: "lower"
+
+  - id: Latency
+    thesis_id: "M7"
     name: "Latency P95"
     dimension: "Eficiencia"
     stage: "retrieval"
@@ -212,6 +324,64 @@ metrics:
       - "Usar performance.now() o temporizador monotonic equivalente."
       - "Excluir instalacion, indexacion y ejecucion del agente externo."
       - "Reportar por separado cache cold y cache warm si se implementa."
+
+  # --- Recuperación: DIAGNÓSTICO de grafo (nunca definen gold ni pass/fail) ---
+  # El grafo se usa como diagnóstico de cobertura/distancia, no como fuente de
+  # verdad. El benchmark-doctor los computa; NO pueden entrar a required_metrics.
+
+  - id: GraphDistanceProfile
+    thesis_id: "M20"
+    name: "GraphDistanceProfile@K"
+    role: "diagnostic"
+    dimension: "Cobertura"
+    stage: "retrieval"
+    what_it_measures: >-
+      Distribución de distancias en el grafo entre los nodos recuperados y el
+      edit-site. Con patches multi-archivo la distancia del resumen es la MÍNIMA a
+      cualquier edit-site; el doctor reporta el perfil por edit-site.
+    formula: "distribution(min_graph_distance(retrieved_node, edit_sites))"
+    unit: "hops"
+    better: "lower"
+    source: "graph_diagnostic"
+
+  - id: GraphNeighborhoodCoverage
+    thesis_id: "M21"
+    name: "GraphNeighborhoodCoverage@K"
+    role: "diagnostic"
+    dimension: "Cobertura"
+    stage: "retrieval"
+    what_it_measures: >-
+      Cobertura de los vecinos CALLS/REFERENCES/DECLARES del edit-site en top-K
+      (sustituye el rol del viejo Multi-hop Recall, ahora como diagnóstico).
+    formula: "|graph_neighbors(edit_site) ∩ top_k| / |graph_neighbors(edit_site)|"
+    unit: "ratio"
+    better: "higher"
+    source: "graph_diagnostic"
+
+  # --- Legacy: retiradas del resumen y de los gates (reproducibilidad histórica) --
+  - id: LEGACY_P5
+    name: "Precision@5 (legacy)"
+    role: "legacy"
+    gold_source: "graph_derived"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: "Retirada: gold graph-derived con circularidad estructural."
+    formula: "|relevant_nodes ∩ retrieved_top_5| / 5"
+    unit: "ratio"
+    better: "higher"
+    source: "legacy_graph_gold"
+
+  - id: LEGACY_R5
+    name: "Recall@5 (legacy)"
+    role: "legacy"
+    gold_source: "graph_derived"
+    dimension: "Recuperacion"
+    stage: "retrieval"
+    what_it_measures: "Retirada: gold graph-derived con circularidad estructural."
+    formula: "|relevant_nodes ∩ retrieved_top_5| / |relevant_nodes|"
+    unit: "ratio"
+    better: "higher"
+    source: "legacy_graph_gold"
 
   - id: M8
     name: "Grounding Candidate Recall@20"
@@ -268,15 +438,16 @@ metrics:
     source: "automatic_timing"
 
 quality_gates:
+  # Invariante (validada por load-manifests.ts): ninguna métrica con rol
+  # `diagnostic` o `legacy` puede aparecer en `required_metrics`. El norte es el
+  # agente (M1/M2); el retrieval gold_derived explica la calidad de contexto.
   official_run:
     required_metrics:
       - M1
       - M2
-      - M3
-      - M4
-      - M5
-      - M6
-      - M7
+      - EditSiteHit
+      - PatchEvidenceHit
+      - UsefulContextCoverage
     min_ready_tasks: 20
     fail_if_any_task_missing_gold_for_retrieval: true
     fail_if_agent_not_available: true

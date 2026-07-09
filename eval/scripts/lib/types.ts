@@ -59,6 +59,14 @@ export interface AgentsManifest extends ManifestHeader {
   [key: string]: unknown;
 }
 
+/**
+ * Rol de una métrica. Invariante estructural: solo `agent_outcome` y
+ * `gold_derived` pueden entrar a `quality_gates.*.required_metrics`. Un
+ * `diagnostic` (grafo) o `legacy` (P@5/R@5) que aparezca ahí es un error de
+ * manifest — el grafo no define pass/fail.
+ */
+export type MetricRole = "agent_outcome" | "gold_derived" | "diagnostic" | "legacy";
+
 export interface MetricDefinition {
   id: string;
   name: string;
@@ -68,6 +76,7 @@ export interface MetricDefinition {
   unit: string;
   better: string;
   source: string;
+  role?: MetricRole;
   [key: string]: unknown;
 }
 
@@ -103,15 +112,77 @@ export interface DeterministicInput {
   dimensions: string[];
 }
 
+/** Granularidad de símbolo direccionable, alineada con el extractor de LaCoCo. */
+export type SymbolKind =
+  | "function"
+  | "class"
+  | "interface"
+  | "type"
+  | "variable"
+  | "method";
+
+/**
+ * Referencia a un símbolo del gold, repo-relativa. `file` es POSIX relativo al
+ * repo; el node-id LaCoCo equivalente es `${file}#${symbol}` (se resuelve a
+ * absoluto con `resolveNodeId` en tiempo de métricas).
+ */
+export interface SymbolRef {
+  file: string;
+  symbol: string;
+  kind: SymbolKind;
+}
+
+/**
+ * Gold de "contexto útil" derivado AUTOMÁTICAMENTE del patch de referencia
+ * (no del grafo de LaCoCo, para evitar circularidad). Ver
+ * `lib/patch-evidence-gold.ts`. Todo repo-relativo y portable.
+ *
+ * Estratos (usados por UsefulContextCoverage y el doctor):
+ *  - `edited_files`/`edited_symbols` = edit-site (lo que el patch modifica).
+ *    `edited_symbols` puede ser vacío (patch sin nodo mapeable) → el gold cae
+ *    a nivel archivo (`resolution.fell_back_to_file_level = true`).
+ *  - `touched_tests`  = archivos del test_patch asociados.
+ *  - `introduced_refs`/`resolved_definitions` = Tier 2 (imports/calls/types en
+ *    líneas añadidas y sus definiciones), resueltos vía ts-morph directo.
+ */
+export interface PatchEvidenceGold {
+  source: "patch";
+  edited_files: string[];
+  edited_symbols: SymbolRef[];
+  touched_tests: string[];
+  introduced_refs: SymbolRef[];
+  resolved_definitions: SymbolRef[];
+  resolution: {
+    fell_back_to_file_level: boolean;
+    unresolved_refs: string[];
+  };
+}
+
 export interface TaskGold {
   status: string;
-  // Repo-relative node id (`<relpath>#<symbol>`) used as the BFS root for
-  // multihop distance checks. Null when not yet annotated.
+  /**
+   * Gold principal de contexto útil (patch-evidence). Opcional para retro-compat
+   * con manifests que aún no lo derivan; las métricas de recuperación lo exigen
+   * cuando `status === "ready"`.
+   */
+  patch_evidence?: PatchEvidenceGold;
+  // --- Campos legacy (rol DIAGNÓSTICO, ya no definen pass/fail) ---
+  // Se conservan para el perfil de distancia/vecindad del grafo (benchmark-doctor)
+  // y para reproducibilidad histórica; NO alimentan el resumen de métricas.
+  // Repo-relative node id (`<relpath>#<symbol>`) usado como raíz BFS del perfil
+  // de grafo. Null cuando no está anotado.
   primary_anchor: string | null;
-  // Node ids are stored repo-relative and resolved against the repo path at
-  // validation/metrics time so gold is portable across machines.
+  // Node ids repo-relativos, resueltos contra el repo en tiempo de métricas.
   relevant_nodes: string[];
   multihop_nodes: string[];
+  /**
+   * Origen del campo `multihop_nodes` (diagnóstico de grafo):
+   *  - "auto"   = derivado por `extractMultihopFromGraph` (BFS-2 sobre el grafo).
+   *  - "manual" = anotado a mano.
+   *  - "pending"= no derivado ni anotado.
+   * Default en manifests historicos: "manual".
+   */
+  multihop_status?: "auto" | "manual" | "pending";
   annotation_notes: string;
 }
 

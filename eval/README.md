@@ -39,14 +39,97 @@ eval/
 
 ## Manifests
 
+El benchmark productivo vigente usa `eval/manifests/swe-polybench/`. El
+directorio `eval/manifests/` queda como legacy/historico para reproducir runs
+anteriores y para tests del harness; no debe usarse para reportes nuevos.
+
 | Archivo | Funcion |
 |---|---|
 | `manifests/repos.yaml` | Define repositorios, refs, gestores de paquetes, comandos de instalacion, pruebas e indexacion. |
 | `manifests/strategies.yaml` | Define las estrategias que se comparan: `no_context`, `hybrid`, `ictd`, `clcr`, `rpr` y `agentic`. |
 | `manifests/agents.yaml` | Define adaptadores para agentes externos, inicialmente OpenCode, Codex CLI, Claude Code, modo manual y dry-run. |
-| `manifests/metrics.yaml` | Formaliza M1-M13 para generacion, retrieval y grounding semantico. |
+| `manifests/metrics.yaml` | Formaliza las metricas de generacion, retrieval (patch-evidence) y grounding. Cada metrica lleva `role` (`agent_outcome`/`gold_derived`/`diagnostic`/`legacy`); `quality_gates.*.required_metrics` no puede incluir `diagnostic`/`legacy` (invariante validado por `load-manifests.ts`). |
 | `manifests/run.yaml` | Controla rutas, repeticiones, timeouts, semillas, politicas de limpieza, formato de salida y gates de ejecucion. |
-| `manifests/tasks.yaml` | Contiene las tareas experimentales y su ground truth. Los nodos relevantes deben anotarse manualmente antes de calcular M3-M6. |
+| `manifests/tasks.yaml` | Contiene las tareas experimentales y su gold. El gold principal es `gold.patch_evidence`, derivado AUTOMATICAMENTE del patch de referencia (no del grafo). Los campos `relevant_nodes`/`multihop_nodes` son legacy y solo alimentan diagnostico de grafo. |
+
+## Runbook SWE-PolyBench
+
+Flujo recomendado, pasando el directorio canonico en cada comando:
+
+```bash
+npm run eval:check-manifests -- --manifests-dir eval/manifests/swe-polybench
+npm run eval:prepare -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+npm run eval:index -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+# Opcional para A/B de grounding:
+npm run eval:grounding:profiles -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+npm run eval:retrieval -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
+npm run eval:metrics:retrieval -- --run-id <run> --manifests-dir eval/manifests/swe-polybench --strict
+npm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
+```
+
+Alternativa para una sesion completa:
+
+```bash
+export LACOCO_EVAL_MANIFESTS_DIR=eval/manifests/swe-polybench
+npm run eval:check-manifests
+npm run eval:prepare -- --run-id <run>
+npm run eval:index -- --run-id <run>
+npm run eval:retrieval -- --run-id <run> --split retrieval_official
+npm run eval:metrics:retrieval -- --run-id <run> --strict
+npm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official
+```
+
+`eval:benchmark:doctor` escribe `benchmark-doctor.json` y
+`benchmark-doctor.md` en el directorio del run. Verifica el manifest efectivo,
+split y filtros aplicados, `repos.lock.json`, DB SQLite y LanceDB por repo,
+salud del patch-evidence gold (`patch_evidence_health`: gold ausente/vacio,
+fallback file-level, refs sin resolver, archivos inexistentes), cobertura
+estratificada y rank del primer gold (`patch_evidence_coverage`), el grafo como
+DIAGNOSTICO (`graph_diagnostic` + `graph_distance_profile`, nunca hace fallar el
+run), artifacts `context.json`, errores por celda, y ruido externo `lib#...`.
+
+## Como leer el benchmark
+
+La metrica NORTE es el AGENTE, no el retrieval. La validacion final de LaCoCo es
+si reduce tiempo/costo/alucinaciones y sube el pass rate del agente
+(`ΔPass@1` vs `no_context` + flips, tiempo, costo, M2). El retrieval se lee como
+*explicacion* de por que una estrategia ayuda o no ayuda al agente, no como fin en
+si mismo (mismo principio que SWE-bench).
+
+**Tiempo y costo (panel end-to-end).** El agente recibe el contexto **pre-inyectado**
+en el `prompt.md` (no hay hook de recuperacion vivo), asi que `agent_duration_ms`
+mide **solo** el agente, sin recuperacion. El overhead de recuperacion se mide aparte
+(`retrieval.jsonl.timings_ms.total` = sanitizer SLM + retrieval). `compute-generation-metrics`
+los une por `(task, strategy_id)` y `compare-strategies` reporta, por estrategia:
+`RetrievalOverheadMs`, `AgentDurationMs`, y el **`EndToEndMs` = overhead + agente**
+(0 de overhead para `no_context`), mas `CostUsd`. La lectura justa vs `no_context` es
+**ΔE2E**: `< 0` = el contexto se paga solo (menos tiempo total aunque traerlo cueste).
+Requiere haber corrido el `eval:retrieval` de la variante ANTES de la generacion, para
+que existan los registros de retrieval que aportan el overhead.
+
+Metricas de retrieval (contra `gold.patch_evidence`, K primario =
+`aggregation_policy.ranking_cutoff_primary`):
+
+- **EditSiteHit@K** / **PatchEvidenceHit@K**: si el top-K contiene el edit-site
+  (archivo o simbolo editado) / cualquier evidencia del patch.
+- **MRR** / **EditSiteMRR**: rank reciproco del primer elemento de evidencia /
+  del primer elemento estrictamente edit-site. Si NADA matchea, el valor es `0` y
+  la tarea SE CUENTA igual en el promedio (no se excluye).
+- **UsefulContextCoverage@K**: cobertura del conjunto completo de patch-evidence.
+  OJO: `1 − UsefulContextCoverage@K` **no es "ruido"**. El extractor automatico
+  nunca captura el 100% del contexto legitimamente util, asi que la fraccion no
+  cubierta incluye contexto valido que el gold no modela.
+- **ExternalNoiseRate@K**: fraccion del top-K que son nodos externos/genericos
+  (`lib#…`, `node_modules`). Acotado a externos, NO "todo lo que no es gold".
+
+Diagnostico de grafo (nunca define pass/fail): `GraphDistanceProfile@K` (con
+patches multi-archivo, distancia MINIMA a cualquier edit-site en el resumen y
+perfil por edit-site en el doctor) y `GraphNeighborhoodCoverage@K`.
+
+Al ampliar el gold, es esperable que la cobertura amplia converja hacia arriba
+entre estrategias; **EditSiteHit@K / EditSiteMRR** suelen ser las que de verdad
+discriminan. Precision@5/Recall@5 se retiraron del resumen (viven como `legacy`
+en `metrics.yaml` solo por reproducibilidad historica).
 
 ## Fases del pipeline
 
@@ -79,7 +162,8 @@ read task prompt + deterministic sanitizer fields
   -> persist it under artifacts/<task>/_sanitizer/
   -> reuse the same encoded output for every retrieval strategy
   -> save context.json, ranked nodes, scores, metadata and timings
-  -> compute M3, M4, M5 and M6 when gold is available
+  -> compute EditSiteHit/PatchEvidenceHit/MRR/EditSiteMRR/UsefulContextCoverage/
+     ExternalNoiseRate against patch_evidence gold when available
 ```
 
 El modo determinista vive en `eval/` y reutiliza el pipeline y el registro de
@@ -129,17 +213,28 @@ retrieval.jsonl
   tables-for-thesis.md
 ```
 
-## Ground truth
+## Ground truth (patch-evidence gold)
 
-El ground truth no debe inventarse automaticamente. Para cada tarea se deben registrar:
+El gold principal se deriva AUTOMATICAMENTE del patch de referencia via
+`lib/patch-evidence-gold.ts` (no del grafo, para evitar circularidad con
+estrategias graph-based). El loader `import-swe-polybench` lo puebla en
+`gold.patch_evidence` y persiste el patch crudo bajo `patches/<id>.patch`.
 
-- `relevant_nodes`: nodos necesarios para resolver la tarea.
-- `multihop_nodes`: subconjunto de nodos relevantes que estan a distancia mayor o igual a dos saltos en el grafo.
-- `target_tests`: comandos o archivos de prueba que validan la solucion.
-- `annotation_notes`: justificacion breve de por que esos nodos son necesarios.
-- `translation_gold.relevant_terms`: términos canónicos esperados en la traducción; se anotan manualmente.
+- `patch_evidence.edited_files` / `edited_symbols`: edit-site (lo que el patch
+  modifica). Si ningun simbolo mapea, cae a nivel archivo
+  (`resolution.fell_back_to_file_level = true`).
+- `patch_evidence.touched_tests`: archivos del `test_patch` asociados.
+- `patch_evidence.introduced_refs` / `resolved_definitions`: Tier 2 —
+  imports/calls/types en lineas añadidas y sus definiciones internas, resueltos
+  con ts-morph directo (sin tocar `src/graph`).
+- `target_tests`: comandos/archivos de prueba que validan la solucion.
 
-Mientras una tarea tenga `gold.status: pending_manual_annotation`, el pipeline puede ejecutarla para inspeccion, pero debe excluirla de metricas M3-M6.
+Campos `relevant_nodes` / `multihop_nodes` = LEGACY: solo alimentan el
+diagnostico de grafo del doctor, no las metricas del resumen.
+
+Mientras una tarea tenga `gold.status: pending_manual_annotation` o carezca de
+`patch_evidence`, el pipeline puede ejecutarla para inspeccion pero sus metricas
+de gold quedan excluidas/invalidas (la latencia se computa igual).
 
 ## Salidas por tarea
 

@@ -134,6 +134,28 @@ describe("SlmClassifier", () => {
       }),
     ]));
   });
+
+  it("solicita mantener el modelo residente entre llamadas (keep_alive)", async () => {
+    const output = {
+      route: "RAG",
+      clean_query: '"HybridStrategy"',
+      embedding_input: "Explicar HybridStrategy",
+      dimensions: ["CPG"],
+      intent: "understand",
+      confidence: 0.9,
+    };
+    const ollama = {
+      chat: vi.fn().mockResolvedValue(JSON.stringify(output)),
+    } as unknown as LlmClient;
+    const classifier = new SlmClassifier(ollama);
+
+    await classifier.classify("explica hybrid strategy");
+
+    expect(ollama.chat).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ keep_alive: "5m" }),
+    );
+  });
 });
 
 function structuredOptions(): ReturnType<typeof expect.objectContaining> {

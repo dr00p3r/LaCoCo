@@ -32,7 +32,7 @@ import {
 } from "./lib/types.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { readRepositoriesLock } from "./lib/repo-lock.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import {
   GENERATION_RECORD_SCHEMA_VERSION,
   makeEmptyArtifactPaths,
@@ -51,8 +51,23 @@ interface GenerationSettings {
   repoIds?: Set<string>;
   strategyIds: Set<string>;
   agentIds: Set<string>;
+  // Variante de sanitizer cuyos registros de retrieval consume la generación.
+  // "deterministic" (default) empareja `strategy.id`; cualquier otra (p. ej.
+  // "grounded") empareja `${strategy.id}@${variant}`, que es como run-retrieval
+  // etiqueta los registros no-deterministas.
+  sanitizerVariant: string;
   continueOnTaskFailure: boolean;
   continueOnStrategyFailure: boolean;
+}
+
+/**
+ * Id de estrategia con el que se busca el registro de retrieval y se etiqueta el
+ * `generation.jsonl`. `no_context` es baseline sin retrieval (independiente de la
+ * variante); el resto lleva sufijo `@variant` salvo en determinista.
+ */
+function recordStrategyId(strategyId: string, variant: string): string {
+  if (strategyId === "no_context") return "no_context";
+  return variant === "deterministic" ? strategyId : `${strategyId}@${variant}`;
 }
 
 export interface RetrievalJsonlRecord {
@@ -100,6 +115,9 @@ function readGenerationSettings(
   const phaseAgents = splitAgents === undefined
     ? new Set([asString(generation.agent_id, "run.yaml.phases.generation.agent_id")])
     : splitAgents;
+  const sanitizerVariant = split.sanitizer_variant === undefined
+    ? "deterministic"
+    : asString(split.sanitizer_variant, `run.yaml.splits.${requestedSplit}.sanitizer_variant`);
 
   // Intersect phase strategies with split strategies (split narrows the phase set)
   const strategyIds = splitStrategies === undefined
@@ -125,6 +143,7 @@ function readGenerationSettings(
     ...(repoIds === undefined ? {} : { repoIds }),
     strategyIds,
     agentIds: phaseAgents,
+    sanitizerVariant,
     continueOnTaskFailure: asBoolean(failure.continue_on_task_failure, "run.yaml.failure_policy.continue_on_task_failure"),
     continueOnStrategyFailure: asBoolean(failure.continue_on_strategy_failure, "run.yaml.failure_policy.continue_on_strategy_failure"),
   };
@@ -228,17 +247,49 @@ export function loadRequiredEnrichedPrompt(record: RetrievalJsonlRecord): string
   return context.enrichedPrompt;
 }
 
+/** Clave de celda (task, strategy) para el conjunto de celdas a saltar. */
+function cellKey(taskId: string, strategyId: string): string {
+  return `${taskId}__${strategyId}`;
+}
+
+/**
+ * Preflight de contextos de retrieval. Devuelve el conjunto de celdas
+ * `(task, strategy)` que deben SALTARSE porque su retrieval no está disponible
+ * (no hay registro, p. ej. la tarea no entró al lock; o el registro trae error).
+ * Esto honra `failure_policy.continue_on_task_failure`: una instancia sin
+ * recuperación no debe abortar toda la generación.
+ *
+ * Sigue fallando DURO ante corrupción real de un registro que SÍ existe: registro
+ * duplicado, sanitizer mal etiquetado, o `context.json` ausente/vacío — eso indica
+ * un artefacto roto, no una tarea ausente.
+ */
 export function validateRetrievalContexts(
   records: RetrievalJsonlRecord[],
   tasks: TaskDefinition[],
   strategies: StrategyDefinition[],
-): void {
+  sanitizerVariant = "deterministic",
+): Set<string> {
+  const skip = new Set<string>();
   for (const task of tasks) {
     let frozenSanitizerPath: string | null = null;
     for (const strategy of strategies) {
       if (strategy.id === "no_context") continue;
-      const record = findRetrievalRecord(records, task.id, strategy.id);
-      if (record === null) throw new Error(`missing retrieval record for ${task.id} x ${strategy.id}`);
+      const recId = recordStrategyId(strategy.id, sanitizerVariant);
+      const matches = records.filter((r) => r.task_id === task.id && r.strategy_id === recId);
+      if (matches.length === 0) {
+        // La tarea no se recuperó para esta estrategia → saltar la celda.
+        skip.add(cellKey(task.id, strategy.id));
+        continue;
+      }
+      if (matches.length > 1) {
+        throw new Error(`expected exactly one retrieval record for ${task.id} x ${recId}, found ${matches.length}`);
+      }
+      const record = matches[0]!;
+      if (record.error !== undefined && record.error !== null) {
+        // Retrieval con error → no hay contexto usable; saltar la celda.
+        skip.add(cellKey(task.id, strategy.id));
+        continue;
+      }
       if (record.sanitizer_source === "agent_intermediary") {
         if (record.sanitizer_variant === "deterministic") {
           throw new Error(
@@ -260,6 +311,7 @@ export function validateRetrievalContexts(
       loadRequiredEnrichedPrompt(record);
     }
   }
+  return skip;
 }
 
 export function buildPrompt(
@@ -380,6 +432,12 @@ interface ParsedTestResult {
   timedOut: boolean;
   durationMs: number;
   logPath: string;
+  /**
+   * `true` cuando el comando test termino pero su stdout no es parseable
+   * por los parsers soportados (vitest, jest, mocha). El harness fuerza
+   * `test_exit_code: null` para que M1 no reporte un pass silencioso.
+   */
+  unknownRunner: boolean;
 }
 
 async function runTargetTests(
@@ -395,19 +453,24 @@ async function runTargetTests(
       timeoutMs,
       logPath,
     });
+    const parsed = parseTestRunnerOutput(result.stdout, result.stderr);
     return {
       exitCode: result.exitCode,
       timedOut: result.timedOut,
       durationMs: result.durationMs,
       logPath,
+      unknownRunner: parsed.unknownRunner,
     };
   } catch (error) {
     if (error instanceof CommandExecutionError) {
+      // Cuando el comando se mata por timeout/SIGTERM, el stdout puede estar
+      // truncado; no aplicamos unknownRunner (el kill ya cuenta como fallo).
       return {
         exitCode: error.result.exitCode,
         timedOut: error.result.timedOut,
         durationMs: error.result.durationMs,
         logPath,
+        unknownRunner: false,
       };
     }
     throw error;
@@ -424,6 +487,7 @@ interface RunOptions {
   maxBudgetUsd?: number | undefined;
   resume: boolean;
   dryRun: boolean;
+  manifestsDir?: string | undefined;
 }
 
 function parseRunOptions(argv: string[]): RunOptions {
@@ -436,6 +500,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     "--agent-id",
     "--split",
     "--max-budget-usd",
+    "--manifests-dir",
     "--resume",
   ]);
   return {
@@ -448,6 +513,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     maxBudgetUsd: options.maxBudgetUsd,
     resume: options.resume === true,
     dryRun: options.dryRun,
+    manifestsDir: options.manifestsDir,
   };
 }
 
@@ -501,7 +567,7 @@ export function parseOpenCodeCost(stdout: string): number | null {
 
 export async function runGeneration(argv = process.argv.slice(2)): Promise<void> {
   const options = parseRunOptions(argv);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const settings = readGenerationSettings(manifests.run, manifests.agents, options.split);
   const layout = resolveEvalLayout(manifests.run, options.runId);
   const tasks = manifests.tasks.tasks.filter((task) =>
@@ -556,7 +622,14 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
   const lockedById = new Map(lock.repositories.map((r) => [r.id, r]));
 
   const retrievalRecords = loadRetrievalJsonl(layout.runDirectory);
-  validateRetrievalContexts(retrievalRecords, tasks, strategies);
+  const skipCells = validateRetrievalContexts(retrievalRecords, tasks, strategies, settings.sanitizerVariant);
+  if (skipCells.size > 0) {
+    const bySortedCell = [...skipCells].sort();
+    console.warn(
+      `⚠ ${skipCells.size} celda(s) sin registro de retrieval se saltarán (la tarea no se recuperó; ` +
+        `continue_on_task_failure): ${bySortedCell.map((c) => c.replace("__", " x ")).join(", ")}`,
+    );
+  }
 
   mkdirSync(layout.runDirectory, { recursive: true });
   mkdirSync(layout.generationArtifactsDirectory, { recursive: true });
@@ -595,9 +668,19 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
       for (const agent of agents) {
         const model = getAgentModel(agent);
         const agentProfile = getAgentProfile(agent);
-        const cellId = generationCellId(task.id, strategy.id, agent.id, model);
+        // Id con variante: empareja el registro de retrieval correcto y etiqueta
+        // la salida (p. ej. `hybrid@grounded`) para que compare-strategies lo
+        // distinga del determinista. `no_context` queda sin sufijo (baseline).
+        const recStrategyId = recordStrategyId(strategy.id, settings.sanitizerVariant);
+        // Celda sin registro de retrieval (la tarea no se recuperó para esta
+        // estrategia) → saltar sin abortar el run. `no_context` no necesita registro.
+        if (strategy.id !== "no_context" && skipCells.has(cellKey(task.id, strategy.id))) {
+          console.warn(`  skip ${task.id} x ${recStrategyId} x ${agent.id}: sin registro de retrieval`);
+          continue;
+        }
+        const cellId = generationCellId(task.id, recStrategyId, agent.id, model);
         if (completedCells.has(cellId)) {
-          console.log(`\n${task.id} x ${strategy.id} x ${agent.id}: already recorded, skipping`);
+          console.log(`\n${task.id} x ${recStrategyId} x ${agent.id}: already recorded, skipping`);
           continue;
         }
         if (options.maxBudgetUsd !== undefined && spentUsd >= options.maxBudgetUsd) {
@@ -608,7 +691,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           break;
         }
 
-        const cellDir = join(layout.generationArtifactsDirectory, task.id, strategy.id, agent.id);
+        const cellDir = join(layout.generationArtifactsDirectory, task.id, recStrategyId, agent.id);
         const paths = makeEmptyArtifactPaths(cellDir);
 
         const regressionInfo = (locked.regression_tasks ?? []).find((t) => t.id === task.id);
@@ -680,7 +763,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           }
         }
 
-        const retrievalRecord = findRetrievalRecord(retrievalRecords, task.id, strategy.id);
+        const retrievalRecord = findRetrievalRecord(retrievalRecords, task.id, recStrategyId);
         const prompt = buildPrompt(task, strategy, retrievalRecord, regressionInfo);
         mkdirSync(cellDir, { recursive: true });
         writeFileSync(paths.prompt, prompt, "utf8");
@@ -797,12 +880,18 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           baselineFailing = regressionInfo.baseline_failing_tests;
         }
 
+        // Si el runner de tests no es parseable, NO contamos el exit=0 como pass
+        // silencioso. Forzamos test_exit_code=null y dejamos runner_error para que
+        // compute-generation-metrics lo agregue a m1_unknown_runner_count.
+        const testRunnerError = testResult?.unknownRunner === true ? "unknown_runner" as const : null;
+        const effectiveTestExitCode = testRunnerError !== null ? null : (testResult?.exitCode ?? null);
+
         const record: GenerationRecord = {
           schema_version: GENERATION_RECORD_SCHEMA_VERSION,
           run_id: layout.runId,
           task_id: task.id,
           repo_id: task.repo_id,
-          strategy_id: strategy.id,
+          strategy_id: recStrategyId,
           agent_id: agent.id,
           model_id: model,
           agent_exit_code: agentExitCode,
@@ -811,7 +900,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           patch_applied: patchApplied,
           patch_size_bytes: patchSizeBytes,
           files_changed_count: filesChangedCount,
-          test_exit_code: testResult?.exitCode ?? null,
+          test_exit_code: effectiveTestExitCode,
           test_duration_ms: testResult?.durationMs ?? 0,
           tests_passed: testResult === null ? null : null,
           tests_failed: testResult === null ? null : null,
@@ -823,6 +912,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           regression_introduced_failures: regressionIntroduced,
           artifact_paths: paths,
           error: recordError,
+          runner_error: testRunnerError,
         };
 
         appendFileSync(outputPath, `${JSON.stringify(record)}\n`, "utf8");

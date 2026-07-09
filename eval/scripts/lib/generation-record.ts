@@ -12,6 +12,12 @@
  * El campo `error` es no-nulo cuando la ejecucion fallo por timeout,
  * crash del agente, o worktree corrupto. En ese caso, los campos de
  * patch/test quedan null y la entrada se considera un fail para M1.
+ *
+ * El campo opcional `runner_error` distingue "el comando test termino
+ * con exit 0 pero el parser no reconocio el runner" (swe-polybench
+ * mocha historico, formateadores no soportados) de un pass genuino.
+ * Cuando != null, el runner forza `test_exit_code: null` para que
+ * `isPass` reporte fail y `m1_unknown_runner_count` lo agregue aparte.
  */
 
 export interface GenerationRecord {
@@ -61,6 +67,10 @@ export interface GenerationRecord {
 
   // Error no fatal: si != null, esta cell es un fail para M1
   error: { type: string; message: string } | null;
+
+  // Diagnostico del harness: tests ejecutados pero output no parseable.
+  // Opcional para mantener compat con generation.jsonl historicos (v3 sin campo).
+  runner_error?: "unknown_runner" | null;
 }
 
 export const GENERATION_RECORD_SCHEMA_VERSION = 3;

@@ -273,7 +273,7 @@ export class DaemonManager {
       await this.lanceDb.clear();
       this.vectorCallbacks = new VectorCallbacks(
         this.lanceDb,
-        (t) => this.embedGen.generate(t),
+        (texts) => this.embedGen.generateBatch(texts),
       );
       for (const row of this.vectorNodeBuffer.all()) this.vectorCallbacks.insertNode(row);
       await this.vectorCallbacks.flush();

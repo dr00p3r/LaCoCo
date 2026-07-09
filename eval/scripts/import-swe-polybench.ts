@@ -16,13 +16,18 @@
  * benchmark manual previo y no aplica a SWE-PolyBench.
  */
 
-import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, posix } from "node:path";
 import { parseDocument, stringify } from "yaml";
 
-import { EVAL_ROOT, MANIFESTS_DIR } from "./lib/paths.js";
+import { EVAL_ROOT, MANIFESTS_DIR, resolveManifestsDir } from "./lib/paths.js";
 import { translateModifiedNodes, parseModifiedNodes } from "./lib/swe-polybench-nodes.js";
 import { parseF2pTestId } from "./lib/swe-polybench-test-command.js";
+import { extractPatchEvidenceTier1 } from "./lib/patch-evidence-gold.js";
+import { extractMultihopFromGraph } from "./lib/multihop-translator.js";
+import { loadManifests } from "./lib/load-manifests.js";
+import { readRepositoriesLock } from "./lib/repo-lock.js";
+import { resolveEvalLayout } from "./lib/layout.js";
 import type { TaskDefinition } from "./lib/types.js";
 
 /** Campos de una instancia del dataset que consume el loader. */
@@ -39,12 +44,20 @@ interface SwePolyBenchInstance {
   F2P: string;
   test_command: string;
   pull_number?: number;
+  /** Diff del patch de referencia (el fix). Fuente del patch-evidence gold. */
+  patch: string;
+  /** Diff del patch de tests asociado. */
+  test_patch?: string;
 }
 
 interface LoaderOptions {
   limit: number;
   repo: string;
   outDir: string;
+  runId?: string;
+  enableMultihop: boolean;
+  includeMixed?: boolean;
+  manifestsDir?: string;
 }
 
 const DATA_FILE = join(EVAL_ROOT, "data", "swe-polybench", "instances.tsjs.full.jsonl");
@@ -59,6 +72,7 @@ function parseArgs(argv: string[]): LoaderOptions {
     limit: 10,
     repo: "sveltejs/svelte",
     outDir: join(MANIFESTS_DIR, "swe-polybench"),
+    enableMultihop: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -77,6 +91,21 @@ function parseArgs(argv: string[]): LoaderOptions {
       if (value === undefined) throw new Error("--out-dir requires a value");
       options.outDir = value;
       i += 1;
+    } else if (arg === "--run-id") {
+      if (value === undefined) throw new Error("--run-id requires a value");
+      options.runId = value;
+      i += 1;
+    } else if (arg === "--manifests-dir") {
+      if (value === undefined) throw new Error("--manifests-dir requires a value");
+      options.manifestsDir = value;
+      i += 1;
+    } else if (arg === "--enable-multihop") {
+      // Flag sin valor. Requiere --run-id para resolver dbPath por tarea.
+      options.enableMultihop = true;
+    } else if (arg === "--include-mixed") {
+      // Flag sin valor. Amplia el filtro: acepta is_mixed tambien. Combinado
+      // con --limit permite ir mas alla del subset is_func_only estricto.
+      options.includeMixed = true;
     } else {
       throw new Error(`unknown argument: ${String(arg)}`);
     }
@@ -85,22 +114,23 @@ function parseArgs(argv: string[]): LoaderOptions {
 }
 
 /** Lee el JSONL y devuelve las instancias que pasan el filtro de "fácil". */
-function loadEasyInstances(repo: string, limit: number): SwePolyBenchInstance[] {
+function loadEasyInstances(repo: string, limit: number, includeMixed = false): SwePolyBenchInstance[] {
   const raw = readFileSync(DATA_FILE, "utf8");
   const selected: SwePolyBenchInstance[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "") continue;
     const inst = JSON.parse(trimmed) as SwePolyBenchInstance;
-    if (
-      inst.repo === repo &&
-      inst.is_func_only === true &&
-      inst.num_nodes === 1 &&
-      inst.is_no_nodes !== true
-    ) {
+    if (inst.repo !== repo || inst.is_no_nodes === true) continue;
+    // Filtro "facil" canonico: 1 sola funcion/clase/metodo modificado.
+    if (inst.is_func_only === true && inst.num_nodes === 1) {
       selected.push(inst);
-      if (selected.length >= limit) break;
+    } else if (includeMixed && inst.num_nodes > 1 && inst.num_nodes <= 4) {
+      // --include-mixed: acepta is_mixed con hasta 4 nodos. Mas alla el gold
+      // se vuelve ruidoso para M3 (precision por cell cae).
+      selected.push(inst);
     }
+    if (selected.length >= limit) break;
   }
   return selected;
 }
@@ -120,24 +150,90 @@ function f2pTitles(rawF2p: string): string[] {
   return parseModifiedNodes(rawF2p).map((id) => parseF2pTestId(id).title);
 }
 
+/**
+ * Limpieza ligera del `problem_statement` para usarlo como query de retrieval.
+ *
+ * El baseline usaba solo la PRIMERA línea (el título), tirando el cuerpo donde
+ * viven los identificadores de código (símbolos, paths, snippets). Un usuario real
+ * pega el reporte completo, así que la query ideal es el issue entero — pero sin la
+ * basura que ensucia el embedding: normaliza saltos `\r\n`, colapsa el URL de los
+ * links markdown a su texto, borra URLs sueltas (REPL/gists) y compacta líneas en
+ * blanco. NO toca fences de código ni diffs: ahí están las palabras que sirven.
+ */
+function cleanIssueText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1") // [texto](url) → texto
+    .replace(/https?:\/\/\S+/g, "") // URLs sueltas
+    .replace(/\n{3,}/g, "\n\n") // colapsa líneas en blanco
+    .trim();
+}
+
+interface PatchSidecar {
+  id: string;
+  patch: string;
+  testPatch: string | null;
+}
+
 interface BuildResult {
   tasks: TaskDefinition[];
   repositories: Record<string, unknown>[];
   totalNodes: number;
   totalUnmapped: number;
   withUnmapped: { id: string; unmapped: number }[];
+  multihopComputed: number;
+  multihopEmpty: number;
+  patches: PatchSidecar[];
+  fellBackToFileLevel: number;
 }
 
-function build(instances: SwePolyBenchInstance[]): BuildResult {
+interface BuildContext {
+  /**
+   * Lock del run + ruta a `indexes/`. Si esta presente, se intenta derivar
+   * el multihop por tarea consultando el `tensor.sqlite` correspondiente.
+   */
+  lockByRepoId: Map<string, { repoPath: string; indexesDir: string }>;
+}
+
+function resolveDbPathForLock(repoPath: string, indexesDir: string, repoId: string): string {
+  // Prioriza el path basado en el lock (lo que escribio eval:index) sobre
+  // un fallback a <repoPath>/.lacoco/tensor.sqlite, replicando el patron
+  // de run-retrieval.ts.
+  const lockBased = join(indexesDir, repoId, "tensor.sqlite");
+  if (existsSync(lockBased)) return lockBased;
+  return join(repoPath, ".lacoco", "tensor.sqlite");
+}
+
+function build(instances: SwePolyBenchInstance[], ctx: BuildContext): BuildResult {
   const tasks: TaskDefinition[] = [];
   const repositories: Record<string, unknown>[] = [];
   let totalNodes = 0;
   let totalUnmapped = 0;
   const withUnmapped: { id: string; unmapped: number }[] = [];
+  let multihopComputed = 0;
+  let multihopEmpty = 0;
+  const patches: PatchSidecar[] = [];
+  let fellBackToFileLevel = 0;
 
   for (const inst of instances) {
     const id = shortId(inst.instance_id);
     const translation = translateModifiedNodes(inst.modified_nodes, inst.changed_files ?? null);
+
+    // Patch-evidence gold (Tier 1): edit-site (archivos + símbolos) + tests, sin
+    // necesitar el repo checked-out. Tier 2 (introduced_refs/resolved_definitions)
+    // se rellena en un paso posterior que sí tiene el árbol post-patch.
+    const patchEvidence = extractPatchEvidenceTier1({
+      patch: inst.patch ?? "",
+      testPatch: inst.test_patch ?? null,
+      modifiedNodes: inst.modified_nodes,
+      changedFiles: inst.changed_files ?? null,
+      f2p: inst.F2P,
+    });
+    if (patchEvidence.resolution.fell_back_to_file_level) fellBackToFileLevel += 1;
+    if (inst.patch != null && inst.patch !== "") {
+      patches.push({ id, patch: inst.patch, testPatch: inst.test_patch ?? null });
+    }
     totalNodes += translation.nodeIds.length;
     totalUnmapped += translation.unmapped.length;
     if (translation.unmapped.length > 0) {
@@ -145,7 +241,46 @@ function build(instances: SwePolyBenchInstance[]): BuildResult {
     }
 
     const query = inst.problem_statement.trim();
-    const firstLine = query.split("\n")[0]!.trim();
+    const cleanedQuery = cleanIssueText(query);
+
+    // Multihop automatico: solo si hay anchor, lock para esta tarea, y el
+    // grafo correspondiente existe en disco. Cualquier fallo degrada a
+    // multihop vacio con multihop_status="auto" (la tarea queda valida
+    // para M3-M5 y excluida de M6).
+    let multihopNodes: string[] = [];
+    let multihopStatus: "auto" | "manual" = "manual";
+    let multihopNotes = "";
+    const lockEntry = ctx.lockByRepoId.get(id);
+    if (lockEntry !== undefined) {
+      const dbPath = resolveDbPathForLock(lockEntry.repoPath, lockEntry.indexesDir, id);
+      if (existsSync(dbPath) && translation.nodeIds.length > 0 && translation.nodeIds[0] !== undefined) {
+        try {
+          const result = extractMultihopFromGraph({
+            dbPath,
+            primaryAnchor: translation.nodeIds[0],
+            repoPath: lockEntry.repoPath,
+            edgeKinds: ["CALLS", "REFERENCES", "DECLARES"],
+            depthMin: 2,
+            depthMax: 3,
+            topK: 5,
+            excludeNodes: translation.nodeIds,
+          });
+          multihopNodes = result.multihopNodes;
+          multihopStatus = "auto";
+          multihopComputed += 1;
+          if (multihopNodes.length === 0) multihopEmpty += 1;
+          multihopNotes = ` Multihop auto: ${multihopNodes.length} nodo(s) via BFS-2 (CALLS+REFERENCES+DECLARES, depth 2-3, top-5 por degree centrality).`;
+        } catch (error) {
+          // Si el multihop falla (db corrupto, nodos faltantes, etc.) seguimos
+          // con multihop vacio + status auto: la tarea sigue siendo valida,
+          // solo se excluye de M6.
+          multihopNotes = ` Multihop auto no disponible: ${error instanceof Error ? error.message : String(error)}.`;
+        }
+      } else if (translation.nodeIds[0] !== undefined) {
+        multihopStatus = "auto";
+        multihopNotes = " Multihop auto: db no encontrado, multihop vacio (tarea excluida de M6).";
+      }
+    }
 
     tasks.push({
       id,
@@ -157,7 +292,7 @@ function build(instances: SwePolyBenchInstance[]): BuildResult {
       deterministic_input: {
         retrieval_input: { query },
         oracle_input: null,
-        embedding_input: firstLine === "" ? query : firstLine,
+        embedding_input: cleanedQuery === "" ? query : cleanedQuery,
         intent: "debug",
         dimensions: ["CPG", "DTG"],
       },
@@ -165,26 +300,33 @@ function build(instances: SwePolyBenchInstance[]): BuildResult {
       target_tests: f2pTitles(inst.F2P),
       gold: {
         status: "ready",
+        patch_evidence: patchEvidence,
         primary_anchor: translation.nodeIds[0] ?? null,
         relevant_nodes: translation.nodeIds,
-        multihop_nodes: [],
+        multihop_nodes: multihopNodes,
+        multihop_status: multihopStatus,
         annotation_notes:
-          `Gold derivado de SWE-PolyBench (instance ${inst.instance_id}), traducido por ` +
-          `swe-polybench-nodes.ts. ${translation.nodeIds.length} nodo(s), ` +
-          `${translation.unmapped.length} sin mapear.`,
+          `Gold derivado de SWE-PolyBench (instance ${inst.instance_id}). Patch-evidence ` +
+          `(fuente principal): ${patchEvidence.edited_files.length} archivo(s), ` +
+          `${patchEvidence.edited_symbols.length} símbolo(s), ` +
+          `${patchEvidence.touched_tests.length} test(s)` +
+          (patchEvidence.resolution.fell_back_to_file_level ? " [fallback file-level]" : "") +
+          `. Campos legacy (relevant_nodes/multihop) = diagnóstico de grafo.` +
+          multihopNotes,
       },
       translation_gold: {
         status: "pending_manual_annotation",
         relevant_terms: [],
         annotation_notes: "No aplica al smoke de retrieval SWE-PolyBench.",
       },
-      // Metadata extra tolerada por `[key: string]: unknown` (trazabilidad/reporte).
       tags: ["swe-polybench", "svelte"],
       swe_polybench: {
         instance_id: inst.instance_id,
         base_commit: inst.base_commit,
         pull_number: inst.pull_number ?? null,
         unmapped_count: translation.unmapped.length,
+        patch_ref: inst.patch != null && inst.patch !== "" ? `patches/${id}.patch` : null,
+        test_patch_ref: inst.test_patch != null && inst.test_patch !== "" ? `patches/${id}.test.patch` : null,
       },
     });
 
@@ -202,7 +344,30 @@ function build(instances: SwePolyBenchInstance[]): BuildResult {
     });
   }
 
-  return { tasks, repositories, totalNodes, totalUnmapped, withUnmapped };
+  return {
+    tasks,
+    repositories,
+    totalNodes,
+    totalUnmapped,
+    withUnmapped,
+    multihopComputed,
+    multihopEmpty,
+    patches,
+    fellBackToFileLevel,
+  };
+}
+
+/** Escribe los sidecars de patch (fix + tests) bajo `<outDir>/patches/`. */
+function writePatchSidecars(outDir: string, patches: PatchSidecar[]): void {
+  if (patches.length === 0) return;
+  const patchesDir = join(outDir, "patches");
+  mkdirSync(patchesDir, { recursive: true });
+  for (const { id, patch, testPatch } of patches) {
+    writeFileSync(join(patchesDir, `${id}.patch`), patch, "utf8");
+    if (testPatch !== null && testPatch !== "") {
+      writeFileSync(join(patchesDir, `${id}.test.patch`), testPatch, "utf8");
+    }
+  }
 }
 
 /** Escribe `repos.yaml` reusando header+`defaults` del canónico (preserva comentarios). */
@@ -246,17 +411,45 @@ function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const instances = loadEasyInstances(options.repo, options.limit);
+  const instances = loadEasyInstances(options.repo, options.limit, options.includeMixed === true);
   if (instances.length === 0) {
-    throw new Error(`no instances matched repo=${options.repo} (is_func_only + num_nodes==1)`);
+    throw new Error(
+      `no instances matched repo=${options.repo} (is_func_only + num_nodes=1`
+        + (options.includeMixed ? " + is_mixed <=4" : "")
+        + ")",
+    );
   }
 
-  const { tasks, repositories, totalNodes, totalUnmapped, withUnmapped } = build(instances);
+  // Si se dio --run-id + --enable-multihop, leemos el lock y resolvemos
+  // dbPath por tarea. Si no, el multihop queda vacio con multihop_status
+  // "manual" (status por default en el validador, retro-compat).
+  let ctx: BuildContext = { lockByRepoId: new Map() };
+  if (options.enableMultihop) {
+    if (options.runId === undefined) {
+      throw new Error("--enable-multihop requires --run-id (to resolve the indexed graph for each task)");
+    }
+    const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
+    const layout = resolveEvalLayout(manifests.run, options.runId);
+    if (!existsSync(layout.lockFile)) {
+      throw new Error(`lock not found at ${layout.lockFile}; run eval:prepare + eval:index for ${options.runId} first`);
+    }
+    const lock = readRepositoriesLock(layout.lockFile);
+    const indexesDir = layout.indexesDirectory;
+    for (const repo of lock.repositories) {
+      ctx.lockByRepoId.set(repo.id, { repoPath: repo.repoPath, indexesDir });
+    }
+    if (ctx.lockByRepoId.size === 0) {
+      throw new Error(`lock at ${layout.lockFile} has no repositories; run eval:prepare first`);
+    }
+  }
+
+  const { tasks, repositories, totalNodes, totalUnmapped, withUnmapped, multihopComputed, multihopEmpty, patches, fellBackToFileLevel } = build(instances, ctx);
 
   mkdirSync(options.outDir, { recursive: true });
   writeTasksManifest(options.outDir, tasks);
   writeReposManifest(options.outDir, repositories);
   writeRunManifest(options.outDir);
+  writePatchSidecars(options.outDir, patches);
   for (const name of SHARED_MANIFESTS) {
     copyFileSync(join(MANIFESTS_DIR, name), join(options.outDir, name));
   }
@@ -265,12 +458,18 @@ async function main(): Promise<void> {
   console.log(`Manifests escritos en: ${options.outDir}`);
   console.log(`  tasks.yaml (${tasks.length}), repos.yaml (${repositories.length}), run.yaml (+split swe-polybench)`);
   console.log(`  copiados verbatim: ${SHARED_MANIFESTS.join(", ")}`);
-  console.log(`relevant_nodes totales: ${totalNodes} · sin mapear: ${totalUnmapped}`);
+  console.log(`patch-evidence: ${patches.length} sidecar(s) en patches/ · ${fellBackToFileLevel} tarea(s) file-level (patch sin nodo mapeable)`);
+  console.log(`relevant_nodes (diagnóstico) totales: ${totalNodes} · sin mapear: ${totalUnmapped}`);
   if (withUnmapped.length > 0) {
     console.log("Instancias con nodos sin mapear:");
     for (const { id, unmapped } of withUnmapped) console.log(`  ${id}: ${unmapped}`);
   } else {
     console.log("Sin nodos sin mapear (traductor sano).");
+  }
+  if (options.enableMultihop) {
+    console.log(`Multihop auto: ${multihopComputed} computado(s), ${multihopEmpty} con multihop vacio (excluidos de M6).`);
+  } else {
+    console.log("Multihop auto no solicitado (pasa --enable-multihop --run-id <id> para derivar BFS-2 desde el grafo).");
   }
 }
 

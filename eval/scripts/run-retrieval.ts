@@ -37,6 +37,7 @@ import {
   type RankedNode,
   type RetrievalError,
 } from "./lib/retrieval-record.js";
+import { defaultSlmCachePath, isSlmCacheEnabled, SlmCache } from "./lib/slm-cache.js";
 import type { StrategyDefinition, TaskDefinition } from "./lib/types.js";
 
 interface RetrievalSettings {
@@ -269,7 +270,32 @@ async function freezeSlmQuery(
   task: TaskDefinition,
   variant: SanitizerVariant,
   repoPath: string,
+  cache: SlmCache | null = null,
 ): Promise<{ selection: QuerySelection; sanitizer: SanitizerOutput; grounding: QueryGrounding | null }> {
+  // Cache hit short-circuit: si ya tenemos la salida del SLM congelada para
+  // (prompt, variant, model, schemaVersion) en un run anterior, la devolvemos
+  // tal cual. Esto evita la llamada a Ollama (~5s con 1.5B/7B, ~3-4s con 4B)
+  // cuando se re-corre el mismo run con `--strategy-id` o `--task-id` filtrado.
+  // El grounder también queda cacheado, así que `grounded` no re-ejecuta el
+  // escaneo FTS5+INSTR de `QueryGrounder.ground`.
+  if (cache !== null) {
+    const cached = cache.get(task.prompt, variant);
+    if (cached !== null) {
+      return {
+        selection: {
+          query: task.prompt,
+          query_source: "task.prompt",
+          sanitizer_source: "agent_intermediary",
+          sanitizerVariant: recordedSlmVariant(variant),
+          encodedSanitizer: encodeSanitizer(cached.sanitizer),
+          sanitizerDurationMs: cached.duration_ms,
+        },
+        sanitizer: cached.sanitizer,
+        grounding: cached.grounding,
+      };
+    }
+  }
+
   // El intermediario que congela el sanitizer honra `intermediary.model` (vacío =
   // hereda agent.model), igual que la pipeline real (src/cli/pipeline.ts). Esto
   // importa para el brazo `grounded`: `sanitizeDetailed` inyecta los candidatos del
@@ -300,6 +326,9 @@ async function freezeSlmQuery(
     const sanitizerDurationMs = Math.round(performance.now() - startedAt);
     if (sanitizer.route !== "RAG") {
       throw new Error(`task ${task.id}: el sanitizer congelado produjo route=${sanitizer.route}; retrieval requiere RAG`);
+    }
+    if (cache !== null) {
+      cache.set(task.prompt, variant, { sanitizer, grounding, duration_ms: sanitizerDurationMs });
     }
     return {
       selection: {
@@ -671,6 +700,12 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
 
   const failures: string[] = [];
   let stop = false;
+  const slmCache = isSlmCacheEnabled()
+    ? new SlmCache(defaultSlmCachePath(layout.workdir), resolveIntermediaryModel())
+    : null;
+  if (slmCache !== null) {
+    console.log(`SLM cache: ${slmCache.getPath()} (${slmCache.size()} entradas previas)`);
+  }
   for (const task of tasks) {
     const locked = lockedById.get(task.repo_id);
     if (locked === undefined) {
@@ -688,7 +723,7 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
           if (options.dryRun) {
             querySelection = dryRunSlmSelection(task, sanitizerVariant);
           } else {
-            const frozen = await freezeSlmQuery(task, sanitizerVariant, locked.repoPath);
+            const frozen = await freezeSlmQuery(task, sanitizerVariant, locked.repoPath, slmCache);
             querySelection = frozen.selection;
             sanitizerArtifactPath = writeFrozenSanitizerArtifact(
               layout.artifactsDirectory,

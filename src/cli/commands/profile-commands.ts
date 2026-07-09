@@ -53,9 +53,16 @@ async function rebuildProfile(project: string | undefined, options: RebuildOptio
   const db = new LaCoCoDatabase(resolveDbPath(projectPath));
   const endpoint = options.ollama ?? resolveStringConfig("agent.endpoint");
   const model = resolveStringConfig("agent.model");
-  const ollama = new OllamaService(endpoint, model, resolveNumberConfig("timeout.ms"));
+  const concurrency = resolveNumberConfig("profile.enrichConcurrency");
+  // Bajo contención (K>1) una llamada puede tardar más que el default de 30s;
+  // ponemos piso a 120s para no abortar por timeout. El default se mantiene para
+  // el resto de chats interactivos (no tocamos timeout.ms global).
+  const timeoutMs = concurrency > 1
+    ? Math.max(resolveNumberConfig("timeout.ms"), 120_000)
+    : resolveNumberConfig("timeout.ms");
+  const ollama = new OllamaService(endpoint, model, timeoutMs);
   try {
-    const result = await new SemanticProfileBuilder(db.getRawDb(), projectPath, ollama, model).rebuild();
+    const result = await new SemanticProfileBuilder(db.getRawDb(), projectPath, ollama, model, concurrency).rebuild();
     if (options.json) {
       process.stdout.write(`${JSON.stringify({ schemaVersion: 1, ok: true, ...result }, null, 2)}\n`);
     } else {

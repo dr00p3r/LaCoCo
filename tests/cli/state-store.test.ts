@@ -122,7 +122,7 @@ describe("config-store", () => {
     process.chdir(projectDir);
 
     expect(resolveConfig("agent.model")).toMatchObject({
-      value: "qwen2.5-coder:1.5b",
+      value: "qwen3:4b-instruct",
       source: "default",
     });
     setConfig("agent.model", "local-model", "local");

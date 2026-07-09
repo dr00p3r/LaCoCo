@@ -47,7 +47,21 @@ const CLASSIFICATION_OPTIONS: ChatOptions = {
   // (p. ej. gemma4, configurable vía intermediary.model) lo consumiría entero en
   // su bloque de pensamiento y devolvería `content` vacío → clasificación fallida.
   think: false,
+  // El clasificador encadena varias llamadas en un retrieve y los benchmarks
+  // invocan N veces seguidas. Sin `keep_alive` Ollama descarga el modelo tras
+  // ~5 min y la siguiente llamada paga la recarga (3-10 s para 4B, 8-15 s para
+  // 7B). "5m" cubre los huecos sin fijarlo para siempre. Solo controla
+  // residencia, no el sampling → no altera la salida ni la línea base del A/B.
+  // El enricher de perfil usa el mismo valor (`semantic-term-enricher.ts:77`).
+  keep_alive: "5m",
 };
+
+// Version del contrato del clasificador. Bumpear este numero invalida los caches
+// que dependen de el (`SlmCache` en el eval runner) cuando cambia `SYSTEM_PROMPT`,
+// `CLASSIFICATION_SCHEMA` o `CLASSIFICATION_OPTIONS`. No confundir con la version
+// de `CLASSIFICATION_SCHEMA` interno: este es el contrato observable por los
+// caches y el benchmark.
+export const CLASSIFIER_SCHEMA_VERSION = 1;
 const SYSTEM_PROMPT = `Eres el agente intermediario de LaCoCo, un sistema RAG local para repositorios TypeScript/Node.js.
 
 Debes transformar por completo el prompt del usuario. No existe preprocesamiento heurístico posterior: el código solo valida estructura, sintaxis y procedencia, y puede pedirte una reparación sin corregir semánticamente tu salida. El resultado válido será utilizado para búsqueda FTS5, embeddings y selección dimensional.

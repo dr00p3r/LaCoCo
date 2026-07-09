@@ -12,6 +12,9 @@ export class SemanticProfileBuilder {
     private readonly projectRoot: string,
     private readonly llm: LlmClient,
     private readonly model: string,
+    // Lotes de enriquecimiento en vuelo simultáneos. Default 1 = secuencial
+    // (deja el path del daemon, con refrescos incrementales chicos, sin cambios).
+    private readonly enrichConcurrency: number = 1,
   ) {}
 
   async rebuild(): Promise<SemanticProfileBuildResult> {
@@ -22,7 +25,7 @@ export class SemanticProfileBuilder {
     const pending = terms.filter((term) => !reusable.has(term.sourceHash));
     const buildId = store.beginBuild(this.model, SEMANTIC_ENRICHMENT_PROMPT_VERSION, evidenceRevision);
     try {
-      const newlyEnriched = await new SemanticTermEnricher(this.llm).enrich(pending);
+      const newlyEnriched = await new SemanticTermEnricher(this.llm, this.enrichConcurrency).enrich(pending);
       const newByHash = new Map(newlyEnriched.map((term) => [term.sourceHash, term]));
       const enriched = terms.map((term): EnrichedTerm => {
         const cached = reusable.get(term.sourceHash);

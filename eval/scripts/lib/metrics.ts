@@ -1,6 +1,28 @@
 import { asNumber, asRecord, asString } from "./config.js";
 
-export type MetricId = "M3" | "M4" | "M5" | "M6" | "M7";
+/**
+ * Métricas de recuperación contra el **patch-evidence gold** (ver
+ * `lib/patch-evidence-gold.ts`). Reemplazan a Precision@5/Recall@5, que se
+ * eliminaron: el retrieval ya no se mide como fin en sí mismo sino como
+ * explicación de la calidad de contexto que llega al agente.
+ *
+ *  - EditSiteHit           : ¿aparece el edit-site (archivo o símbolo) en top-K?
+ *  - PatchEvidenceHit      : ¿aparece CUALQUIER evidencia del patch en top-K?
+ *  - MRR                   : rank recíproco del primer elemento de evidencia.
+ *  - EditSiteMRR           : rank recíproco del primer elemento estrictamente edit-site.
+ *  - UsefulContextCoverage : cobertura del conjunto completo de evidencia.
+ *  - ExternalNoiseRate     : proporción de nodos externos/genéricos (`lib#…`) en top-K.
+ *  - Latency               : P95 de la latencia total (eficiencia).
+ */
+export type MetricId =
+  | "EditSiteHit"
+  | "PatchEvidenceHit"
+  | "MRR"
+  | "EditSiteMRR"
+  | "UsefulContextCoverage"
+  | "ExternalNoiseRate"
+  | "Latency";
+
 export type MetricStatus =
   | "computed"
   | "excluded_from_gold_metrics"
@@ -8,6 +30,8 @@ export type MetricStatus =
   | "not_applicable"
   | "failed_execution"
   | "missing_timing";
+
+export type EvidenceStratum = "edit_site" | "test" | "ref" | "definition";
 
 export interface RankedNodeInput {
   rank: number;
@@ -25,10 +49,22 @@ export interface RetrievalInputRecord {
   exitCode: number | null;
 }
 
+/**
+ * Gold de patch-evidence resuelto a rutas ABSOLUTAS (los node-ids del retrieval
+ * son absolutos). El caller (`compute-retrieval-metrics.ts`) resuelve el gold
+ * repo-relativo del manifest contra el repoPath del lock antes de pasarlo aquí.
+ *
+ * Un símbolo es `absPath#symbol`; un archivo es `absPath`. `editSiteSymbols`
+ * puede estar vacío (patch sin nodo mapeable) → el edit-site se compara a nivel
+ * archivo.
+ */
 export interface GoldInput {
   status: string;
-  relevantNodes: string[];
-  multihopNodes: string[];
+  editSiteFiles: string[];
+  editSiteSymbols: string[];
+  testFiles: string[];
+  refNodes: string[];
+  definitionNodes: string[];
 }
 
 export interface MetricResult {
@@ -38,6 +74,20 @@ export interface MetricResult {
   denominator?: number;
 }
 
+/** Detalle por-celda no agregado: barrido de K, cobertura por estrato, ranks. */
+export interface ExecutionDetails {
+  sweep: Array<{
+    k: number;
+    edit_site_hit: number;
+    patch_evidence_hit: number;
+    useful_context_coverage: number;
+    external_noise_rate: number;
+  }>;
+  coverage_by_stratum: Record<EvidenceStratum, { hit: number; total: number }>;
+  first_edit_site_rank: number | null;
+  first_evidence_rank: number | null;
+}
+
 export interface ExecutionMetricResult {
   run_id: string;
   task_id: string;
@@ -45,6 +95,7 @@ export interface ExecutionMetricResult {
   strategy_id: string;
   exit_code: number | null;
   metrics: Record<MetricId, MetricResult>;
+  details?: ExecutionDetails;
 }
 
 export interface TaskMetricResult {
@@ -66,6 +117,9 @@ export interface AggregatedMetric {
 
 export interface SummaryMetric {
   value: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  ci_iterations: number;
   included_task_values: number;
   included_repo_values: number;
   excluded_task_values: number;
@@ -76,7 +130,20 @@ export interface ScopeSummary {
   metrics: Record<MetricId, SummaryMetric>;
 }
 
-const METRIC_IDS: MetricId[] = ["M3", "M4", "M5", "M6", "M7"];
+export const METRIC_IDS: MetricId[] = [
+  "EditSiteHit",
+  "PatchEvidenceHit",
+  "MRR",
+  "EditSiteMRR",
+  "UsefulContextCoverage",
+  "ExternalNoiseRate",
+  "Latency",
+];
+
+/** K por defecto para el resumen (aproxima el contexto realmente inyectado). */
+export const DEFAULT_PRIMARY_CUTOFF = 10;
+/** Barrido de K por defecto (curva cobertura vs. tamaño de contexto). */
+export const DEFAULT_SWEEP_CUTOFFS = [1, 3, 5, 10, 20];
 
 function nullableNumber(value: unknown, path: string): number | null {
   if (value === null || value === undefined) return null;
@@ -123,127 +190,284 @@ function unavailable(status: MetricStatus): MetricResult {
   return { status, value: null };
 }
 
-function intersectionCount(nodes: RankedNodeInput[], relevant: Set<string>, cutoff: number): number {
-  const retrieved = new Set(
-    nodes.filter(({ rank }) => rank >= 1 && rank <= cutoff).map(({ nodeId }) => nodeId),
-  );
-  let count = 0;
-  for (const nodeId of relevant) {
-    if (retrieved.has(nodeId)) count += 1;
+// --- Utilidades de node-id ---------------------------------------------------
+
+/** Parte de ruta de un node-id (`path#symbol` → `path`; sin `#` → todo). */
+export function fileOfNodeId(nodeId: string): string {
+  const hash = nodeId.indexOf("#");
+  return hash === -1 ? nodeId : nodeId.slice(0, hash);
+}
+
+/**
+ * ¿El node-id es externo/genérico (no un archivo del repo)? Heurística acotada:
+ * el prefijo `lib#` (símbolos de librería que emite el retriever) o una ruta
+ * dentro de `node_modules`. NO es "todo lo que no es gold": el gold automático
+ * nunca captura el 100% del contexto legítimo, así que `1 − coverage ≠ ruido`.
+ */
+export function isExternalNodeId(nodeId: string): boolean {
+  if (nodeId.startsWith("lib#")) return true;
+  const file = fileOfNodeId(nodeId);
+  return file.includes("/node_modules/");
+}
+
+interface TopKSets {
+  nodeIds: Set<string>;
+  files: Set<string>;
+}
+
+function topKSets(nodes: RankedNodeInput[], cutoff: number, internalOnly = false): TopKSets {
+  const nodeIds = new Set<string>();
+  const files = new Set<string>();
+  for (const { rank, nodeId } of nodes) {
+    if (rank < 1 || rank > cutoff) continue;
+    if (internalOnly && isExternalNodeId(nodeId)) continue;
+    nodeIds.add(nodeId);
+    files.add(fileOfNodeId(nodeId));
   }
-  return count;
+  return { nodeIds, files };
 }
 
-export function precisionAtK(
+// --- Ítems de cobertura (estratificados) -------------------------------------
+
+export interface EvidenceItem {
+  stratum: EvidenceStratum;
+  kind: "file" | "node";
+  value: string;
+}
+
+/**
+ * Construye el conjunto de ítems de evidencia para UsefulContextCoverage,
+ * evitando doble conteo: cada archivo editado aporta sus símbolos (si mapearon)
+ * o, si no, el archivo mismo (fallback file-level).
+ */
+export function buildCoverageItems(gold: GoldInput): EvidenceItem[] {
+  const items: EvidenceItem[] = [];
+  const filesWithSymbol = new Set(gold.editSiteSymbols.map(fileOfNodeId));
+  for (const sym of gold.editSiteSymbols) items.push({ stratum: "edit_site", kind: "node", value: sym });
+  for (const file of gold.editSiteFiles) {
+    if (!filesWithSymbol.has(file)) items.push({ stratum: "edit_site", kind: "file", value: file });
+  }
+  for (const test of gold.testFiles) items.push({ stratum: "test", kind: "file", value: test });
+  for (const ref of gold.refNodes) items.push({ stratum: "ref", kind: "node", value: ref });
+  for (const def of gold.definitionNodes) items.push({ stratum: "definition", kind: "node", value: def });
+  const seen = new Map<string, EvidenceItem>();
+  for (const item of items) seen.set(`${item.stratum} ${item.kind} ${item.value}`, item);
+  return [...seen.values()];
+}
+
+function itemHit(item: EvidenceItem, sets: TopKSets): boolean {
+  return item.kind === "node" ? sets.nodeIds.has(item.value) : sets.files.has(item.value);
+}
+
+// --- Primitivas de métrica ---------------------------------------------------
+
+export function editSiteHitAtK(nodes: RankedNodeInput[], gold: GoldInput, cutoff: number): boolean {
+  const sets = topKSets(nodes, cutoff);
+  const symbols = new Set(gold.editSiteSymbols);
+  const files = new Set(gold.editSiteFiles);
+  for (const id of sets.nodeIds) if (symbols.has(id)) return true;
+  for (const file of sets.files) if (files.has(file)) return true;
+  return false;
+}
+
+export function patchEvidenceHitAtK(nodes: RankedNodeInput[], gold: GoldInput, cutoff: number): boolean {
+  // internalOnly: un nodo `lib#…` recuperado NUNCA cuenta como evidencia.
+  const sets = topKSets(nodes, cutoff, true);
+  const nodeGold = new Set([...gold.editSiteSymbols, ...gold.refNodes, ...gold.definitionNodes]);
+  const fileGold = new Set([...gold.editSiteFiles, ...gold.testFiles]);
+  for (const id of sets.nodeIds) if (nodeGold.has(id)) return true;
+  for (const file of sets.files) if (fileGold.has(file)) return true;
+  return false;
+}
+
+function firstMatchingRank(
   nodes: RankedNodeInput[],
-  relevantNodes: Iterable<string>,
-  cutoff: number,
-): number {
-  return intersectionCount(nodes, new Set(relevantNodes), cutoff) / cutoff;
+  nodeGold: Set<string>,
+  fileGold: Set<string>,
+): number | null {
+  let best: number | null = null;
+  for (const { rank, nodeId } of nodes) {
+    if (rank < 1) continue;
+    if (nodeGold.has(nodeId) || fileGold.has(fileOfNodeId(nodeId))) {
+      if (best === null || rank < best) best = rank;
+    }
+  }
+  return best;
 }
 
-export function recallAtK(
+/** MRR sobre toda la evidencia. Sin hit ⇒ 0 (la tarea se cuenta igual). */
+export function mrrEvidence(nodes: RankedNodeInput[], gold: GoldInput): { value: number; rank: number | null } {
+  const nodeGold = new Set([...gold.editSiteSymbols, ...gold.refNodes, ...gold.definitionNodes]);
+  const fileGold = new Set([...gold.editSiteFiles, ...gold.testFiles]);
+  const rank = firstMatchingRank(nodes.filter((n) => !isExternalNodeId(n.nodeId)), nodeGold, fileGold);
+  return { value: rank === null ? 0 : 1 / rank, rank };
+}
+
+/** MRR sobre el edit-site estricto (archivo o símbolo editado). */
+export function mrrEditSite(nodes: RankedNodeInput[], gold: GoldInput): { value: number; rank: number | null } {
+  const rank = firstMatchingRank(nodes, new Set(gold.editSiteSymbols), new Set(gold.editSiteFiles));
+  return { value: rank === null ? 0 : 1 / rank, rank };
+}
+
+export interface CoverageResult {
+  value: number;
+  numerator: number;
+  denominator: number;
+  byStratum: Record<EvidenceStratum, { hit: number; total: number }>;
+}
+
+export function usefulContextCoverageAtK(
   nodes: RankedNodeInput[],
-  relevantNodes: Iterable<string>,
+  items: EvidenceItem[],
   cutoff: number,
-): number {
-  const relevant = new Set(relevantNodes);
-  return relevant.size === 0 ? 0 : intersectionCount(nodes, relevant, cutoff) / relevant.size;
-}
-
-export function mrr(nodes: RankedNodeInput[], relevantNodes: Iterable<string>): number {
-  const relevant = new Set(relevantNodes);
-  const firstRank = nodes
-    .filter(({ nodeId, rank }) => rank >= 1 && relevant.has(nodeId))
-    .reduce<number | null>((best, { rank }) => best === null || rank < best ? rank : best, null);
-  return firstRank === null ? 0 : 1 / firstRank;
-}
-
-export function multiHopRecallAtK(
-  nodes: RankedNodeInput[],
-  multihopNodes: Iterable<string>,
-  cutoff: number,
-): MetricResult {
-  const multihop = new Set(multihopNodes);
-  if (multihop.size === 0) return unavailable("not_applicable");
-  const intersection = intersectionCount(nodes, multihop, cutoff);
-  return {
-    status: "computed",
-    value: intersection / multihop.size,
-    numerator: intersection,
-    denominator: multihop.size,
+): CoverageResult {
+  const sets = topKSets(nodes, cutoff);
+  const byStratum: Record<EvidenceStratum, { hit: number; total: number }> = {
+    edit_site: { hit: 0, total: 0 },
+    test: { hit: 0, total: 0 },
+    ref: { hit: 0, total: 0 },
+    definition: { hit: 0, total: 0 },
   };
+  let hits = 0;
+  for (const item of items) {
+    byStratum[item.stratum].total += 1;
+    if (itemHit(item, sets)) {
+      hits += 1;
+      byStratum[item.stratum].hit += 1;
+    }
+  }
+  const denominator = items.length;
+  return {
+    value: denominator === 0 ? 0 : hits / denominator,
+    numerator: hits,
+    denominator,
+    byStratum,
+  };
+}
+
+export function externalNoiseRateAtK(nodes: RankedNodeInput[], cutoff: number): MetricResult {
+  const inTopK = nodes.filter(({ rank }) => rank >= 1 && rank <= cutoff);
+  const denominator = inTopK.length;
+  if (denominator === 0) return { status: "computed", value: 0, numerator: 0, denominator: 0 };
+  const external = inTopK.filter(({ nodeId }) => isExternalNodeId(nodeId)).length;
+  return { status: "computed", value: external / denominator, numerator: external, denominator };
+}
+
+function hasEditSite(gold: GoldInput): boolean {
+  return gold.editSiteFiles.length > 0 || gold.editSiteSymbols.length > 0;
 }
 
 export function computeExecutionMetrics(
   record: RetrievalInputRecord,
   gold: GoldInput,
-  precisionCutoff = 5,
-  multihopCutoff = 20,
+  primaryCutoff = DEFAULT_PRIMARY_CUTOFF,
+  sweepCutoffs: number[] = DEFAULT_SWEEP_CUTOFFS,
 ): ExecutionMetricResult {
-  if (record.exitCode !== 0) {
-    const failed = unavailable("failed_execution");
-    return {
-      run_id: record.runId,
-      task_id: record.taskId,
-      repo_id: record.repoId,
-      strategy_id: record.strategyId,
-      exit_code: record.exitCode,
-      metrics: { M3: failed, M4: failed, M5: failed, M6: failed, M7: failed },
-    };
-  }
-
-  const latency = record.totalLatencyMs === null
-    ? unavailable("missing_timing")
-    : { status: "computed", value: record.totalLatencyMs } satisfies MetricResult;
-
-  if (gold.status !== "ready") {
-    const excluded = unavailable("excluded_from_gold_metrics");
-    return {
-      run_id: record.runId,
-      task_id: record.taskId,
-      repo_id: record.repoId,
-      strategy_id: record.strategyId,
-      exit_code: record.exitCode,
-      metrics: { M3: excluded, M4: excluded, M5: excluded, M6: excluded, M7: latency },
-    };
-  }
-
-  const relevant = new Set(gold.relevantNodes);
-  const multihop = new Set(gold.multihopNodes);
-  let m3: MetricResult;
-  let m4: MetricResult;
-  let m5: MetricResult;
-  if (relevant.size === 0) {
-    m3 = unavailable("invalid_gold");
-    m4 = unavailable("invalid_gold");
-    m5 = unavailable("invalid_gold");
-  } else {
-    const intersection = intersectionCount(record.rankedNodes, relevant, precisionCutoff);
-    m3 = {
-      status: "computed",
-      value: precisionAtK(record.rankedNodes, relevant, precisionCutoff),
-      numerator: intersection,
-      denominator: precisionCutoff,
-    };
-    m4 = {
-      status: "computed",
-      value: recallAtK(record.rankedNodes, relevant, precisionCutoff),
-      numerator: intersection,
-      denominator: relevant.size,
-    };
-    m5 = { status: "computed", value: mrr(record.rankedNodes, relevant) };
-  }
-
-  const m6 = multiHopRecallAtK(record.rankedNodes, multihop, multihopCutoff);
-
-  return {
+  const base = {
     run_id: record.runId,
     task_id: record.taskId,
     repo_id: record.repoId,
     strategy_id: record.strategyId,
     exit_code: record.exitCode,
-    metrics: { M3: m3, M4: m4, M5: m5, M6: m6, M7: latency },
+  };
+
+  if (record.exitCode !== 0) {
+    const failed = unavailable("failed_execution");
+    return {
+      ...base,
+      metrics: {
+        EditSiteHit: failed,
+        PatchEvidenceHit: failed,
+        MRR: failed,
+        EditSiteMRR: failed,
+        UsefulContextCoverage: failed,
+        ExternalNoiseRate: failed,
+        Latency: failed,
+      },
+    };
+  }
+
+  const latency: MetricResult = record.totalLatencyMs === null
+    ? unavailable("missing_timing")
+    : { status: "computed", value: record.totalLatencyMs };
+
+  if (gold.status !== "ready") {
+    const excluded = unavailable("excluded_from_gold_metrics");
+    return {
+      ...base,
+      metrics: {
+        EditSiteHit: excluded,
+        PatchEvidenceHit: excluded,
+        MRR: excluded,
+        EditSiteMRR: excluded,
+        UsefulContextCoverage: excluded,
+        ExternalNoiseRate: latency.status === "computed" ? externalNoiseRateAtK(record.rankedNodes, primaryCutoff) : excluded,
+        Latency: latency,
+      },
+    };
+  }
+
+  if (!hasEditSite(gold)) {
+    const invalid = unavailable("invalid_gold");
+    return {
+      ...base,
+      metrics: {
+        EditSiteHit: invalid,
+        PatchEvidenceHit: invalid,
+        MRR: invalid,
+        EditSiteMRR: invalid,
+        UsefulContextCoverage: invalid,
+        ExternalNoiseRate: externalNoiseRateAtK(record.rankedNodes, primaryCutoff),
+        Latency: latency,
+      },
+    };
+  }
+
+  const items = buildCoverageItems(gold);
+  const evidence = mrrEvidence(record.rankedNodes, gold);
+  const editSite = mrrEditSite(record.rankedNodes, gold);
+  const coverage = usefulContextCoverageAtK(record.rankedNodes, items, primaryCutoff);
+  const noise = externalNoiseRateAtK(record.rankedNodes, primaryCutoff);
+
+  const sweep = sweepCutoffs.map((k) => {
+    const cov = usefulContextCoverageAtK(record.rankedNodes, items, k);
+    return {
+      k,
+      edit_site_hit: editSiteHitAtK(record.rankedNodes, gold, k) ? 1 : 0,
+      patch_evidence_hit: patchEvidenceHitAtK(record.rankedNodes, gold, k) ? 1 : 0,
+      useful_context_coverage: cov.value,
+      external_noise_rate: externalNoiseRateAtK(record.rankedNodes, k).value ?? 0,
+    };
+  });
+
+  return {
+    ...base,
+    metrics: {
+      EditSiteHit: {
+        status: "computed",
+        value: editSiteHitAtK(record.rankedNodes, gold, primaryCutoff) ? 1 : 0,
+      },
+      PatchEvidenceHit: {
+        status: "computed",
+        value: patchEvidenceHitAtK(record.rankedNodes, gold, primaryCutoff) ? 1 : 0,
+      },
+      MRR: { status: "computed", value: evidence.value },
+      EditSiteMRR: { status: "computed", value: editSite.value },
+      UsefulContextCoverage: {
+        status: "computed",
+        value: coverage.value,
+        numerator: coverage.numerator,
+        denominator: coverage.denominator,
+      },
+      ExternalNoiseRate: noise,
+      Latency: latency,
+    },
+    details: {
+      sweep,
+      coverage_by_stratum: coverage.byStratum,
+      first_edit_site_rank: editSite.rank,
+      first_evidence_rank: evidence.rank,
+    },
   };
 }
 
@@ -259,6 +483,117 @@ export function percentile(values: number[], percentileValue: number): number | 
   const lower = sorted[lowerIndex]!;
   const upper = sorted[upperIndex]!;
   return lower + (upper - lower) * (position - lowerIndex);
+}
+
+/**
+ * Mulberry32 PRNG: 32-bit seedable, deterministic, fast.
+ * Used to make bootstrap CIs reproducible across runs.
+ */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function sampleWithReplacement<T>(values: readonly T[], rng: () => number): T[] {
+  const size = values.length;
+  const out: T[] = new Array(size);
+  for (let index = 0; index < size; index += 1) {
+    out[index] = values[Math.floor(rng() * size)]!;
+  }
+  return out;
+}
+
+export interface BootstrapOptions {
+  iterations?: number;
+  alpha?: number;
+  seed?: number;
+}
+
+export interface BootstrapResult {
+  ci_low: number | null;
+  ci_high: number | null;
+  iterations: number;
+}
+
+/**
+ * Bootstrap CI for a continuous estimator (mean of a sample). Resamples
+ * `values` with replacement `iterations` times and returns the
+ * [alpha/2, 1 - alpha/2] percentile interval of the per-iteration mean.
+ * Returns nulls when fewer than 2 distinct values exist (degenerate
+ * distribution; CI collapses to a point).
+ */
+export function bootstrapMean(
+  values: readonly number[],
+  options: BootstrapOptions = {},
+): BootstrapResult {
+  const iterations = options.iterations ?? 1000;
+  const alpha = options.alpha ?? 0.05;
+  const seed = options.seed ?? 42;
+  if (values.length < 2) {
+    return { ci_low: null, ci_high: null, iterations };
+  }
+  const distinct = new Set(values);
+  if (distinct.size < 2) {
+    return { ci_low: null, ci_high: null, iterations };
+  }
+  const rng = mulberry32(seed);
+  const means = new Array<number>(iterations);
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const resample = sampleWithReplacement(values, rng);
+    let total = 0;
+    for (const value of resample) total += value;
+    means[iteration] = total / resample.length;
+  }
+  return {
+    ci_low: percentile(means, (alpha / 2) * 100),
+    ci_high: percentile(means, (1 - alpha / 2) * 100),
+    iterations,
+  };
+}
+
+/**
+ * Bootstrap CI for a binomial proportion (e.g. pass rate over n trials).
+ * Treats `successes / n` as a Bernoulli sample and resamples the binary
+ * outcomes `iterations` times. Returns nulls when n < 2 or when the
+ * sample is degenerate (all pass or all fail).
+ */
+export function bootstrapRate(
+  successes: number,
+  total: number,
+  options: BootstrapOptions = {},
+): BootstrapResult {
+  const iterations = options.iterations ?? 1000;
+  const alpha = options.alpha ?? 0.05;
+  const seed = options.seed ?? 42;
+  if (total < 2 || successes < 0 || successes > total) {
+    return { ci_low: null, ci_high: null, iterations };
+  }
+  if (successes === 0 || successes === total) {
+    return { ci_low: null, ci_high: null, iterations };
+  }
+  const outcomes: number[] = new Array<number>(total);
+  for (let index = 0; index < total; index += 1) {
+    outcomes[index] = index < successes ? 1 : 0;
+  }
+  const rng = mulberry32(seed);
+  const rates = new Array<number>(iterations);
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const resample = sampleWithReplacement(outcomes, rng);
+    let count = 0;
+    for (const outcome of resample) count += outcome;
+    rates[iteration] = count / resample.length;
+  }
+  return {
+    ci_low: percentile(rates, (alpha / 2) * 100),
+    ci_high: percentile(rates, (1 - alpha / 2) * 100),
+    iterations,
+  };
 }
 
 function statusCounts(results: MetricResult[]): Partial<Record<MetricStatus, number>> {
@@ -286,7 +621,7 @@ function aggregateMetric(results: MetricResult[], metricId: MetricId): Aggregate
     .map(({ value }) => value);
   return {
     status: values.length > 0 ? "computed" : fallbackStatus(results),
-    value: metricId === "M7" ? percentile(values, 95) : mean(values),
+    value: metricId === "Latency" ? percentile(values, 95) : mean(values),
     included: values.length,
     excluded: results.length - values.length,
     status_counts: statusCounts(results),
@@ -296,7 +631,7 @@ function aggregateMetric(results: MetricResult[], metricId: MetricId): Aggregate
 export function groupByTask(executions: ExecutionMetricResult[]): TaskMetricResult[] {
   const groups = new Map<string, ExecutionMetricResult[]>();
   for (const execution of executions) {
-    const key = `${execution.task_id}\u0000${execution.repo_id}\u0000${execution.strategy_id}`;
+    const key = `${execution.task_id} ${execution.repo_id} ${execution.strategy_id}`;
     const current = groups.get(key) ?? [];
     current.push(execution);
     groups.set(key, current);
@@ -337,8 +672,16 @@ function summarizeMetric(groups: TaskMetricResult[], metricId: MetricId): Summar
   const macroRepoValues = [...repoValues.values()]
     .map((values) => mean(values))
     .filter((value): value is number => value !== null);
+  const aggregated = mean(macroRepoValues);
+  // Bootstrap sobre los valores task-level (no sobre los promedios de repo) preserva
+  // la variabilidad intra-repo y reporta la incertidumbre del estimador macro.
+  const flatTaskValues = computed.map((group) => group.metrics[metricId].value!);
+  const ci = bootstrapMean(flatTaskValues);
   return {
-    value: mean(macroRepoValues),
+    value: aggregated,
+    ci_low: ci.ci_low,
+    ci_high: ci.ci_high,
+    ci_iterations: ci.iterations,
     included_task_values: computed.length,
     included_repo_values: macroRepoValues.length,
     excluded_task_values: groups.length - computed.length,

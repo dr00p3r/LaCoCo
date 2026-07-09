@@ -6,7 +6,7 @@ import {
   isStrategyName,
   STRATEGY_REGISTRY,
 } from "../../../src/retriever/strategies/registry.js";
-import { getManifestPaths, MANIFESTS_DIR } from "./paths.js";
+import { getManifestPaths, MANIFESTS_DIR, resolveManifestsDir } from "./paths.js";
 import type {
   AgentDefinition,
   AgentsManifest,
@@ -100,6 +100,49 @@ function header(value: unknown, file: string, kind: string): UnknownRecord {
   }
   string(result.updated_at, file, "updated_at");
   return result;
+}
+
+const SYMBOL_KINDS = new Set(["function", "class", "interface", "type", "variable", "method"]);
+
+function symbolRefs(value: unknown, file: string, path: string): import("./types.js").SymbolRef[] {
+  return array(value, file, path).map((entry, index) => {
+    const item = record(entry, file, `${path}[${index}]`);
+    const kind = string(item.kind, file, `${path}[${index}].kind`);
+    if (!SYMBOL_KINDS.has(kind)) {
+      fail(file, `${path}[${index}].kind`, "one of function|class|interface|type|variable|method");
+    }
+    return {
+      file: string(item.file, file, `${path}[${index}].file`),
+      symbol: string(item.symbol, file, `${path}[${index}].symbol`),
+      kind: kind as import("./types.js").SymbolKind,
+    };
+  });
+}
+
+function parsePatchEvidence(
+  value: unknown,
+  file: string,
+  path: string,
+): import("./types.js").PatchEvidenceGold | undefined {
+  if (value === undefined || value === null) return undefined;
+  const item = record(value, file, path);
+  const resolution = record(item.resolution ?? {}, file, `${path}.resolution`);
+  return {
+    source: "patch",
+    edited_files: strings(item.edited_files, file, `${path}.edited_files`),
+    edited_symbols: symbolRefs(item.edited_symbols, file, `${path}.edited_symbols`),
+    touched_tests: strings(item.touched_tests, file, `${path}.touched_tests`),
+    introduced_refs: symbolRefs(item.introduced_refs ?? [], file, `${path}.introduced_refs`),
+    resolved_definitions: symbolRefs(item.resolved_definitions ?? [], file, `${path}.resolved_definitions`),
+    resolution: {
+      fell_back_to_file_level: boolean(
+        resolution.fell_back_to_file_level ?? false,
+        file,
+        `${path}.resolution.fell_back_to_file_level`,
+      ),
+      unresolved_refs: strings(resolution.unresolved_refs ?? [], file, `${path}.resolution.unresolved_refs`),
+    },
+  };
 }
 
 function assertUniqueIds(items: Array<{ id: string }>, file: string, path: string): void {
@@ -212,11 +255,23 @@ function validateAgents(value: unknown, file: string): AgentsManifest {
   return { ...root, kind: "coding_agents", agents } as AgentsManifest;
 }
 
+const METRIC_ROLES = new Set(["agent_outcome", "gold_derived", "diagnostic", "legacy"]);
+/** Roles que NO pueden aparecer en `required_metrics` (el grafo/legacy no gatea). */
+const NON_GATING_ROLES = new Set(["diagnostic", "legacy"]);
+
 function validateMetrics(value: unknown, file: string): MetricsManifest {
   const root = header(value, file, "metrics");
   const metrics = array(root.metrics, file, "metrics").map((entry, index) => {
     const path = `metrics[${index}]`;
     const item = record(entry, file, path);
+    let role: MetricDefinition["role"];
+    if (item.role !== undefined) {
+      const raw = string(item.role, file, `${path}.role`);
+      if (!METRIC_ROLES.has(raw)) {
+        fail(file, `${path}.role`, "one of agent_outcome|gold_derived|diagnostic|legacy");
+      }
+      role = raw as MetricDefinition["role"];
+    }
     return {
       ...item,
       id: string(item.id, file, `${path}.id`),
@@ -227,10 +282,43 @@ function validateMetrics(value: unknown, file: string): MetricsManifest {
       unit: string(item.unit, file, `${path}.unit`),
       better: string(item.better, file, `${path}.better`),
       source: string(item.source, file, `${path}.source`),
+      ...(role === undefined ? {} : { role }),
     } satisfies MetricDefinition;
   });
   assertUniqueIds(metrics, file, "metrics");
+  validateQualityGates(root, metrics, file);
   return { ...root, kind: "metrics", metrics } as MetricsManifest;
+}
+
+/**
+ * Invariante estructural: ninguna métrica con rol `diagnostic` o `legacy` puede
+ * figurar en `quality_gates.*.required_metrics`. Convierte "el grafo no define
+ * pass/fail" en una regla que el schema hace cumplir, no una convención.
+ */
+function validateQualityGates(
+  root: UnknownRecord,
+  metrics: MetricDefinition[],
+  file: string,
+): void {
+  const gates = root.quality_gates;
+  if (gates === undefined || gates === null) return;
+  const roleById = new Map(metrics.map((metric) => [metric.id, metric.role]));
+  const gatesRecord = record(gates, file, "quality_gates");
+  for (const [gateName, gateValue] of Object.entries(gatesRecord)) {
+    const gate = record(gateValue, file, `quality_gates.${gateName}`);
+    if (gate.required_metrics === undefined) continue;
+    const required = strings(gate.required_metrics, file, `quality_gates.${gateName}.required_metrics`);
+    for (const metricId of required) {
+      const role = roleById.get(metricId);
+      if (role !== undefined && NON_GATING_ROLES.has(role)) {
+        throw new ManifestValidationError(
+          file,
+          `quality_gates.${gateName}.required_metrics includes ${JSON.stringify(metricId)} ` +
+            `with role ${JSON.stringify(role)}; diagnostic/legacy metrics cannot gate a run`,
+        );
+      }
+    }
+  }
 }
 
 function validateRun(value: unknown, file: string): RunConfigurationManifest {
@@ -267,6 +355,7 @@ function validateTasks(value: unknown, file: string): TasksManifest {
         return { query: string(oi.query, file, `${path}.deterministic_input.oracle_input.query`) };
       })();
     const gold = record(item.gold, file, `${path}.gold`);
+    const patchEvidence = parsePatchEvidence(gold.patch_evidence, file, `${path}.gold.patch_evidence`);
     const translationGold = item.translation_gold === undefined
       ? { status: "pending_manual_annotation", relevant_terms: [], annotation_notes: "Pendiente de anotación manual." }
       : record(item.translation_gold, file, `${path}.translation_gold`);
@@ -289,11 +378,20 @@ function validateTasks(value: unknown, file: string): TasksManifest {
       target_tests: strings(item.target_tests, file, `${path}.target_tests`),
       gold: {
         status: string(gold.status, file, `${path}.gold.status`),
+        ...(patchEvidence === undefined ? {} : { patch_evidence: patchEvidence }),
         primary_anchor: gold.primary_anchor === undefined || gold.primary_anchor === null
           ? null
           : string(gold.primary_anchor, file, `${path}.gold.primary_anchor`),
         relevant_nodes: strings(gold.relevant_nodes, file, `${path}.gold.relevant_nodes`),
         multihop_nodes: strings(gold.multihop_nodes, file, `${path}.gold.multihop_nodes`),
+        // Default "manual" para manifests historicos que no declaran el campo.
+        // Solo "auto" se setea via import-swe-polybench con --enable-multihop.
+        multihop_status: ((): "auto" | "manual" | "pending" => {
+          const raw = gold.multihop_status;
+          if (raw === undefined || raw === null) return "manual";
+          if (raw === "auto" || raw === "manual" || raw === "pending") return raw;
+          throw new Error(`${file}:${path}.gold.multihop_status must be 'auto', 'manual' or 'pending' (got ${JSON.stringify(raw)})`);
+        })(),
         annotation_notes: string(gold.annotation_notes, file, `${path}.gold.annotation_notes`),
       },
       translation_gold: {
@@ -380,10 +478,28 @@ function printSummary(manifests: EvalManifests): void {
   );
 }
 
+function parseEntrypointOptions(argv: string[]): { manifestsDir?: string } {
+  let manifestsDir: string | undefined;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument !== "--manifests-dir") {
+      throw new Error(`unknown argument: ${String(argument)}`);
+    }
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error("--manifests-dir requires a value");
+    }
+    manifestsDir = value;
+    index += 1;
+  }
+  return manifestsDir === undefined ? {} : { manifestsDir };
+}
+
 const entrypoint = process.argv[1];
 if (entrypoint !== undefined && import.meta.url === pathToFileURL(resolve(entrypoint)).href) {
   try {
-    printSummary(loadManifests());
+    const options = parseEntrypointOptions(process.argv.slice(2));
+    printSummary(loadManifests(resolveManifestsDir(options.manifestsDir)));
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

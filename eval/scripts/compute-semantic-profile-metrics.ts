@@ -5,14 +5,14 @@ import { isEntrypoint } from "./lib/cli.js";
 import { readJsonl } from "./lib/jsonl.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { computeSemanticProfileMetrics, type SemanticProfileMetricSet } from "./lib/semantic-profile-metrics.js";
 
-interface Options { runId?: string; runDir?: string; }
+interface Options { runId?: string; runDir?: string; manifestsDir?: string; }
 
 export function computeSemanticMetrics(argv = process.argv.slice(2)): void {
   const options = parseOptions(argv);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const runDirectory = options.runId
     ? resolveEvalLayout(manifests.run, options.runId).runDirectory
     : isAbsolute(options.runDir!) ? resolve(options.runDir!) : resolve(PROJECT_ROOT, options.runDir!);
@@ -122,10 +122,24 @@ function renderMarkdown(runId: string, summary: Record<string, Record<string, nu
 }
 
 function parseOptions(argv: string[]): Options {
-  if (argv.length !== 2 || (argv[0] !== "--run-id" && argv[0] !== "--run-dir") || !argv[1]) {
-    throw new Error("usage: --run-id <id> | --run-dir <path>");
+  let runId: string | undefined;
+  let runDir: string | undefined;
+  let manifestsDir: string | undefined;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--run-id") { runId = argv[++i]; continue; }
+    if (arg === "--run-dir") { runDir = argv[++i]; continue; }
+    if (arg === "--manifests-dir") { manifestsDir = argv[++i]; continue; }
+    throw new Error(`unknown argument: ${String(arg)}`);
   }
-  return argv[0] === "--run-id" ? { runId: argv[1] } : { runDir: argv[1] };
+  if ((runId === undefined) === (runDir === undefined)) {
+    throw new Error("provide exactly one of --run-id or --run-dir");
+  }
+  return {
+    ...(runId !== undefined ? { runId } : {}),
+    ...(runDir !== undefined ? { runDir } : {}),
+    ...(manifestsDir !== undefined ? { manifestsDir } : {}),
+  };
 }
 
 if (isEntrypoint(import.meta.url)) {

@@ -32,6 +32,13 @@ export class HybridAnchorService {
   /**
    * Recupera y fusiona hasta `rankingLimit` candidatos de cada buscador.
    *
+   * BM25 (sync, FTS5 sobre SQLite) y el embedding (async, transformers.js) son
+   * independientes: el primero no consume el vector y el segundo no necesita
+   * los hits. Se lanzan en paralelo para solapar la latencia de inferencia del
+   * modelo (~30-80 ms CPU) con el barrido FTS5. La fusión RRF solo requiere
+   * ambos rankings listos antes de combinar → el orden de `await` no afecta
+   * el resultado.
+   *
    * @param query Salida sanitizada del intermediario.
    * @param rankingLimit Candidatos maximos por ranking antes de la fusion.
    * @returns Anclas ordenadas por score RRF descendente.
@@ -39,6 +46,7 @@ export class HybridAnchorService {
   async search(query: SanitizerOutput, rankingLimit = 20): Promise<HybridAnchor[]> {
     if (rankingLimit <= 0) return [];
 
+    const embeddingPromise = this.embeddingGen.generate(query.embedding_input);
     const bm25Results = this.bm25.search(query.clean_query, rankingLimit);
     const bm25Ranks = new Map<string, number>();
     for (let index = 0; index < bm25Results.length; index++) {
@@ -46,7 +54,7 @@ export class HybridAnchorService {
       if (!bm25Ranks.has(result.nodeId)) bm25Ranks.set(result.nodeId, index + 1);
     }
 
-    const embedding = await this.embeddingGen.generate(query.embedding_input);
+    const embedding = await embeddingPromise;
     const annResults = await this.lanceDb.search(embedding, undefined, rankingLimit);
     const annRanks = new Map<string, number>();
     for (let index = 0; index < annResults.length; index++) {

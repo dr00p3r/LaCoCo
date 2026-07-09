@@ -26,7 +26,7 @@ import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import type { GenerationRecord } from "./lib/generation-record.js";
 import { resolveEvalLayout } from "./lib/layout.js";
-import { PROJECT_ROOT } from "./lib/paths.js";
+import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
 import { Project, SyntaxKind, type Node } from "ts-morph";
 
 const HALLUCINATION_SCHEMA_VERSION = 1;
@@ -153,8 +153,9 @@ function analyzeFile(
 export async function runHallucinationAnalysis(argv = process.argv.slice(2)): Promise<void> {
   const options = parseEvalCliOptions(argv, [
     "--run-id",
+    "--manifests-dir",
   ]);
-  const manifests = loadManifests();
+  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const layout = resolveEvalLayout(manifests.run, options.runId);
 
   const generationPath = join(layout.runDirectory, "generation.jsonl");

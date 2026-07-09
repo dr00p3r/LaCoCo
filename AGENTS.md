@@ -91,6 +91,88 @@ grafo invalida el perfil. El watcher solo mantiene un perfil ya construido.
 
 El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. La primera ejecución puede requerir descargar el modelo.
 
+## Modelo de build del Project Semantic Profile
+
+- **Modelo permanente**: `qwen3:4b-instruct` (4B instruct, cuantizado Q4_K_M, ~2.5 GB).
+  Adoptado tras el A/B `2026-07-08-grounding-ab-svelte728-7b-vs-4b.md`:
+  2.74× más rápido que `qwen2.5:7b-instruct` (31 min vs 85 min en svelte-728)
+  con métricas de retrieval idénticas.
+- **Concurrencia por defecto**: 3 (alineado con `OLLAMA_NUM_PARALLEL=3` del server).
+- **VRAM típica**: 5998 MB / 8188 MB con `num_ctx: 8192` (deja ~2.2 GB libres).
+- **No usar** `qwen2.5-coder:1.5b` para el perfil: entra en bucle de repetición
+  e ignora IDs (ver `build-grounding-profiles.ts:123-125`).
+- **No usar** `qwen2.5:7b-instruct` para builds grandes (>1000 términos): el
+  contexto de 4096 tokens causa prompt cache thrashing por batch
+  (`memory_seq_rm [208, end)` en cada llamada) y el modelo no paraleliza en
+  8 GB de VRAM con la KV cache del 7B.
+
+## Modelo del intermediario (default `agent.model`)
+
+- **Default**: `qwen3:4b-instruct`. El 4B es la línea base vigente del
+  intermediario SLM (clasificador de query). Es el mismo modelo del build de
+  perfil — valida con `temp: 0, seed: 42` y produce JSON estructurado
+  consistente en prompts de retrieval (REPL, gist, URLs), a diferencia del
+  1.5B que entraba en bucle de repetición.
+- **Override**: `LACOCO_AGENT_MODEL` (env) o `npm run dev -- config set agent.model <name> --local`.
+- **Para pruebas A/B**: setear `LACOCO_INTERMEDIARY_MODEL` por separado
+  (p. ej. `qwen2.5:7b-instruct`) sin tocar `agent.model`. El intermediario del
+  eval runner (`run-retrieval.ts:freezeSlmQuery`) honra `intermediary.model`
+  con su propio `keep_alive` y `num_ctx`.
+
+### Defaults del enriquecedor (Fase 0, `SEMANTIC_ENRICHMENT_PROMPT_VERSION: 2`)
+
+| Parámetro | Valor | Razón |
+|---|---|---|
+| `BATCH_SIZE` | 3 | Prompts <1500 tokens, caben en `num_ctx: 8192` sin truncamiento |
+| `MAX_ALIASES` | 4 | El 4B produce 1-5 aliases naturalmente; 4 cubre el 90%+. Fallback a 6 si la cobertura cae. |
+| `MAX_DOMAINS` | 2 | El 4B produce 1-2 dominios típicamente |
+| `MAX_DESCRIPTION_LENGTH` | 240 | El 4B produce descripciones de 130-180 chars; 240 deja holgura. `coerceDescription` aplica el cap duro en storage. |
+| `format` | `ENRICHMENT_SCHEMA` | El schema refleja la salida natural del 4B (aliases como strings, `domain` key). `format: "json"` sin schema lo desvía a un formato compacto que requiere más parsing. |
+| `num_predict` | 2048 | Output típico: 800-1500 tokens. 2048 cubre el peor caso. |
+| `num_ctx` | 8192 | Con 4B (~2.5 GB), deja 2+ GB para KV cache 8K → elimina `memory_seq_rm` por batch. |
+
+### Robustez ante variaciones del modelo
+
+El 4B con `temp: 0, seed: 42` produce el schema correctamente la mayoría de las
+veces, pero rechaza ocasionalmente con HTTP 500 (`peg-native format error`):
+trailing commas, descripciones ligeramente sobre el cap, o alias que exceden
+el cap. El enriquecedor maneja esto con:
+
+- **Retry en `#enrichBatch`**: 3 intentos con backoff (200ms × attempt). El 4B
+  suele recuperarse en retry 2-3; las causas son estocásticas entre batches
+  (carga de slots, estado de cache), no deterministas per-call.
+- **Degradación controlada**: tras 3 fallos, el batch entero cae a
+  `minimalEnrichment` (sin aliases/dominios, con `canonical_term` como
+  description). El build **no aborta**: el perfil sigue adelante, los términos
+  faltantes quedan disponibles para grounding por su forma canónica.
+- **Parser tolerante**: `parseAliases` acepta tanto `["str1", "str2"]` (4B)
+  como `[{value, language, confidence}]` (formato verboso, por compat con
+  otras SLMs). `parseDomains` acepta `domain` (4B) o `name` (verboso).
+- **Match por índice posicional**: si el LLM omite el `id` (la 4B a veces
+  lo hace), se usa la posición en el array como fallback. Solo aplica cuando
+  el id está ausente; si el id está presente pero no matchea, se ignora
+  (la SLM está mintiendo sobre qué término enriquece).
+
+### Métricas de build (svelte-728, 1121 términos)
+
+| Build | Wall | Speedup vs 7B | Aliases | A/B retrieval |
+|---|---:|---:|---:|---|
+| 7B (`qwen2.5:7b-instruct`, prompt v1) | 85 min | 1× | 5307 | baseline |
+| 4B (`qwen3:4b-instruct`, prompt v1) | 31 min | 2.74× | 3558 | M3-M5 idéntico |
+| 4B Fase 0 (prompt v2 + retry + schema 4B) | 17 min | **5×** | 2933 | M3-M5 idéntico |
+
+El schema tightening (MAX_ALIASES=4 vs 8, MAX_DOMAINS=2 vs 3, drop term-level
+confidence) **no degrada las métricas M3-M5 del A/B** — más aliases ≠ mejor
+grounding. La reducción de 17% en aliases (3558→2933) refleja el cap más
+estricto, no pérdida de calidad.
+
+- **Aislamiento**: el modelo del build no afecta la query en tiempo de
+  retrieval — el `QueryGrounder` es determinista (alias exact + FTS5). El A/B
+  es válido con cualquier intermediario (incluido el 7B).
+- **Invariante**: `promptVersion` y `model` se persisten en
+  `semantic_profile_builds`. Bumpear `SEMANTIC_ENRICHMENT_PROMPT_VERSION`
+  invalida el caché por cambio de contrato, no por cambio de modelo.
+
 ## Retrieval
 
 BM25 es una utilidad interna, no una `RecoveryStrategy` seleccionable. Toda reutilización debe pasar por `Bm25Service`, que centraliza FTS5, normalización y firmas.
@@ -106,6 +188,16 @@ Estrategias CLI válidas:
 | `rpr` | Anclas híbridas + enumeración y puntuación de caminos relacionales |
 
 `hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF, centralizado en `AbstractAnchoredStrategy`. Cada subclase solo implementa `expand()` con su lógica de difusión específica. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
+
+## Benchmarks
+
+**Único benchmark production**: `eval/manifests/swe-polybench/` (svelte por ahora; el plan es extender a otros repos más adelante). Es la fuente de verdad para M1–M7. El gold se deriva de `AmazonScience/SWE-PolyBench_Verified` (CST `modified_nodes` → node-ids LaCoCo vía `swe-polybench-nodes.ts`); el multihop se deriva automáticamente con BFS-2 filtrado por CALLS+REFERENCES+DECLARES vía `multihop-translator.ts` cuando se corre `import-swe-polybench --enable-multihop --run-id <id>`.
+
+M1 (pass_rate legacy): `test_exit_code === 0 && patch_applied && !timeout`. M1_regression_pass@1 (citable) NO es medible desde swe-polybench porque el loader no emite `regression:` blocks — el estado roto se materializa vía `base_commit` no vía `broken_patch` anotado a mano.
+
+M6 (multi-hop): multihop gold se deriva de BFS-2 con `multihop_status: "auto"`. Tareas donde el traductor no encontró alcanzables quedan con `multihop_status: "auto"` y `multihop_nodes: []`; en `compute-retrieval-metrics` esto produce `MetricStatus: "auto_empty"` (la tarea se excluye de M6 pero no es un fallo de harness).
+
+**LEGACY (NO usar para reports)**: `zod-{001,002}`, `inversify-{001,002}`, `rxjs-{001,002}` en `eval/manifests/tasks.yaml` están marcadas con `status: legacy`. Su gold dependía de `broken_patch` + `baseline_failing_tests` anotados a mano (frágil, costoso de mantener, y produjo 3/4 NO_PATCH en `2026-07-06-regression-pilot`). Los informes `2026-07-05-*`, `2026-07-06-regression-pilot`, `2026-07-07-grounding-ab-zod` son históricos. Las tareas legacy se conservan en tasks.yaml solo para reproducibilidad de esos informes y para los tests del harness (`metrics.test.ts`, `gold.test.ts`).
 
 Los pesos por intent y los recorridos BFS compartidos por estrategias viven en
 `src/retriever/strategies/helpers/`; no son estrategias ni utilidades globales
@@ -125,6 +217,27 @@ identifica cada evidencia mediante `chunkId=RPR:<path-hash>` y conserva el mejor
 camino estructurado por `nodeId` terminal. Deduplica por `nodeId` antes de
 aplicar `chunkLimit` y expone en `diagnostics.duplicateCount` cuantos caminos
 alternativos fueron descartados.
+
+## Directorio de manifests (eval)
+
+Todos los scripts de `npm run eval:*` resuelven el directorio de manifests en
+tres niveles de precedencia (`eval/scripts/lib/paths.ts:resolveManifestsDir`):
+
+1. Flag `--manifests-dir <path>` (mayor precedencia — override por comando)
+2. Env var `LACOCO_EVAL_MANIFESTS_DIR=<path>` (se setea una vez por sesión)
+3. Default `eval/manifests` (canónico)
+
+Para apuntar toda la pipeline (`prepare`, `index`, `retrieval`, `generation`,
+`hallucination`, `metrics:retrieval`, `metrics:generation`,
+`compare:strategies`) a un dir no-canónico como `eval/manifests/swe-polybench`,
+setear la env var UNA vez en el shell:
+
+```bash
+export LACOCO_EVAL_MANIFESTS_DIR=eval/manifests/swe-polybench
+```
+
+Esto evita pasar `--manifests-dir` en cada uno de los ~8 comandos del run.
+El flag sigue funcionando como override por comando si se necesita mezclar dirs.
 
 ## Comandos
 

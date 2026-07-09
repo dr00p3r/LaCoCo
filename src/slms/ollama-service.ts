@@ -49,6 +49,7 @@ export class OllamaService implements LlmClient {
         ...(options.format ? { format: options.format } : {}),
         ...(options.options ? { options: options.options } : {}),
         ...(options.think !== undefined ? { think: options.think } : {}),
+        ...(options.keep_alive !== undefined ? { keep_alive: options.keep_alive } : {}),
       }),
     });
 
