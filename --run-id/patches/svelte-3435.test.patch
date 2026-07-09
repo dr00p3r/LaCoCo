@@ -1,0 +1,42 @@
+diff --git a/test/runtime/samples/inline-style-important/_config.js b/test/runtime/samples/inline-style-important/_config.js
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/inline-style-important/_config.js
+@@ -0,0 +1,18 @@
++export default {
++	html: `
++		<p class="svelte-y94hdy" style="color: red !important; font-size: 20px !important; opacity: 1;">red</p>
++	`,
++
++	test({ assert, component, target, window }) {
++		const p = target.querySelector('p');
++
++		let styles = window.getComputedStyle(p);
++		assert.equal(styles.color, 'red');
++		assert.equal(styles.fontSize, '20px');
++
++		component.color = 'green';
++
++		styles = window.getComputedStyle(p);
++		assert.equal(styles.color, 'green');
++	}
++}
+\ No newline at end of file
+diff --git a/test/runtime/samples/inline-style-important/main.svelte b/test/runtime/samples/inline-style-important/main.svelte
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/inline-style-important/main.svelte
+@@ -0,0 +1,12 @@
++<script>
++	export let color = `red`;
++</script>
++
++<p style="color: {color} !important; font-size: 20px !important; opacity: 1;">{color}</p>
++
++<style>
++	p {
++		color: blue !important;
++		font-size: 10px !important;
++	}
++</style>
+\ No newline at end of file

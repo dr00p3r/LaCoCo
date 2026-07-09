@@ -122,6 +122,40 @@ strategies:
       generation:
         include: true
 
+  - id: consensus
+    label: "Structural Consensus Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "consensus"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Expansion por consenso estructural: puntua nodos de grafo por cuantas anclas
+      independientes los senalan (aristas ENTRANTES priorizadas), desacoplado del
+      decay-de-ancla. Rescata el caller/clase-base/hermano/consumidor que el
+      anclaje semantico no ve, e interleava con las anclas.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      neighborhood_limit: 5000
+      incoming_weight: 1.0
+      outgoing_weight: 0.4
+      consensus_weight: 1.0
+      multi_anchor_bonus: 0.5
+      hub_dampening: 0.5
+      interleave_min_anchors: 2
+      top_anchors_protected: 1
+    hypothesis: >-
+      Debe rescatar nodos multi-hop (gold fuera del pool de anclas) que hybrid
+      pierde, batiendolo en EditSiteHit/MRR sobre casos multi-hop.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
   - id: rpr
     label: "Relational Path Retrieval"
     kind: "lacoco"

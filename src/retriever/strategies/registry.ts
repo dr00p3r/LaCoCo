@@ -4,6 +4,7 @@ import type { LlmClient } from "../../slms/llm-client.js";
 import type { RecoveryStrategy } from "../models/strategies/types.js";
 import { AGENTIC_DEFAULT_CONFIG, AgenticStrategy, type AgenticConfig } from "./agentic-strategy.js";
 import { CLCR_DEFAULT_CONFIG, ClcrStrategy, type ClcrConfig } from "./clcr-strategy.js";
+import { CONSENSUS_DEFAULT_CONFIG, ConsensusStrategy, type ConsensusConfig } from "./consensus-strategy.js";
 import { HYBRID_DEFAULT_CONFIG, HybridStrategy, type HybridConfig } from "./hybrid-strategy.js";
 import { ICTD_DEFAULT_CONFIG, IctdStrategy, type IctdConfig } from "./ictd-strategy.js";
 import { RPR_DEFAULT_CONFIG, RprStrategy, type RprConfig } from "./rpr-strategy.js";
@@ -95,6 +96,17 @@ export const STRATEGY_REGISTRY: Readonly<Record<StrategyName, StrategyEntry>> = 
       db,
       requireLanceDb("rpr", lanceDb),
       getEffectiveStrategyParameters("rpr", options) as unknown as RprConfig,
+    ),
+  },
+  consensus: {
+    name: "consensus",
+    needsLanceDb: true,
+    defaultParameters: CONSENSUS_DEFAULT_CONFIG,
+    chunkLimitParameter: "chunkLimit",
+    create: ({ db, lanceDb }, options) => new ConsensusStrategy(
+      db,
+      requireLanceDb("consensus", lanceDb),
+      getEffectiveStrategyParameters("consensus", options) as unknown as ConsensusConfig,
     ),
   },
 };

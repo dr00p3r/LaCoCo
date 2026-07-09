@@ -97,7 +97,8 @@ El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. L
   Adoptado tras el A/B `2026-07-08-grounding-ab-svelte728-7b-vs-4b.md`:
   2.74× más rápido que `qwen2.5:7b-instruct` (31 min vs 85 min en svelte-728)
   con métricas de retrieval idénticas.
-- **Concurrencia por defecto**: 3 (alineado con `OLLAMA_NUM_PARALLEL=3` del server).
+- **Concurrencia por defecto**: 4 (`profile.enrichConcurrency`, ver `src/cli/state/config-store.ts`).
+  Alinear con `OLLAMA_NUM_PARALLEL` del server para no saturar los slots.
 - **VRAM típica**: 5998 MB / 8188 MB con `num_ctx: 8192` (deja ~2.2 GB libres).
 - **No usar** `qwen2.5-coder:1.5b` para el perfil: entra en bucle de repetición
   e ignora IDs (ver `build-grounding-profiles.ts:123-125`).

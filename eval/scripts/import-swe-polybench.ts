@@ -57,13 +57,16 @@ interface LoaderOptions {
   runId?: string;
   enableMultihop: boolean;
   includeMixed?: boolean;
+  onlyMixed?: boolean;
   manifestsDir?: string;
 }
 
 const DATA_FILE = join(EVAL_ROOT, "data", "swe-polybench", "instances.tsjs.full.jsonl");
 const UPDATED_AT = "2026-07-07";
 /** Estrategias del smoke (subconjunto de phases.retrieval.include_strategies). */
-const SMOKE_STRATEGIES = ["hybrid", "ictd", "clcr", "rpr"];
+// Escalera reformada (2026-07-09): hybrid (baseline) + clcr (comparación) + consensus
+// (grafo por consenso de aristas entrantes). ictd/rpr/agentic podadas (no rinden).
+const SMOKE_STRATEGIES = ["hybrid", "clcr", "consensus"];
 /** Manifests compartidos que se copian verbatim del canónico al dir del smoke. */
 const SHARED_MANIFESTS = ["strategies.yaml", "agents.yaml", "metrics.yaml"] as const;
 
@@ -106,6 +109,11 @@ function parseArgs(argv: string[]): LoaderOptions {
       // Flag sin valor. Amplia el filtro: acepta is_mixed tambien. Combinado
       // con --limit permite ir mas alla del subset is_func_only estricto.
       options.includeMixed = true;
+    } else if (arg === "--only-mixed") {
+      // Flag sin valor. SOLO instancias multi-hop (num_nodes 2-4); excluye los
+      // single-hop (num_nodes==1). Para el test de estrategias de grafo en su regimen.
+      options.onlyMixed = true;
+      options.includeMixed = true;
     } else {
       throw new Error(`unknown argument: ${String(arg)}`);
     }
@@ -114,7 +122,7 @@ function parseArgs(argv: string[]): LoaderOptions {
 }
 
 /** Lee el JSONL y devuelve las instancias que pasan el filtro de "fácil". */
-function loadEasyInstances(repo: string, limit: number, includeMixed = false): SwePolyBenchInstance[] {
+function loadEasyInstances(repo: string, limit: number, includeMixed = false, onlyMixed = false): SwePolyBenchInstance[] {
   const raw = readFileSync(DATA_FILE, "utf8");
   const selected: SwePolyBenchInstance[] = [];
   for (const line of raw.split("\n")) {
@@ -123,7 +131,8 @@ function loadEasyInstances(repo: string, limit: number, includeMixed = false): S
     const inst = JSON.parse(trimmed) as SwePolyBenchInstance;
     if (inst.repo !== repo || inst.is_no_nodes === true) continue;
     // Filtro "facil" canonico: 1 sola funcion/clase/metodo modificado.
-    if (inst.is_func_only === true && inst.num_nodes === 1) {
+    // Con --only-mixed se omiten los single-hop (regimen de estrategias de grafo).
+    if (!onlyMixed && inst.is_func_only === true && inst.num_nodes === 1) {
       selected.push(inst);
     } else if (includeMixed && inst.num_nodes > 1 && inst.num_nodes <= 4) {
       // --include-mixed: acepta is_mixed con hasta 4 nodos. Mas alla el gold
@@ -411,7 +420,7 @@ function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const instances = loadEasyInstances(options.repo, options.limit, options.includeMixed === true);
+  const instances = loadEasyInstances(options.repo, options.limit, options.includeMixed === true, options.onlyMixed === true);
   if (instances.length === 0) {
     throw new Error(
       `no instances matched repo=${options.repo} (is_func_only + num_nodes=1`

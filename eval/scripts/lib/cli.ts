@@ -15,6 +15,7 @@ export interface EvalCliOptions {
   profile?: boolean | undefined;
   useSlm?: boolean | undefined;
   maxBudgetUsd?: number | undefined;
+  timeoutMs?: number | undefined;
   resume?: boolean | undefined;
   strict?: boolean | undefined;
 }
@@ -34,7 +35,8 @@ export type EvalCliFlag =
   | "--use-slm"
   | "--resume"
   | "--strict"
-  | "--max-budget-usd";
+  | "--max-budget-usd"
+  | "--timeout-ms";
 
 const VALUE_FLAGS = {
   "--run-id": "runId",
@@ -47,6 +49,7 @@ const VALUE_FLAGS = {
   "--sanitizer-variant": "sanitizerVariant",
   "--manifests-dir": "manifestsDir",
   "--max-budget-usd": "maxBudgetUsd",
+  "--timeout-ms": "timeoutMs",
 } as const;
 
 export function parseEvalCliOptions(
@@ -100,6 +103,17 @@ export function parseEvalCliOptions(
     delete values.maxBudgetUsd;
   }
 
+  // Convert timeout-ms to number (override del timeout del agente por run).
+  let timeoutMs: number | undefined;
+  if (values.timeoutMs !== undefined) {
+    const parsed = Number(values.timeoutMs);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`--timeout-ms requires a positive number of milliseconds`);
+    }
+    timeoutMs = parsed;
+    delete values.timeoutMs;
+  }
+
   // Drop undefined-valued string flags so they don't bleed into EvalCliOptions
   const cleaned: Record<string, string> = {};
   for (const [k, v] of Object.entries(values)) {
@@ -113,6 +127,7 @@ export function parseEvalCliOptions(
     ...(resume ? { resume: true } : {}),
     ...(strict ? { strict: true } : {}),
     ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...cleaned,
   } as EvalCliOptions;
 }

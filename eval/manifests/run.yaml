@@ -91,6 +91,7 @@ phases:
       - "clcr"
       - "rpr"
       - "agentic"
+      - "consensus"
 
   generation:
     enabled: true
@@ -102,6 +103,7 @@ phases:
       - "clcr"
       - "rpr"
       - "agentic"
+      - "consensus"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true

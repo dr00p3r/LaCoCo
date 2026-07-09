@@ -257,3 +257,87 @@ export function toLocalTestCommand(
 
   return { command, runnable: true, reporterReplaced };
 }
+
+/** Escapa los metacaracteres de regex para usar el texto como patrón literal. */
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Variantes de sufijo/prefijo que NO forman parte del nombre del fixture. */
+const F2P_VARIANT_TOKENS = new Set(["shared", "inline", "helpers", "with", "hydration", "runtime"]);
+
+/**
+ * Extrae el "slug de fixture" de un título F2P para usarlo como patrón `--grep`.
+ *
+ * Los formatos de F2P son inconsistentes entre versiones de un mismo repo
+ * (verificado en svelte: v2 mocha3 usa bag-of-words `"runtime shared helpers
+ * each-block-dynamic-else-static"`; v3 mocha5 usa el canónico `"runtime
+ * <fixture> (with hydration)"`). En ambos, el nombre del fixture es el token
+ * hifenado más largo, que aparece verbatim como directorio de sample y como
+ * parte del `fullTitle` real de mocha. Grepear ese slug matchea TODAS sus
+ * variantes (shared/inline/hydration) — justo lo que pide el F2P.
+ *
+ * Fallback: si el título no tiene token hifenado (otros repos), devuelve el
+ * título completo saneado. La guarda anti-cero-match del runner atrapa un slug
+ * que no matchee nada (ver {@link expectedF2pCount}).
+ */
+export function f2pFixtureSlug(title: string): string {
+  const cleaned = title.replace(/\([^)]*\)/g, " ").trim(); // quita variantes `(...)`
+  const tokens = cleaned.split(/\s+/).filter((t) => t !== "");
+  const hyphenated = tokens
+    .filter((t) => t.includes("-") && !F2P_VARIANT_TOKENS.has(t.toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+  return hyphenated[0] ?? cleaned;
+}
+
+/** Comando de test local sintetizado a partir del `test_command` + los F2P. */
+export interface SynthesizedF2pRun {
+  /** Invocación del runner (mocha) filtrada a los F2P, o `null` si no sintetizable. */
+  readonly testInvocation: string | null;
+  /** Patrón `--grep` (regex) usado, para logging/diagnóstico. */
+  readonly grepPattern: string | null;
+  /** Fixtures únicos esperados (guarda anti-cero-match: `passed+failed` debe cubrirlos). */
+  readonly expectedFixtures: string[];
+  /** Motivo cuando `testInvocation` es `null`. */
+  readonly reason?: string;
+}
+
+/**
+ * Sintetiza la invocación local del runner que corre SOLO los tests F2P y cuyo
+ * exit code refleja su pass/fail. Es la pieza runner-side que
+ * {@link toLocalTestCommand} dejó explícitamente sin hacer ("NO inventa
+ * patrones `--grep`/`-t` de F2P").
+ *
+ * Cubre el caso mocha/npm-script (svelte y la mayoría del whitelist). El runner
+ * DEBE, aparte: (1) aplicar el `test_patch` antes —los tests F2P los crea ese
+ * patch—, (2) construir el repo si el fix va en `src/`, y (3) validar la guarda
+ * anti-cero-match con {@link expectedFixtures}. jest/vitest/bespoke → `null`.
+ *
+ * @param mochaBin ruta al binario de mocha (def. `./node_modules/.bin/mocha`).
+ * @param mochaOpts fichero de opciones de mocha del repo (def. `mocha.opts`).
+ */
+export function synthesizeF2pTestRun(
+  parsed: ParsedTestCommand,
+  f2pTitles: string[],
+  mochaBin = "./node_modules/.bin/mocha",
+  mochaOpts = "mocha.opts",
+): SynthesizedF2pRun {
+  const fixtures = [...new Set(f2pTitles.map((t) => f2pFixtureSlug(t)).filter((s) => s !== ""))];
+  if (fixtures.length === 0) {
+    return { testInvocation: null, grepPattern: null, expectedFixtures: [], reason: "no F2P titles" };
+  }
+  const isMocha = parsed.runner === "mocha" || parsed.runner === "npm-script" || parsed.runner === "yarn-script";
+  if (!isMocha) {
+    return {
+      testInvocation: null,
+      grepPattern: null,
+      expectedFixtures: fixtures,
+      reason: `runner ${parsed.runner} not supported yet (mocha/npm-script only)`,
+    };
+  }
+  const grepPattern = fixtures.map(escapeRegex).join("|");
+  // Reporter `dot`: compacto y parseable por parseTestRunnerOutput; NO usar
+  // `json`, que el volcado de código-generado-en-fallo de svelte corrompe.
+  const testInvocation = `${mochaBin} --opts ${mochaOpts} --grep '${grepPattern.replace(/'/g, "'\\''")}' --reporter dot`;
+  return { testInvocation, grepPattern, expectedFixtures: fixtures };
+}

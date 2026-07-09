@@ -1,0 +1,43 @@
+diff --git a/test/runtime/samples/dev-warning-missing-data-binding/_config.js b/test/runtime/samples/dev-warning-missing-data-binding/_config.js
+--- a/test/runtime/samples/dev-warning-missing-data-binding/_config.js
++++ b/test/runtime/samples/dev-warning-missing-data-binding/_config.js
+@@ -1,7 +1,7 @@
+ export default {
+ 	dev: true,
+ 
+-	error ( assert, err ) {
+-		assert.equal( err.message, `Component was created without expected data property 'value'` );
+-	}
+-};
+\ No newline at end of file
++	warnings: [
++		`Component was created without expected data property 'value'`
++	]
++};
+diff --git a/test/runtime/samples/dev-warning-missing-data/_config.js b/test/runtime/samples/dev-warning-missing-data/_config.js
+--- a/test/runtime/samples/dev-warning-missing-data/_config.js
++++ b/test/runtime/samples/dev-warning-missing-data/_config.js
+@@ -1,7 +1,8 @@
+ export default {
+ 	dev: true,
+ 
+-	error ( assert, err ) {
+-		assert.equal( err.message, `Component was created without expected data property 'foo'` );
+-	}
+-};
+\ No newline at end of file
++	warnings: [
++		`Component was created without expected data property 'foo'`,
++		`Component was created without expected data property 'bar'`
++	]
++};
+diff --git a/test/runtime/samples/dev-warning-missing-data/main.html b/test/runtime/samples/dev-warning-missing-data/main.html
+--- a/test/runtime/samples/dev-warning-missing-data/main.html
++++ b/test/runtime/samples/dev-warning-missing-data/main.html
+@@ -1 +1,4 @@
+-<p>{{foo}}</p>
+\ No newline at end of file
++<p>
++	{{Math.max(0, foo)}}
++	{{bar}}
++</p>

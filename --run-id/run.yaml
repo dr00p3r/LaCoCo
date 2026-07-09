@@ -103,7 +103,8 @@ phases:
       - "clcr"
       - "rpr"
       - "agentic"
-    timeout_ms: 1200000
+      - "consensus"
+    timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
     save_patch: true
@@ -173,23 +174,6 @@ splits:
     agents:
       - "opencode"
 
-  generation_ladder:
-    description: "Escalera de eficiencia: no_context vs hybrid vs clcr (+ consensus
-      cuando exista) sobre las instancias del ladder. rpr/agentic/ictd PODADAS
-      (no rinden: ictd diluye, rpr bug de identidad, agentic inestable)."
-    require_gold_status: "ready"
-    require_target_tests: true
-    task_ids:
-      - "svelte-510"
-      - "svelte-1923"
-      - "svelte-728"
-    strategies:
-      - "no_context"
-      - "hybrid"
-      - "clcr"
-    agents:
-      - "opencode"
-
   semantic_profile_ab:
     description: "Comparación del intermediario sin grounding y con Project Semantic
       Profile."
@@ -216,41 +200,6 @@ splits:
       - "clcr"
       - "rpr"
       - "agentic"
-
-  generation_ladder_slm:
-    description: "Generación con contexto SLM (baseline). Requiere haber corrido el
-      retrieval baseline antes (registros strategy@baseline). Test clave: ¿un agente
-      capaz + contexto SLM (que recupera 728) resuelve el caso duro?"
-    require_gold_status: "ready"
-    require_target_tests: true
-    sanitizer_variant: "baseline"
-    task_ids:
-      - "svelte-510"
-      - "svelte-1923"
-      - "svelte-728"
-    strategies:
-      - "no_context"
-      - "hybrid"
-      - "clcr"
-    agents:
-      - "opencode"
-
-  retrieval_3way:
-    description: "3-way retrieval det/SLM/grounded sobre las instancias del ladder.
-      Barato (sin agente); compara EditSiteHit/MRR por variante. ictd podada."
-    require_gold_status: "ready"
-    task_ids:
-      - "svelte-510"
-      - "svelte-1923"
-      - "svelte-728"
-    sanitizer_variants:
-      - "deterministic"
-      - "baseline"
-      - "grounded"
-    strategies:
-      - "hybrid"
-      - "clcr"
-      - "consensus"
 
   generation_grounded:
     description: "Generación alimentada con el contexto grounded (SLM 4b). Requiere
@@ -348,9 +297,8 @@ splits:
     description: Smoke de retrieval SWE-PolyBench (svelte, is_func_only + num_nodes==1).
     strategies:
       - hybrid
-      - ictd
       - clcr
-      - rpr
+      - consensus
     sanitizer_variants:
       - deterministic
     require_gold_status: ready

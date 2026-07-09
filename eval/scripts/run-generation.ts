@@ -26,6 +26,10 @@ import {
 } from "./lib/git.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import {
+  parseTestCommand,
+  synthesizeF2pTestRun,
+} from "./lib/swe-polybench-test-command.js";
+import {
   type AgentDefinition,
   type StrategyDefinition,
   type TaskDefinition,
@@ -88,6 +92,7 @@ function readGenerationSettings(
   runManifest: Record<string, unknown>,
   agentsManifest: AgentsManifest,
   requestedSplit: string,
+  agentTimeoutOverrideMs?: number,
 ): GenerationSettings {
   const phases = asRecord(runManifest.phases, "run.yaml.phases");
   const generation = asRecord(phases.generation, "run.yaml.phases.generation");
@@ -135,7 +140,9 @@ function readGenerationSettings(
   return {
     splitName: requestedSplit,
     enabled: asBoolean(generation.enabled, "run.yaml.phases.generation.enabled"),
-    agentTimeoutMs: asNumber(generation.timeout_ms, "run.yaml.phases.generation.timeout_ms"),
+    // `--timeout-ms` pisa SOLO el timeout del agente (para iterar rápido); el de
+    // los tests sigue del yaml (los tests no se benefician de acortarlo).
+    agentTimeoutMs: agentTimeoutOverrideMs ?? asNumber(generation.timeout_ms, "run.yaml.phases.generation.timeout_ms"),
     testTimeoutMs: asNumber(generation.timeout_ms, "run.yaml.phases.generation.timeout_ms"),
     maxDiffBytes,
     maxChangedFiles,
@@ -477,6 +484,101 @@ async function runTargetTests(
   }
 }
 
+interface SwePolyTestOutcome {
+  /** Exit del runner, o `null` si la MEDICIÓN es inválida (no un fallo del agente). */
+  testExitCode: number | null;
+  timedOut: boolean;
+  durationMs: number;
+  /** Motivo por el que la medición es inválida (patch/build/zero-match), o `null`. */
+  invalidReason: string | null;
+  passed: number;
+  failed: number;
+}
+
+/**
+ * Corre los tests F2P de una instancia SWE-PolyBench y devuelve un exit code
+ * *confiable* para M1/Pass@1. A diferencia del flujo legacy, aquí:
+ *   1. Se aplica el `test_patch` — los tests F2P los CREA/MODIFICA ese patch;
+ *      sin él no existen y mocha saldría 0 (pase falso silencioso).
+ *   2. Se re-construye el repo (`npm run build`) — el fix del agente va en `src/`
+ *      y los tests corren contra el build.
+ *   3. Se filtra a los F2P con `--grep <slug>` (ver {@link synthesizeF2pTestRun}).
+ *   4. Guarda anti-cero-match: si NINGÚN test corrió, la medición es inválida
+ *      (`testExitCode=null`), nunca un pase.
+ *
+ * El `test_patch` y los artefactos de build se limpian con el `resetRepoClean`
+ * que el llamador ya ejecuta al cerrar la celda.
+ */
+async function runSwePolybenchTests(
+  repoPath: string,
+  testPatchPath: string,
+  testInvocation: string,
+  expectedF2pCount: number,
+  timeoutMs: number,
+  logPath: string,
+): Promise<SwePolyTestOutcome> {
+  // 0. El gold de tests (test_patch) es autoritativo: el agente solo debe tocar
+  //    `src/`. Si el agente escribió/editó archivos bajo `test/` (p.ej. creó los
+  //    propios fixtures F2P), esas ediciones chocan con el test_patch ("already
+  //    exists"/conflicto). Revertimos `test/` a base ANTES de aplicar el gold,
+  //    preservando el fix en `src/`.
+  // Secuencia a prueba de balas: unstage (por si el agente hizo `git add`) →
+  // revertir tracked modificados → borrar untracked. Cubre los 3 estados en que
+  // el agente pudo dejar `test/` (staged-nuevo, modificado, untracked).
+  await executeCommand({
+    command: "git reset -q -- test/ 2>/dev/null; git checkout -q HEAD -- test/ 2>/dev/null; git clean -fdq test/ 2>/dev/null; true",
+    cwd: repoPath,
+    timeoutMs: 60_000,
+    logPath,
+  }).catch(() => undefined);
+
+  // 1. Aplicar el test_patch (crea los tests F2P). Falla → medición inválida.
+  try {
+    await executeCommand({
+      command: `git apply ${shellQuote(testPatchPath)}`,
+      cwd: repoPath,
+      timeoutMs: 60_000,
+      logPath,
+    });
+  } catch (error) {
+    const message = error instanceof CommandExecutionError ? error.result.stderr.slice(0, 500) : String(error);
+    writeFileSync(logPath, `(test_patch apply failed; measurement invalid)\n${message}\n`, "utf8");
+    return { testExitCode: null, timedOut: false, durationMs: 0, invalidReason: "test_patch_apply_failed", passed: 0, failed: 0 };
+  }
+
+  // 2+3. Build (fix en src/) y correr solo los F2P.
+  const command = `npm run build && ${testInvocation}`;
+  let exitCode: number | null = null;
+  let timedOut = false;
+  let durationMs = 0;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const result = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath });
+    exitCode = result.exitCode; durationMs = result.durationMs; stdout = result.stdout; stderr = result.stderr;
+  } catch (error) {
+    if (error instanceof CommandExecutionError) {
+      exitCode = error.result.exitCode; timedOut = error.result.timedOut;
+      durationMs = error.result.durationMs; stdout = error.result.stdout; stderr = error.result.stderr;
+    } else {
+      throw error;
+    }
+  }
+
+  // 4. Guarda anti-cero-match: parsear el conteo real de tests.
+  const parsed = parseTestRunnerOutput(stdout, stderr);
+  const ran = parsed.totalPassed + parsed.totalFailed;
+  if (ran === 0) {
+    // 0 tests corridos = grep no matcheó / build rompió antes del runner. NO es un pase.
+    return { testExitCode: null, timedOut, durationMs, invalidReason: "zero_tests_matched", passed: 0, failed: 0 };
+  }
+  if (ran < expectedF2pCount) {
+    // Corrieron menos F2P de los esperados (grep parcial): medición no fiable → inválida, nunca pase.
+    return { testExitCode: null, timedOut, durationMs, invalidReason: "fewer_tests_than_f2p", passed: parsed.totalPassed, failed: parsed.totalFailed };
+  }
+  return { testExitCode: exitCode, timedOut, durationMs, invalidReason: null, passed: parsed.totalPassed, failed: parsed.totalFailed };
+}
+
 interface RunOptions {
   runId?: string | undefined;
   split: string;
@@ -485,6 +587,7 @@ interface RunOptions {
   strategyId?: string | undefined;
   agentId?: string | undefined;
   maxBudgetUsd?: number | undefined;
+  timeoutMs?: number | undefined;
   resume: boolean;
   dryRun: boolean;
   manifestsDir?: string | undefined;
@@ -500,6 +603,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     "--agent-id",
     "--split",
     "--max-budget-usd",
+    "--timeout-ms",
     "--manifests-dir",
     "--resume",
   ]);
@@ -511,6 +615,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     strategyId: options.strategyId,
     agentId: options.agentId,
     maxBudgetUsd: options.maxBudgetUsd,
+    timeoutMs: options.timeoutMs,
     resume: options.resume === true,
     dryRun: options.dryRun,
     manifestsDir: options.manifestsDir,
@@ -567,8 +672,14 @@ export function parseOpenCodeCost(stdout: string): number | null {
 
 export async function runGeneration(argv = process.argv.slice(2)): Promise<void> {
   const options = parseRunOptions(argv);
-  const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
-  const settings = readGenerationSettings(manifests.run, manifests.agents, options.split);
+  const manifestsDir = resolveManifestsDir(options.manifestsDir);
+  const manifests = loadManifests(manifestsDir);
+  // Comando de test crudo (formato Docker SWE-PolyBench) por repo: el lock no lo
+  // persiste, así que lo tomamos del manifiesto de repositorios.
+  const repoTestCommandById = new Map(
+    manifests.repos.repositories.map((r) => [r.id, r.test_command]),
+  );
+  const settings = readGenerationSettings(manifests.run, manifests.agents, options.split, options.timeoutMs);
   const layout = resolveEvalLayout(manifests.run, options.runId);
   const tasks = manifests.tasks.tasks.filter((task) =>
     (options.repoId === undefined || task.repo_id === options.repoId) &&
@@ -850,10 +961,45 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         }
 
         let testResult: ParsedTestResult | null = null;
+        let swePolyInvalid: string | null = null;
         const shouldRunTests = task.target_tests.length > 0
           && recordError === null
           && (patchApplied || regressionInfo !== undefined);
-        if (shouldRunTests) {
+        // SWE-PolyBench (no-regresión): el gold vive en sidecar `patches/<id>.test.patch`.
+        const testPatchPath = manifestsDir === undefined
+          ? undefined
+          : join(manifestsDir, "patches", `${task.id}.test.patch`);
+        const rawTestCommand = repoTestCommandById.get(task.repo_id);
+        if (
+          shouldRunTests
+          && regressionInfo === undefined
+          && rawTestCommand !== undefined
+          && testPatchPath !== undefined
+          && existsSync(testPatchPath)
+        ) {
+          const synth = synthesizeF2pTestRun(parseTestCommand(rawTestCommand), task.target_tests);
+          if (synth.testInvocation === null) {
+            swePolyInvalid = synth.reason ?? "unsynthesizable";
+            writeFileSync(paths.test_log, `(SWE-PolyBench: test no sintetizable: ${swePolyInvalid})\n`, "utf8");
+          } else {
+            const outcome = await runSwePolybenchTests(
+              locked.repoPath,
+              testPatchPath,
+              synth.testInvocation,
+              task.target_tests.length,
+              settings.testTimeoutMs,
+              paths.test_log,
+            );
+            swePolyInvalid = outcome.invalidReason;
+            testResult = {
+              exitCode: outcome.testExitCode,
+              timedOut: outcome.timedOut,
+              durationMs: outcome.durationMs,
+              logPath: paths.test_log,
+              unknownRunner: false,
+            };
+          }
+        } else if (shouldRunTests) {
           const testCommand = task.target_tests.join(" && ");
           testResult = await runTargetTests(testCommand, locked.repoPath, settings.testTimeoutMs, paths.test_log);
         } else if (task.target_tests.length === 0) {
@@ -883,7 +1029,9 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         // Si el runner de tests no es parseable, NO contamos el exit=0 como pass
         // silencioso. Forzamos test_exit_code=null y dejamos runner_error para que
         // compute-generation-metrics lo agregue a m1_unknown_runner_count.
-        const testRunnerError = testResult?.unknownRunner === true ? "unknown_runner" as const : null;
+        const testRunnerError = (testResult?.unknownRunner === true || swePolyInvalid !== null)
+          ? "unknown_runner" as const
+          : null;
         const effectiveTestExitCode = testRunnerError !== null ? null : (testResult?.exitCode ?? null);
 
         const record: GenerationRecord = {
