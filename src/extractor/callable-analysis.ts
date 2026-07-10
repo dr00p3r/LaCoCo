@@ -15,6 +15,7 @@ import {
   type FunctionDeclaration,
   type MethodDeclaration,
   type ArrowFunction,
+  type FunctionExpression,
   type ParameterDeclaration,
   type Symbol as MorphSymbol,
   type Node as MorphNode,
@@ -32,6 +33,7 @@ import {
   resolveAliasedSymbol,
   resolveSymbolToId,
 } from "./utilities.js";
+import { extractJsxRelations } from "./react-extraction.js";
 
 // ───────────────────────────────────────────────────────────────────────────────
 // §4.1 — DTG: Flujo de Datos
@@ -43,7 +45,7 @@ import {
  *   - PRODUCES desde tipo de retorno
  */
 export function extractDataFlow(
-  func: FunctionDeclaration | MethodDeclaration | ArrowFunction,
+  func: FunctionDeclaration | MethodDeclaration | ArrowFunction | FunctionExpression,
   sourceId: string,
   cb: ExtractionCallbacks,
 ): void {
@@ -109,7 +111,7 @@ function consumesFromParam(
  * Desempaqueta `Promise<T>` y otros wrappers como `Observable<T>` o `Result<T, E>`.
  */
 function producesFromReturnType(
-  func: FunctionDeclaration | MethodDeclaration | ArrowFunction,
+  func: FunctionDeclaration | MethodDeclaration | ArrowFunction | FunctionExpression,
   sourceId: string,
   cb: ExtractionCallbacks,
 ): void {
@@ -139,7 +141,7 @@ function producesFromReturnType(
  *   - `ArrowFunction`    → análisis recursivo de closures inline
  */
 export function traverseAst(
-  func: FunctionDeclaration | MethodDeclaration | ArrowFunction,
+  func: FunctionDeclaration | MethodDeclaration | ArrowFunction | FunctionExpression,
   sourceId: string,
   cb: ExtractionCallbacks,
 ): void {
@@ -272,10 +274,11 @@ function analyzeArrowFunction(
  *   - **SYS** → IMPORTS_EXTERNAL
  */
 export function analyzeCallable(
-  func: FunctionDeclaration | MethodDeclaration | ArrowFunction,
+  func: FunctionDeclaration | MethodDeclaration | ArrowFunction | FunctionExpression,
   sourceId: string,
   cb: ExtractionCallbacks,
 ): void {
   extractDataFlow(func, sourceId, cb);
   traverseAst(func, sourceId, cb);
+  extractJsxRelations(func, sourceId, cb);
 }

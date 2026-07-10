@@ -27,7 +27,8 @@ import {
   resolveSymbolToId,
   resolveTypeToId,
 } from "./utilities.js";
-import { analyzeCallable, extractDataFlow, traverseAst } from "./callable-analysis.js";
+import { analyzeCallable } from "./callable-analysis.js";
+import { isPromotableReactLocal, unwrapReactWrapper } from "./react-predicates.js";
 
 // ───────────────────────────────────────────────────────────────────────────────
 // §4.3a — Object Literal Methods
@@ -68,8 +69,7 @@ function extractObjectLiteralMethods(
           isDeprecated: 0,
         });
         cb.insertEdge(parentId, propId, "DECLARES");
-        extractDataFlow(init, propId, cb);
-        traverseAst(init, propId, cb);
+        analyzeCallable(init, propId, cb);
       } else if (Node.isObjectLiteralExpression(init)) {
         cb.insertNode({
           id: propId,
@@ -115,7 +115,10 @@ export function extractVariableDeclarations(
 ): void {
   for (const varDecl of sourceFile.getVariableDeclarations()) {
     const varStmt = varDecl.getVariableStatement();
-    if (!varStmt?.isExported()) continue;
+    const isExported = varStmt?.isExported() ?? false;
+    // Los no-exportados solo se procesan si son componentes/hooks de React
+    // (en backend .ts esto siempre es false → no se inunda el grafo).
+    if (!isExported && !isPromotableReactLocal(varDecl, sourceFile)) continue;
 
     const varName = varDecl.getName();
     const initializer = varDecl.getInitializer();
@@ -133,8 +136,7 @@ export function extractVariableDeclarations(
         signature: buildArrowSignature(varName, initializer),
         isDeprecated: isDeprecated(varDecl.getSymbol()),
       });
-      extractDataFlow(initializer, nodeId, cb);
-      traverseAst(initializer, nodeId, cb);
+      analyzeCallable(initializer, nodeId, cb);
     } else if (Node.isObjectLiteralExpression(initializer)) {
       // export const handlers = { create: (...) => {}, ... }
       cb.insertNode({
@@ -158,6 +160,16 @@ export function extractVariableDeclarations(
       if (Node.isNewExpression(initializer)) {
         const targetId = resolveTypeToId(initializer.getType());
         if (targetId) cb.insertEdge(nodeId, targetId, "INSTANTIATES");
+      } else if (Node.isCallExpression(initializer)) {
+        // HOC/forwardRef/memo/styled: enriquece el nodo VARIABLE con las aristas
+        // del componente interno (inline) o referencia al componente envuelto.
+        const wrapper = unwrapReactWrapper(initializer);
+        if (wrapper?.innerFunction) {
+          analyzeCallable(wrapper.innerFunction, nodeId, cb);
+        } else if (wrapper?.wrappedIdentifier) {
+          const targetId = resolveSymbolToId(wrapper.wrappedIdentifier.getSymbol());
+          if (targetId && targetId !== nodeId) cb.insertEdge(nodeId, targetId, "REFERENCES");
+        }
       }
     }
 

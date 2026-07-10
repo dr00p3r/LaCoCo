@@ -45,6 +45,7 @@ export type EdgeRelation =
   | "CALLS"
   | "INSTANTIATES"
   | "DECLARES"
+  | "RENDERS"
   // DTG
   | "CONSUMES_DATA"
   | "PRODUCES"

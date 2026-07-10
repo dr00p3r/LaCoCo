@@ -22,6 +22,7 @@ import {
   type Node as MorphNode,
 } from "ts-morph";
 import { KNOWN_WRAPPERS } from "./types.js";
+import { isPromotableReactLocal } from "./react-predicates.js";
 
 // ───────────────────────────────────────────────────────────────────────────────
 // §6 — Resolución de tipos
@@ -87,9 +88,12 @@ export function resolveDeclarationToId(declaration: MorphNode): string | null {
     return name ? `${filePath}#${name}` : null;
   }
   if (Node.isVariableDeclaration(declaration)) {
-    return declaration.getVariableStatement()?.isExported()
-      ? `${filePath}#${declaration.getName()}`
-      : null;
+    // Lockstep con variable-extraction: exportado O componente/hook React promovido.
+    const exported = declaration.getVariableStatement()?.isExported() ?? false;
+    if (exported || isPromotableReactLocal(declaration, declaration.getSourceFile())) {
+      return `${filePath}#${declaration.getName()}`;
+    }
+    return null;
   }
   if (Node.isMethodDeclaration(declaration)) {
     const owner = declaration.getFirstAncestorByKind(SyntaxKind.ClassDeclaration);
@@ -97,9 +101,12 @@ export function resolveDeclarationToId(declaration: MorphNode): string | null {
     if (ownerName) return `${filePath}#${ownerName}.${declaration.getName()}`;
 
     const variable = declaration.getFirstAncestorByKind(SyntaxKind.VariableDeclaration);
-    return variable?.getVariableStatement()?.isExported()
-      ? `${filePath}#${variable.getName()}.${declaration.getName()}`
-      : null;
+    if (!variable) return null;
+    const varExported = variable.getVariableStatement()?.isExported() ?? false;
+    if (varExported || isPromotableReactLocal(variable, variable.getSourceFile())) {
+      return `${filePath}#${variable.getName()}.${declaration.getName()}`;
+    }
+    return null;
   }
   if (Node.isPropertyDeclaration(declaration)) {
     const owner = declaration.getFirstAncestorByKind(SyntaxKind.ClassDeclaration)?.getName();
@@ -113,6 +120,13 @@ export function resolveDeclarationToId(declaration: MorphNode): string | null {
   if (Node.isEnumMember(declaration)) {
     const owner = declaration.getFirstAncestorByKind(SyntaxKind.EnumDeclaration)?.getName();
     return owner ? `${filePath}#${owner}.${declaration.getName()}` : null;
+  }
+  // `export default <expr>` (p.ej. `withStyles(...)(Foo)`): el componente se consume
+  // vía el default export. Se mapea a `filepath#default` (mismo id que emite
+  // extractDefaultExportExpressions) para que `<Foo/>` resuelva a través de la
+  // cadena de re-exports HOC típica de mui.
+  if (Node.isExportAssignment(declaration) && !declaration.isExportEquals()) {
+    return `${filePath}#default`;
   }
   return null;
 }

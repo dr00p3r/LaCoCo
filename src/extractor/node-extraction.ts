@@ -14,7 +14,9 @@ import {
   isDeprecated,
   resolveSymbolToId,
   resolveTypeToId,
+  safeGetText,
 } from "./utilities.js";
+import { unwrapReactWrapper } from "./react-predicates.js";
 
 import {
   extractSysRelations,
@@ -199,6 +201,50 @@ function extractClasses(
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
+// §1.6 — Export default con wrappers React
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Cubre `export default withStyles(...)(Foo)` / `export default forwardRef(...)`,
+ * que hoy no producen nodo alguno (no son declaraciones nombradas). Se emite un
+ * nodo `filepath#default` (id estable, sin colisión con el `const Foo` del mismo
+ * archivo) enriquecido con las aristas del componente interno o una REFERENCES
+ * hacia el componente envuelto.
+ */
+function extractDefaultExportExpressions(
+  sourceFile: SourceFile,
+  filePath: string,
+  cb: ExtractionCallbacks,
+): void {
+  for (const assignment of sourceFile.getExportAssignments()) {
+    if (assignment.isExportEquals()) continue;
+
+    const expression = assignment.getExpression();
+    if (!Node.isCallExpression(expression)) continue;
+
+    const wrapper = unwrapReactWrapper(expression);
+    if (!wrapper) continue;
+
+    const nodeId = `${filePath}#default`;
+    cb.insertNode({
+      id: nodeId,
+      kind: "VARIABLE",
+      name: "default",
+      filepath: filePath,
+      signature: safeGetText(expression),
+      isDeprecated: 0,
+    });
+
+    if (wrapper.innerFunction) {
+      analyzeCallable(wrapper.innerFunction, nodeId, cb);
+    } else if (wrapper.wrappedIdentifier) {
+      const targetId = resolveSymbolToId(wrapper.wrappedIdentifier.getSymbol());
+      if (targetId && targetId !== nodeId) cb.insertEdge(nodeId, targetId, "REFERENCES");
+    }
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Punto de entrada principal
 // ───────────────────────────────────────────────────────────────────────────────
 
@@ -221,4 +267,5 @@ export function extractNodes(
   extractFunctions(sourceFile, filePath, cb);
   extractClasses(sourceFile, filePath, cb);
   extractVariableDeclarations(sourceFile, filePath, cb);
+  extractDefaultExportExpressions(sourceFile, filePath, cb);
 }
