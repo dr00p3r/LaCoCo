@@ -70,6 +70,10 @@ export class LaCoCoDatabase {
     return this.nodeDao.getNodeSignatures(ids);
   }
 
+  getNodeDimensions(ids: string[]): Map<string, Dimension> {
+    return this.nodeDao.getNodeDimensions(ids);
+  }
+
   searchBM25(query: string, limit = 50): { node_id: string; score: number }[] {
     return this.searchDao.searchBM25(query, limit);
   }

@@ -5,7 +5,7 @@ import { EmbeddingGenerator } from "../../../embeddings/embedding-generator.js";
 import { Bm25Service } from "./bm25-service.js";
 import { getIntentWeights } from "../../strategies/helpers/intent-weights.js";
 import { DIMENSIONS, type Dimension } from "../../../domain/dimensions.js";
-import { resolveNumberConfig } from "../../../cli/config.js";
+import { resolveNumberConfig, resolveStringConfig } from "../../../cli/config.js";
 
 const RRF_K = 60;
 
@@ -68,7 +68,7 @@ export class HybridAnchorService {
     const annResults =
       overfetch <= 1
         ? annPool.slice(0, rankingLimit)
-        : stratifyByDimension(annPool, query, rankingLimit);
+        : stratifyByDimension(annPool, query, rankingLimit, this.resolveDimOf(annPool));
 
     const annRanks = new Map<string, number>();
     for (let index = 0; index < annResults.length; index++) {
@@ -95,6 +95,23 @@ export class HybridAnchorService {
       text: signatures.get(nodeId) ?? nodeId,
     }));
   }
+
+  /**
+   * Resuelve de qué fuente sale la dimensión de cada candidato del pool ANN:
+   * - `kind` (default): la dimensión almacenada en el vector (proxy por KIND).
+   * - `edge`: la dimensión *edge-derived* del grafo (`node_metadata.dimension`,
+   *   argmax de `RELATION_TO_DIM` sobre aristas incidentes) — fiel a la tesis de
+   *   que la dimensión vive en las aristas. Si el nodo no está en node_metadata,
+   *   cae de vuelta a la dimensión del vector.
+   * En modo `edge` se hace UNA consulta batched al grafo para todo el pool.
+   */
+  private resolveDimOf(pool: AnnSearchResult[]): (result: AnnSearchResult) => Dimension | undefined {
+    if (resolveStringConfig("retrieval.annDimSource") !== "edge") {
+      return (result) => result.dimension;
+    }
+    const edgeDims = this.db.getNodeDimensions(pool.map((result) => result.node_id));
+    return (result) => edgeDims.get(result.node_id) ?? result.dimension;
+  }
 }
 
 /**
@@ -105,18 +122,22 @@ export class HybridAnchorService {
  * El pool viene ordenado por calidad ANN (best-first). El resultado se re-ordena
  * por posicion ANN original, de modo que la estratificacion decide *que* entra
  * al top-K pero el ranking dentro del subconjunto sigue siendo el de la ANN.
- * Filas sin `dimension` (indices antiguos) solo participan en la fase de relleno.
+ * `dimOf` decide la fuente de dimension de cada candidato (KIND del vector vs
+ * edge-derived del grafo). Candidatos con dimension indefinida solo participan
+ * en la fase de relleno.
  */
 function stratifyByDimension(
   pool: AnnSearchResult[],
   query: SanitizerOutput,
   limit: number,
+  dimOf: (result: AnnSearchResult) => Dimension | undefined,
 ): AnnSearchResult[] {
   const weights = getIntentWeights(query.intent, query.dimensions);
 
   const byDim: Record<Dimension, AnnSearchResult[]> = { SYS: [], CPG: [], DTG: [] };
   for (const result of pool) {
-    if (result.dimension && byDim[result.dimension]) byDim[result.dimension].push(result);
+    const dimension = dimOf(result);
+    if (dimension && byDim[dimension]) byDim[dimension].push(result);
   }
 
   const picked = new Set<string>();

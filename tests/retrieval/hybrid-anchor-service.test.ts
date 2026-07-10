@@ -29,6 +29,7 @@ function syntheticPool(): AnnSearchResult[] {
 describe("HybridAnchorService", () => {
   let db: LaCoCoDatabase;
   const previousOverfetch = process.env.LACOCO_ANN_OVERFETCH;
+  const previousDimSource = process.env.LACOCO_ANN_DIM_SOURCE;
 
   beforeEach(() => {
     db = createGraphDb();
@@ -39,6 +40,8 @@ describe("HybridAnchorService", () => {
     vi.restoreAllMocks();
     if (previousOverfetch === undefined) delete process.env.LACOCO_ANN_OVERFETCH;
     else process.env.LACOCO_ANN_OVERFETCH = previousOverfetch;
+    if (previousDimSource === undefined) delete process.env.LACOCO_ANN_DIM_SOURCE;
+    else process.env.LACOCO_ANN_DIM_SOURCE = previousDimSource;
   });
 
   it("ejecuta BM25 y la generacion del embedding en paralelo", async () => {
@@ -152,6 +155,33 @@ describe("HybridAnchorService", () => {
     // El ranking dentro del subconjunto respeta el orden ANN (CPG antes que SYS/DTG).
     expect(ids.indexOf("cpg0")).toBeLessThan(ids.indexOf("sys0"));
     expect(ids.indexOf("sys0")).toBeLessThan(ids.indexOf("dtg0"));
+  });
+
+  it("con annDimSource=edge estratifica por la dimensión edge-derived del grafo, no el KIND del vector", async () => {
+    process.env.LACOCO_ANN_OVERFETCH = "3";
+    process.env.LACOCO_ANN_DIM_SOURCE = "edge";
+    // Pool: 30 candidatos, TODOS con dimensión de vector = CPG (proxy por KIND).
+    const pool: AnnSearchResult[] = Array.from({ length: 30 }, (_, i) => ({
+      node_id: `n${i}`, score: 1 - i * 0.01, dimension: "CPG" as const,
+    }));
+    // La dimensión edge-derived DISCREPA: los candidatos profundos n20..24 son SYS,
+    // n25..29 son DTG (los que el top-20 plano por CPG jamás incluiría).
+    const edgeMap = new Map<string, "SYS" | "CPG" | "DTG">();
+    for (let i = 20; i < 25; i++) edgeMap.set(`n${i}`, "SYS");
+    for (let i = 25; i < 30; i++) edgeMap.set(`n${i}`, "DTG");
+    const dimSpy = vi.spyOn(db, "getNodeDimensions").mockReturnValue(edgeMap);
+
+    const search = vi.fn().mockResolvedValue(pool);
+    const lanceDb = { search } as unknown as LaCoCoLanceDb;
+    const anchors = new HybridAnchorService(db, lanceDb);
+
+    const result = await anchors.search(makeQuery("zzznomatchxyz", ["SYS", "CPG", "DTG"]), 20);
+    const ids = result.map((r) => r.nodeId);
+
+    expect(dimSpy).toHaveBeenCalled();
+    // Los candidatos profundos rescatados por su dimensión EDGE (aunque su KIND diga CPG).
+    expect(ids).toContain("n20"); // edge=SYS
+    expect(ids).toContain("n25"); // edge=DTG
   });
 
   it("tolera filas sin dimension (indices antiguos) rellenando por orden ANN", async () => {

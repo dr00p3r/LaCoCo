@@ -86,6 +86,15 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "retrieval.annOverfetch debe ser un entero entre 1 y 5 (1 = ANN plano actual)",
   },
+  "retrieval.annDimSource": {
+    type: "string",
+    defaultValue: "kind",
+    env: "LACOCO_ANN_DIM_SOURCE",
+    validate: (value) =>
+      value === "kind" || value === "edge"
+        ? null
+        : "retrieval.annDimSource debe ser 'kind' (proxy por KIND del vector) o 'edge' (derivada de aristas, node_metadata)",
+  },
   "hyde.enabled": {
     type: "boolean",
     defaultValue: false,

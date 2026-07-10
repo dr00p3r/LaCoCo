@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { DIMENSIONS, type Dimension } from "../../../domain/dimensions.js";
 import {
   parseGraphNode,
   requireRecord,
@@ -108,6 +109,32 @@ export class NodeDao {
         requireString(row.id, "NodeSignatureRow.id"),
         requireString(row.text, "NodeSignatureRow.text"),
       );
+    }
+    return map;
+  }
+
+  /**
+   * Dimension *edge-derived* por nodo (`node_metadata.dimension`, argmax de
+   * `RELATION_TO_DIM` sobre aristas incidentes) para los `ids` dados. A diferencia
+   * de la dimension almacenada en el vector (proxy por KIND), esta es fiel a la
+   * tesis "la dimension vive en las aristas". La consume el anclaje estratificado
+   * cuando `retrieval.annDimSource === "edge"`. Nodos sin fila en node_metadata se
+   * omiten del mapa (el llamador cae de vuelta a la dimension del vector).
+   */
+  getNodeDimensions(ids: string[]): Map<string, Dimension> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(`SELECT node_id, dimension FROM node_metadata WHERE node_id IN (${placeholders})`)
+      .all(...ids);
+    const valid = new Set<string>(DIMENSIONS);
+    const map = new Map<string, Dimension>();
+    for (const value of rows) {
+      const row = requireRecord(value, "NodeDimensionRow");
+      const dimension = requireString(row.dimension, "NodeDimensionRow.dimension");
+      if (valid.has(dimension)) {
+        map.set(requireString(row.node_id, "NodeDimensionRow.node_id"), dimension as Dimension);
+      }
     }
     return map;
   }
