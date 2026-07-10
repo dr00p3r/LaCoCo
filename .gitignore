@@ -39,3 +39,6 @@ eval/data/
 
 # Ignorar datos de LanceDB en cualquier nivel
 lancedb/
+
+# Cache local de LaCoCo (regenerable, puede ser muy grande)
+.lacoco/cache/
