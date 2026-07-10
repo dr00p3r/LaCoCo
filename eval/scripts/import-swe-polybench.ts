@@ -18,7 +18,7 @@
 
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, posix } from "node:path";
-import { parseDocument, stringify } from "yaml";
+import { parse, parseDocument, stringify } from "yaml";
 
 import { EVAL_ROOT, MANIFESTS_DIR, resolveManifestsDir } from "./lib/paths.js";
 import { translateModifiedNodes, parseModifiedNodes } from "./lib/swe-polybench-nodes.js";
@@ -28,6 +28,7 @@ import { extractMultihopFromGraph } from "./lib/multihop-translator.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import { readRepositoriesLock } from "./lib/repo-lock.js";
 import { resolveEvalLayout } from "./lib/layout.js";
+import { isEntrypoint } from "./lib/cli.js";
 import type { TaskDefinition } from "./lib/types.js";
 
 /** Campos de una instancia del dataset que consume el loader. */
@@ -59,6 +60,7 @@ interface LoaderOptions {
   includeMixed?: boolean;
   onlyMixed?: boolean;
   manifestsDir?: string;
+  append?: boolean;
 }
 
 const DATA_FILE = join(EVAL_ROOT, "data", "swe-polybench", "instances.tsjs.full.jsonl");
@@ -114,6 +116,10 @@ function parseArgs(argv: string[]): LoaderOptions {
       // single-hop (num_nodes==1). Para el test de estrategias de grafo en su regimen.
       options.onlyMixed = true;
       options.includeMixed = true;
+    } else if (arg === "--append") {
+      // Flag sin valor. Mergea con tasks.yaml/repos.yaml ya presentes en --out-dir
+      // (por id) en vez de sobrescribir → acumula varios repos en un solo manifest.
+      options.append = true;
     } else {
       throw new Error(`unknown argument: ${String(arg)}`);
     }
@@ -152,6 +158,33 @@ function shortId(instanceId: string): string {
 /** Dirs únicos (POSIX) de los archivos tocados; sirven como `expected_areas`. */
 function areasFromFiles(files: string[]): string[] {
   return [...new Set(files.map((f) => posix.dirname(f)).filter((d) => d !== "" && d !== "."))];
+}
+
+/** `mui/material-ui` → `material-ui`. Nombre corto del repo para tags/display_name. */
+export function repoNameFromSlug(repoSlug: string): string {
+  return repoSlug.split("/").pop() ?? repoSlug;
+}
+
+const TEST_DIR_RE = /(^|\/)(tests?|__tests__|spec|e2e)(\/|$)/i;
+
+/**
+ * `source_roots` del índice, derivados de los archivos tocados por la instancia.
+ * Para cada archivo (excluyendo dirs de test): si tiene un segmento `src`, la raíz
+ * es el prefijo hasta e incluyendo `src` (→ `packages/<pkg>/src` en monorepos como
+ * mui, `src` en single-tree como svelte/prettier); si no, el primer segmento de dir
+ * (p. ej. `lib` en serverless). Escopa el índice al subárbol que contiene el gold,
+ * clave para que un monorepo no se indexe entero. Fallback `["src"]`.
+ */
+export function deriveSourceRoots(changedFiles: readonly string[] | null): string[] {
+  const roots = new Set<string>();
+  for (const file of changedFiles ?? []) {
+    if (TEST_DIR_RE.test(file)) continue;
+    const parts = file.split("/");
+    const srcIdx = parts.indexOf("src");
+    if (srcIdx >= 0) roots.add(parts.slice(0, srcIdx + 1).join("/"));
+    else if (parts.length > 1) roots.add(parts[0]!);
+  }
+  return roots.size > 0 ? [...roots].sort() : ["src"];
 }
 
 /** Títulos de prueba F2P parseados (repr Python → ids → título). Solo trazabilidad. */
@@ -328,7 +361,7 @@ function build(instances: SwePolyBenchInstance[], ctx: BuildContext): BuildResul
         relevant_terms: [],
         annotation_notes: "No aplica al smoke de retrieval SWE-PolyBench.",
       },
-      tags: ["swe-polybench", "svelte"],
+      tags: ["swe-polybench", repoNameFromSlug(inst.repo)],
       swe_polybench: {
         instance_id: inst.instance_id,
         base_commit: inst.base_commit,
@@ -341,13 +374,13 @@ function build(instances: SwePolyBenchInstance[], ctx: BuildContext): BuildResul
 
     repositories.push({
       id,
-      display_name: `svelte @ ${inst.base_commit.slice(0, 7)}`,
-      url: "https://github.com/sveltejs/svelte.git",
+      display_name: `${repoNameFromSlug(inst.repo)} @ ${inst.base_commit.slice(0, 7)}`,
+      url: `https://github.com/${inst.repo}.git`,
       ref: inst.base_commit,
       package_manager: "npm",
       install_command: "npm install",
       test_command: inst.test_command,
-      source_roots: ["src"],
+      source_roots: deriveSourceRoots(inst.changed_files ?? null),
       tsconfig_candidates: [],
       language_scope: ["javascript", "typescript"],
     });
@@ -408,6 +441,22 @@ function writeRunManifest(outDir: string): void {
   writeFileSync(join(outDir, "run.yaml"), doc.toString(), "utf8");
 }
 
+/** Lee la lista (`tasks`/`repositories`) de un manifest YAML existente, o [] si no existe. */
+function readExistingList(path: string, key: "tasks" | "repositories"): Record<string, unknown>[] {
+  if (!existsSync(path)) return [];
+  const doc = parse(readFileSync(path, "utf8")) as Record<string, unknown> | null;
+  const list = doc?.[key];
+  return Array.isArray(list) ? (list as Record<string, unknown>[]) : [];
+}
+
+/** Mergea dos listas de objetos por `id` (los `next` ganan sobre `prev`). */
+function mergeById<T extends { id?: unknown }>(prev: T[], next: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const item of prev) byId.set(String(item.id), item);
+  for (const item of next) byId.set(String(item.id), item);
+  return [...byId.values()];
+}
+
 function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
   const manifest = {
     manifest_version: 1,
@@ -455,17 +504,28 @@ async function main(): Promise<void> {
   const { tasks, repositories, totalNodes, totalUnmapped, withUnmapped, multihopComputed, multihopEmpty, patches, fellBackToFileLevel } = build(instances, ctx);
 
   mkdirSync(options.outDir, { recursive: true });
-  writeTasksManifest(options.outDir, tasks);
-  writeReposManifest(options.outDir, repositories);
+
+  // --append: mergea con lo ya presente en --out-dir por `id` (los nuevos ganan),
+  // para acumular varios repos en un solo manifest sin re-correr desde cero.
+  const tasksAsRecords = tasks as unknown as Record<string, unknown>[];
+  let outTasks: Record<string, unknown>[] = tasksAsRecords;
+  let outRepos: Record<string, unknown>[] = repositories;
+  if (options.append === true) {
+    outTasks = mergeById(readExistingList(join(options.outDir, "tasks.yaml"), "tasks"), tasksAsRecords);
+    outRepos = mergeById(readExistingList(join(options.outDir, "repos.yaml"), "repositories"), repositories);
+  }
+
+  writeTasksManifest(options.outDir, outTasks as unknown as TaskDefinition[]);
+  writeReposManifest(options.outDir, outRepos);
   writeRunManifest(options.outDir);
   writePatchSidecars(options.outDir, patches);
   for (const name of SHARED_MANIFESTS) {
     copyFileSync(join(MANIFESTS_DIR, name), join(options.outDir, name));
   }
 
-  console.log(`Instancias: ${instances.length} (${options.repo})`);
+  console.log(`Instancias: ${instances.length} (${options.repo})${options.append ? " [append]" : ""}`);
   console.log(`Manifests escritos en: ${options.outDir}`);
-  console.log(`  tasks.yaml (${tasks.length}), repos.yaml (${repositories.length}), run.yaml (+split swe-polybench)`);
+  console.log(`  tasks.yaml (${outTasks.length}), repos.yaml (${outRepos.length}), run.yaml (+split swe-polybench)`);
   console.log(`  copiados verbatim: ${SHARED_MANIFESTS.join(", ")}`);
   console.log(`patch-evidence: ${patches.length} sidecar(s) en patches/ · ${fellBackToFileLevel} tarea(s) file-level (patch sin nodo mapeable)`);
   console.log(`relevant_nodes (diagnóstico) totales: ${totalNodes} · sin mapear: ${totalUnmapped}`);
@@ -482,7 +542,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (isEntrypoint(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}
