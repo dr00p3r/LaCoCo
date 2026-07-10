@@ -395,7 +395,8 @@ async function retrieveContext(
       const hydeClient = hydeModel === resolveStringConfig("agent.model")
         ? ollama
         : new OllamaService(options.ollama, hydeModel, resolveNumberConfig("timeout.ms"));
-      const outcome = await applyHyde(sanitized, query, hydeClient);
+      const hydeMode = resolveStringConfig("hyde.mode") === "concat" ? "concat" : "replace";
+      const outcome = await applyHyde(sanitized, query, hydeClient, hydeMode);
       if (outcome.error) {
         verbose(`[CLI] HyDE falló (${outcome.error}); se usa embedding_input original`);
       } else if (outcome.applied) {

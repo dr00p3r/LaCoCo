@@ -102,15 +102,23 @@ export interface HydeOutcome {
  * nunca debe romper el retrieval. El gate `hyde.enabled` se evalúa en el
  * llamador para mantener este módulo desacoplado de la configuración.
  */
+export type HydeMode = "replace" | "concat";
+
 export async function applyHyde(
   sanitizer: SanitizerOutput,
   prompt: string,
   client: LlmClient,
+  mode: HydeMode = "replace",
 ): Promise<HydeOutcome> {
   if (sanitizer.route !== "RAG") return { sanitizer, applied: false };
   try {
     const snippet = await new HydeGenerator(client).generate(prompt);
-    return { sanitizer: { ...sanitizer, embedding_input: snippet }, applied: true };
+    // `replace`: solo el snippet hipotético (mueve del todo el canal denso al
+    // vocabulario de código). `concat`: snippet + query original, para conservar
+    // la señal del issue y (hipótesis) no degradar el MRR tanto como replace.
+    const embedding_input =
+      mode === "concat" ? `${snippet}\n\n${sanitizer.embedding_input}` : snippet;
+    return { sanitizer: { ...sanitizer, embedding_input }, applied: true };
   } catch (error) {
     return {
       sanitizer,

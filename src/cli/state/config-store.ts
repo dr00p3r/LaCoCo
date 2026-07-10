@@ -100,6 +100,15 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "hyde.model debe ser un string (vacío = hereda intermediary.model)",
   },
+  "hyde.mode": {
+    type: "string",
+    defaultValue: "replace",
+    env: "LACOCO_HYDE_MODE",
+    validate: (value) =>
+      value === "replace" || value === "concat"
+        ? null
+        : "hyde.mode debe ser 'replace' (solo snippet) o 'concat' (snippet + query)",
+  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,

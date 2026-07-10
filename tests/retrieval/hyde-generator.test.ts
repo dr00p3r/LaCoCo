@@ -54,6 +54,15 @@ describe("applyHyde", () => {
     expect(outcome.sanitizer.clean_query).toBe('"save"'); // canal BM25 sin tocar
   });
 
+  it("modo concat combina snippet + query original (conserva señal del issue)", async () => {
+    const client = mockClient([JSON.stringify({ snippet: "class OrderService {}" })]);
+    const query = ragQuery("por qué save falla");
+    const outcome = await applyHyde(query, "por qué save falla", client, "concat");
+    expect(outcome.applied).toBe(true);
+    expect(outcome.sanitizer.embedding_input).toContain("class OrderService");
+    expect(outcome.sanitizer.embedding_input).toContain("por qué save falla");
+  });
+
   it("cae de vuelta al embedding_input original si el SLM falla", async () => {
     const client = mockClient(["no-json", "tampoco-json"]);
     const query = ragQuery("texto original");

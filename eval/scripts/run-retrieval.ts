@@ -338,7 +338,8 @@ async function freezeSlmQuery(
       const hydeClient = hydeModel === resolveIntermediaryModel()
         ? ollama
         : new OllamaService(resolveStringConfig("agent.endpoint"), hydeModel, resolveNumberConfig("timeout.ms"));
-      const outcome = await applyHyde(sanitizer, task.prompt, hydeClient);
+      const hydeMode = resolveStringConfig("hyde.mode") === "concat" ? "concat" : "replace";
+      const outcome = await applyHyde(sanitizer, task.prompt, hydeClient, hydeMode);
       if (outcome.applied) {
         console.log(`[HyDE] task ${task.id}: embedding_input reescrito por ${hydeModel}`);
       } else if (outcome.error) {
