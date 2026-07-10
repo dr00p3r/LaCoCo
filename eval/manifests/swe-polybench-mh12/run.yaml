@@ -314,6 +314,8 @@ splits:
       - clcr
       - consensus
     sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
     require_gold_status: ready
     repo_ids:
       - svelte-464
