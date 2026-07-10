@@ -58,6 +58,43 @@ LACOCO_ANN_OVERFETCH=1 LACOCO_HYDE=1 LACOCO_HYDE_MODEL=qwen2.5-coder:7b ...   # 
 npm run eval:metrics:retrieval -- --run-id <id> --manifests-dir $MD
 ```
 
+## Anexo A — Bonus: HyDE modo `concat` (hipótesis refutada)
+
+Se probó una variante `LACOCO_HYDE_MODE=concat` que embebe `snippet + "\n\n" + issue` (en vez de solo el
+snippet), apostando a preservar el recall de HyDE sin degradar el MRR.
+
+| estrategia | EditSiteHit base/replace/concat | EditSiteMRR base/replace/concat |
+|---|---|---|
+| hybrid    | 0.625 / 0.750 / 0.750 | 0.441 / 0.305 / 0.239 |
+| clcr      | 0.750 / 0.625 / 0.625 | 0.464 / 0.298 / 0.305 |
+| consensus | 0.750 / 0.875 / 0.750 | 0.464 / 0.382 / 0.386 |
+
+**Refutada:** concat perdió la ganancia de recall de consensus (0.875 → 0.750) y no arregló el MRR
+(hybrid incluso peor). Diluir el snippet con el texto del issue debilita la señal HyDE sin compensar.
+`replace` sigue siendo la mejor variante HyDE; el camino para rescatar el MRR es otro (mejor modelo o
+un re-ranking post-hoc de los edit-sites rescatados).
+
+## Anexo B — A/B de generación (deepseek-v4-flash, la nube volvió)
+
+La nube `opencode-go` salió de mantenimiento durante la sesión (deepseek-v4-flash responde). Se corrió
+generación real no_context vs consensus (contexto del run dimB) sobre las 8 tareas. Pass@1 reconstruido
+de los `tests.log` por celda (costo total ~$0.25).
+
+| tarea | no_context | consensus | nota |
+|---|---|---|---|
+| svelte-1095 | PASS | PASS | fácil, ambos |
+| svelte-1376 | fail | **PASS** | mismo archivo `EventHandler.ts`; consensus arregla, no_context no |
+| svelte-1932 | PASS | timeout | +contexto empuja a deepseek más allá de 600s (repo 987 nodos) |
+| 464/477/630 | fail | fail | ninguno resuelve |
+| 1137/1231 | timeout | timeout | el agente edita 30+ archivos y se descontrola |
+
+- Global 2/8 vs 2/8 (empate); en las 5 tareas gradeable-limpias en ambos: **consensus 2/5 vs no_context 1/5**.
+- **(1)** El contexto mejora la *calidad del fix* (svelte-1376). **(2)** El contexto tiene *costo de
+  latencia*: en el repo grande empujó al agente al timeout → tensión calidad↔latencia (norte=eficiencia).
+  **(3)** deepseek a veces regenera lockfiles / edita 30+ archivos pese al prompt (ruido del agente).
+- n=8 con 2 timeouts → direccional, no concluyente. Escalable ahora que la nube responde (subir timeout
+  a 1200s para tareas grandes; reintentar los timeouts).
+
 ## Notas metodológicas
 
 - Determinismo: sanitizer congelado por brazo; ANN determinista → deltas atribuibles a los flags.
