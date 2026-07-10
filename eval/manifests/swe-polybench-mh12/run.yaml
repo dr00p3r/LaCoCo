@@ -303,6 +303,39 @@ splits:
       - baseline
     require_gold_status: ready
 
+  generation_mh:
+    description: >-
+      Generacion (norte = eficiencia) sobre los 8 svelte multi-hop indexados.
+      Compara no_context / hybrid / clcr / consensus alimentados con el contexto
+      SLM (baseline). Mide dPass@1 + tiempo + costo vs no_context.
+    strategies:
+      - no_context
+      - hybrid
+      - clcr
+      - consensus
+    sanitizer_variant: baseline
+    require_gold_status: ready
+    repo_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+    task_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+    agents:
+      - opencode
+
 resource_limits:
   max_parallel_repos: 1
   max_parallel_tasks: 1

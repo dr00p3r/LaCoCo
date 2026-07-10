@@ -72,7 +72,8 @@ clasificador ni retrieval. Reindexar el grafo deja el perfil `stale`.
 
 ## Retrieval
 
-Recupera contexto relevante del proyecto indexado usando una de cinco estrategias.
+Recupera contexto relevante del proyecto indexado usando una de seis estrategias
+(`hybrid`, `agentic`, `ictd`, `clcr`, `rpr`, `consensus`).
 
 ### Pipeline RAG completo
 
