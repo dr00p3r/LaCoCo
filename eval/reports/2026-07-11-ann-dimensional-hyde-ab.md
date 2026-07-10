@@ -95,6 +95,41 @@ de los `tests.log` por celda (costo total ~$0.25).
 - n=8 con 2 timeouts → direccional, no concluyente. Escalable ahora que la nube responde (subir timeout
   a 1200s para tareas grandes; reintentar los timeouts).
 
+## Anexo C — ¿La dimensión de nodo aporta? KIND-proxy vs edge-derived (decisivo)
+
+**Duda de raíz (usuario + compañero):** la dimensión se guarda en los NODOS del vector, pero
+conceptualmente "vive en las aristas". Hay de hecho **tres** representaciones: (1) nodo en el vector =
+`KIND_TO_DIM[kind]` (proxy sintáctico, ignora aristas) — lo que usaba Mejora B; (2) nodo en el grafo
+`node_metadata.dimension` = argmax de `RELATION_TO_DIM` sobre aristas incidentes (fiel, ya existía pero
+retrieval no la leía); (3) aristas en tiempo de query (lo que usan consensus/clcr/ictd al expandir).
+
+Se añadió `retrieval.annDimSource=kind|edge` para estratificar el anclaje por la dimensión fiel
+(edge-derived) en vez del proxy, y se re-corrió el A/B:
+
+| estrategia | EditSiteHit base / kind / **edge** | EditSiteMRR base / kind / **edge** |
+|---|---|---|
+| hybrid    | 0.625 / 0.625 / **0.625** | 0.441 / 0.444 / **0.441** |
+| clcr      | 0.750 / 0.750 / **0.750** | 0.464 / 0.466 / **0.464** |
+| consensus | 0.750 / **0.875** / **0.750** | 0.464 / 0.466 / **0.464** |
+
+**Veredicto (contraintuitivo, importante):** la dimensión **edge-derived — la "correcta" — no aporta
+NADA: `edge == base` exacto** (top-8 de svelte-464 consensus idéntico al baseline plano; la
+estratificación por aristas reprodujo el flat top-K). El +0.125 de Mejora B venía **solo** del
+**proxy por KIND**, que sí cambia el pool (`kind != base`) y rescató un edit-site en n=8.
+
+**Interpretación honesta:** el +0.125 **no** es evidencia de que "el anclaje dimensional pague". Es un
+artefacto de bucketing grueso: el proxy KIND agrupa por tipo sintáctico (debug→CPG→funciones/métodos), y
+en n=8 eso rescató 1 edit-site — frágil, no principiado. Cuando se usa la señal fiel (aristas), el
+efecto desaparece. **La skepticism del compañero era correcta:** la dimensión-de-nodo no añade valor
+robusto en el anclaje. La dimensión que sí paga es la **edge-borne en la EXPANSIÓN de grafo** (consensus
+ya la usa vía `RELATION_TO_DIM`+`getIntentWeights`), no a nivel de nodo-ancla.
+
+**Recomendación:** no vender Mejora B como mejora principiada. Dejarla como knob opcional off-por-defecto
+con este caveat, o retirarla; la energía va mejor a la expansión (consensus, la contribución defendible),
+a los baselines (RepoGraph/Aider) y a escalar generación. Reframe testeable (fuera de este alcance): el
++0.125 podría ser "preferir funciones/métodos en debug", no anclaje dimensional — probar con una heurística
+kind-pura sin dimensiones lo confirmaría.
+
 ## Notas metodológicas
 
 - Determinismo: sanitizer congelado por brazo; ANN determinista → deltas atribuibles a los flags.
