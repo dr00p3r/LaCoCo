@@ -223,12 +223,18 @@ function parseConfigValue(key: ConfigKey, rawValue: string): ConfigValue {
     case "number":
       value = Number(rawValue);
       break;
-    case "boolean":
-      if (rawValue !== "true" && rawValue !== "false") {
-        throw new Error(`${key} debe ser true o false`);
+    case "boolean": {
+      // Acepta formas comunes truthy/falsy además de true/false, para que flags
+      // vía env como `LACOCO_HYDE=1` funcionen sin footguns (case-insensitive).
+      const normalized = rawValue.trim().toLowerCase();
+      const truthy = normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on";
+      const falsy = normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off";
+      if (!truthy && !falsy) {
+        throw new Error(`${key} debe ser booleano (true/false, 1/0, yes/no, on/off)`);
       }
-      value = rawValue === "true";
+      value = truthy;
       break;
+    }
     case "string":
       value = rawValue;
       break;
