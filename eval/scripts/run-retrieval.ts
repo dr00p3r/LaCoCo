@@ -20,13 +20,12 @@ import {
   readIndexEmbeddingMetadata,
   resolveEmbeddingProfile,
 } from "./lib/embedding-profile.js";
-import { resolveBooleanConfig, resolveHydeModel, resolveIntermediaryModel, resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
+import { resolveIntermediaryModel, resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
 import { resolveDbPath } from "../../src/cli/storage-paths.js";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
 import { AgentIntermediary1 } from "../../src/retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { SlmClassifier } from "../../src/retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import { applyHyde } from "../../src/retriever/utilities/mini-agents/agent-intermediary/hyde-generator.js";
 import { QueryGrounder } from "../../src/semantic-profile/query-grounder.js";
 import { SemanticProfileStore } from "../../src/semantic-profile/semantic-profile-store.js";
 import type { QueryGrounding } from "../../src/semantic-profile/types.js";
@@ -326,27 +325,6 @@ async function freezeSlmQuery(
     }
     if (sanitizer.route !== "RAG") {
       throw new Error(`task ${task.id}: el sanitizer congelado produjo route=${sanitizer.route}; retrieval requiere RAG`);
-    }
-
-    // HyDE (flag LACOCO_HYDE): reescribe embedding_input como un documento
-    // hipotético antes de congelar; clean_query (BM25) queda intacto. Fallback
-    // silencioso al embedding_input original si el SLM falla. Se aplica ANTES de
-    // cachear para que la entrada congelada refleje HyDE; la clave de caché es
-    // HyDE-aware (ver `new SlmCache` abajo) para no colisionar con el baseline.
-    if (resolveBooleanConfig("hyde.enabled")) {
-      const hydeModel = resolveHydeModel();
-      const hydeClient = hydeModel === resolveIntermediaryModel()
-        ? ollama
-        : new OllamaService(resolveStringConfig("agent.endpoint"), hydeModel, resolveNumberConfig("timeout.ms"));
-      const hydeMode = resolveStringConfig("hyde.mode") === "concat" ? "concat" : "replace";
-      const outcome = await applyHyde(sanitizer, task.prompt, hydeClient, hydeMode);
-      if (outcome.applied) {
-        console.log(`[HyDE] task ${task.id}: embedding_input reescrito por ${hydeModel}`);
-      } else if (outcome.error) {
-        console.warn(`[HyDE] task ${task.id}: fallo (${outcome.error}); se usa embedding_input original`);
-      }
-      sanitizer = outcome.sanitizer;
-      if (hydeClient !== ollama) hydeClient.abort();
     }
 
     const sanitizerDurationMs = Math.round(performance.now() - startedAt);
@@ -723,14 +701,8 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
 
   const failures: string[] = [];
   let stop = false;
-  // Identidad del modelo para la clave de caché: HyDE-aware para que una corrida
-  // con LACOCO_HYDE=1 no reutilice la entrada baseline (embedding_input distinto)
-  // ni al revés. Dos corridas HyDE con el mismo modelo sí comparten caché.
-  const cacheModelId = resolveBooleanConfig("hyde.enabled")
-    ? `${resolveIntermediaryModel()}+hyde:${resolveHydeModel()}`
-    : resolveIntermediaryModel();
   const slmCache = isSlmCacheEnabled()
-    ? new SlmCache(defaultSlmCachePath(layout.workdir), cacheModelId)
+    ? new SlmCache(defaultSlmCachePath(layout.workdir), resolveIntermediaryModel())
     : null;
   if (slmCache !== null) {
     console.log(`SLM cache: ${slmCache.getPath()} (${slmCache.size()} entradas previas)`);

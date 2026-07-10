@@ -27,9 +27,8 @@ import type {
   QueryGrounding,
 } from "../semantic-profile/types.js";
 import type { DetailedClassification } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import { applyHyde } from "../retriever/utilities/mini-agents/agent-intermediary/hyde-generator.js";
 import { resolveConfig } from "./state/config-store.js";
-import { resolveHydeModel, resolveIntermediaryModel } from "./config.js";
+import { resolveIntermediaryModel } from "./config.js";
 import { writeTextFileAtomic } from "./state/json-store.js";
 import { inspectProject } from "./state/project-registry.js";
 import { resolveDbPath, resolveLanceDbPath } from "./storage-paths.js";
@@ -387,23 +386,6 @@ async function retrieveContext(
         [],
         sanitized.embedding_input || query,
       );
-    }
-
-    if (resolveBooleanConfig("hyde.enabled")) {
-      stage = "HyDE";
-      const hydeModel = resolveHydeModel();
-      const hydeClient = hydeModel === resolveStringConfig("agent.model")
-        ? ollama
-        : new OllamaService(options.ollama, hydeModel, resolveNumberConfig("timeout.ms"));
-      const hydeMode = resolveStringConfig("hyde.mode") === "concat" ? "concat" : "replace";
-      const outcome = await applyHyde(sanitized, query, hydeClient, hydeMode);
-      if (outcome.error) {
-        verbose(`[CLI] HyDE falló (${outcome.error}); se usa embedding_input original`);
-      } else if (outcome.applied) {
-        verbose(`[CLI] HyDE: embedding_input reescrito por ${hydeModel}`);
-      }
-      sanitized = outcome.sanitizer;
-      if (hydeClient !== ollama) hydeClient.abort();
     }
 
     stage = "selección de estrategia";

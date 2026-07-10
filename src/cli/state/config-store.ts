@@ -95,29 +95,6 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "retrieval.annDimSource debe ser 'kind' (proxy por KIND del vector) o 'edge' (derivada de aristas, node_metadata)",
   },
-  "hyde.enabled": {
-    type: "boolean",
-    defaultValue: false,
-    env: "LACOCO_HYDE",
-  },
-  "hyde.model": {
-    type: "string",
-    defaultValue: "",
-    env: "LACOCO_HYDE_MODEL",
-    validate: (value) =>
-      typeof value === "string"
-        ? null
-        : "hyde.model debe ser un string (vacío = hereda intermediary.model)",
-  },
-  "hyde.mode": {
-    type: "string",
-    defaultValue: "replace",
-    env: "LACOCO_HYDE_MODE",
-    validate: (value) =>
-      value === "replace" || value === "concat"
-        ? null
-        : "hyde.mode debe ser 'replace' (solo snippet) o 'concat' (snippet + query)",
-  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,
@@ -243,7 +220,7 @@ function parseConfigValue(key: ConfigKey, rawValue: string): ConfigValue {
       break;
     case "boolean": {
       // Acepta formas comunes truthy/falsy además de true/false, para que flags
-      // vía env como `LACOCO_HYDE=1` funcionen sin footguns (case-insensitive).
+      // booleanos vía env (p. ej. `LACOCO_...=1`) funcionen sin footguns (case-insensitive).
       const normalized = rawValue.trim().toLowerCase();
       const truthy = normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on";
       const falsy = normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off";

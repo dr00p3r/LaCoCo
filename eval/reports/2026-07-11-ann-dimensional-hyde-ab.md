@@ -5,6 +5,11 @@
 **Tareas (8):** svelte-464, -477, -630, -1095, -1137, -1231, -1376, -1932
 **Métrica primaria:** EditSiteHit@10 · **Secundaria:** EditSiteMRR · determinista (sanitizer congelado).
 
+> **Nota (2026-07-11):** C1/HyDE fue **retirado del código** tras este veredicto (no es win: recall+ pero
+> MRR−, concat refutado). Este reporte se conserva como registro histórico del experimento. Mejora B
+> (`retrieval.annOverfetch`/`annDimSource`) sigue en el código (ver Anexo C: la dim-de-nodo no aporta
+> de forma robusta).
+
 ## Qué se probó
 
 Dos mejoras nuevas del canal denso del anclaje, cada una tras un flag (default neutro → cero regresión):

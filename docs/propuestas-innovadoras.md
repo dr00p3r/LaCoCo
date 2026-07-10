@@ -20,25 +20,21 @@ C2–C5 extienden estas dos direcciones (query-side / doc-side / grafo-side / re
 
 ---
 
-## C1 · HyDE-code — EASY — *se construye aquí (tras `LACOCO_HYDE`)*
+## C1 · HyDE-code — ❌ PROBADO Y RETIRADO (2026-07-11)
 
-**Idea.** En lugar de embeber la descripción del bug, el SLM escribe el **fragmento TS hipotético que
-probablemente lo arregla o que lanzaría el error**, y se embebe *eso*. Es HyDE (Hypothetical Document
-Embeddings) especializado a código: acerca el vector de la query al vector del código objetivo.
+**Qué era.** En lugar de embeber la descripción del bug, el SLM escribía el **fragmento TS hipotético
+que probablemente lo arregla o que lanzaría el error**, y se embebía *eso* (HyDE especializado a código).
 
-**Reutiliza.** El intermediario existente: `hyde-generator.ts` espeja `classifier.ts` (mismo
-`LlmClient.chat`, `format` JSON, `temperature:0/seed:42`, `think:false`). `applyHyde` reemplaza
-`sanitizer.embedding_input` tras la clasificación (RRF/BM25 intactos: solo se mueve el canal denso).
-Inyectado en `run-retrieval.ts` (freeze del sanitizer, A/B) y `pipeline.ts` (prod). Flag off por
-defecto → cero regresión. Modelo vía `hyde.model` (hereda `intermediary.model`).
+**Veredicto (medido, n=8 svelte):** **no es win.** Rescataba recall en hybrid/consensus (+0.125
+EditSiteHit) pero **degradaba EditSiteMRR en las tres estrategias** y regresionaba clcr (−0.125): los
+edit-sites rescatados entraban al top-K pero rankeaban bajo. Una variante `concat` (snippet + issue) para
+rescatar el MRR **fue refutada** (perdió el recall sin arreglar el MRR). Detalle en
+`eval/reports/2026-07-11-ann-dimensional-hyde-ab.md`.
 
-**Ataca.** Los multi-hop "duros" del smoke svelte donde el retrieval plano no llega (memoria
-`swe-polybench-fulltext-query-result`: 4/9 tareas quedaron duras tras pasar a query=texto-completo).
-HyDE es el siguiente paso natural de esa palanca: de *texto del issue* a *código hipotético*.
-
-**Predicción.** Sube EditSiteHit@10 en tareas donde el issue describe síntoma (error de runtime,
-mensaje de rollup) pero el edit-site es una función con vocabulario distinto. Riesgo: SLM débil mete
-ruido → por eso off por defecto y A/B flag on/off.
+**Estado:** el código (hyde-generator, `applyHyde`, flags `hyde.*`) fue **retirado del repositorio**
+(2026-07-11) por decisión de producto — no convence como idea y no pagó en la medición. Se conserva
+aquí y en el reporte como registro. Camino si se retoma: un re-ranking post-hoc que corrija el MRR de
+los rescatados, o un modelo de generación de snippet más capaz (nube).
 
 ---
 
