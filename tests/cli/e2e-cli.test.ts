@@ -67,6 +67,38 @@ describe("lacoco CLI E2E", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("indexa el grafo de un repositorio multi-servicio ignorando servicios no TypeScript", (context) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lacoco-e2e-ms-"));
+    const projectDir = path.join(tempDir, "arq-ms");
+    const stateHome = path.join(tempDir, "state-home");
+
+    try {
+      createMicroserviceFixture(projectDir);
+
+      runCli(["index_graph", projectDir], stateHome);
+
+      const expectedDbPath = path.join(projectDir, ".lacoco", "tensor.sqlite");
+      const sqlite = new Database(expectedDbPath, { readonly: true });
+      try {
+        const rows = sqlite
+          .prepare("SELECT id FROM nodes ORDER BY id")
+          .all() as Array<{ id: string }>;
+        expect(rows.some((row) => row.id.endsWith("/api-gateway/src/api_gateway.ts#GatewayService"))).toBe(true);
+        expect(rows.some((row) => row.id.endsWith("/tickets/src/tickets.ts#TicketsService"))).toBe(true);
+        expect(rows.some((row) => row.id.includes("/usuarios/"))).toBe(false);
+      } finally {
+        sqlite.close();
+      }
+    } catch (err) {
+      if (isSpawnPermissionError(err)) {
+        context.skip();
+      }
+      throw err;
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function runCli(
@@ -116,6 +148,54 @@ function createFixtureProject(projectDir: string): void {
       "export class OrderService {",
       "  createOrder(dto: CreateOrderDto): number {",
       "    return dto.amount;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+}
+
+function createMicroserviceFixture(projectDir: string): void {
+  fs.mkdirSync(path.join(projectDir, ".git"), { recursive: true });
+  createService(projectDir, "api-gateway", "GatewayService");
+  createService(projectDir, "tickets", "TicketsService");
+  fs.mkdirSync(path.join(projectDir, "usuarios"), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, "usuarios", "pom.xml"), "<project></project>", "utf-8");
+}
+
+function createService(projectDir: string, serviceDir: string, className: string): void {
+  const root = path.join(projectDir, serviceDir);
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: serviceDir, version: "1.0.0" }, null, 2),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(root, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+      },
+      include: ["src/**/*.ts"],
+    }, null, 2),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(root, "tsconfig.build.json"),
+    JSON.stringify({ extends: "./tsconfig.json" }, null, 2),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(root, "src", `${serviceDir.replaceAll("-", "_")}.ts`),
+    [
+      `export class ${className} {`,
+      "  ping(): string {",
+      `    return "${serviceDir}";`,
       "  }",
       "}",
       "",

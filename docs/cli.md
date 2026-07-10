@@ -34,10 +34,10 @@ Dos pasos independientes que crean las bases de datos que consumen las estrategi
 ### Grafo estructural (SQLite + FTS5)
 
 ```bash
-lacoco index_graph <ruta-tsconfig>
+lacoco index_graph <ruta-tsconfig-o-proyecto>
 ```
 
-Extrae el AST con ts-morph y persiste nodos, aristas y metadatos dimensionales (SYS/CPG/DTG) en SQLite. Activa FTS5 para busqueda BM25.
+Extrae el AST con ts-morph y persiste nodos, aristas y metadatos dimensionales (SYS/CPG/DTG) en SQLite. Activa FTS5 para busqueda BM25. Si recibe un directorio, descubre proyectos JavaScript/TypeScript bajo ese arbol (`tsconfig*.json`) e ignora servicios no soportados, por ejemplo Spring Boot.
 
 Opciones:
 - `-d, --db <path>` — ruta de salida (defecto: `paths.data/tensor.sqlite` del proyecto)
@@ -46,10 +46,10 @@ Opciones:
 ### Vectores semanticos (LanceDB)
 
 ```bash
-lacoco index_vectors <ruta-tsconfig>
+lacoco index_vectors <ruta-tsconfig-o-proyecto>
 ```
 
-Genera embeddings con `all-MiniLM-L6-v2` (384 dimensiones) y los persiste en LanceDB con indice HNSW.
+Genera embeddings con `all-MiniLM-L6-v2` (384 dimensiones) y los persiste en LanceDB con indice HNSW. Igual que `index_graph`, puede recibir un repositorio multi-servicio y procesar todos los `tsconfig*.json` utiles encontrados.
 
 Opciones:
 - `--lancedb <path>` — directorio de salida (defecto: `paths.data/lancedb` del proyecto)
