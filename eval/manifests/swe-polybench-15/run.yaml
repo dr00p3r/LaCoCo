@@ -1,0 +1,384 @@
+manifest_version: 1
+kind: run_configuration
+updated_at: "2026-07-05"
+
+run:
+  default_id_template: "{date_yyyy_mm_dd}-{git_short_sha}-{label}"
+  label: "pilot"
+  mode: "pilot"
+  official: false
+  random_seed: 42
+  timezone: "America/Guayaquil"
+
+paths:
+  root: "eval"
+  manifests: "eval/manifests"
+  workdir: "eval/workdir"
+  # Árbol canónico = Jina (single-tree, Fase 3). `repos-jina/`+`indexes-jina/` es el
+  # ÚNICO árbol activo; `repos/`+`indexes/` (MiniLM, 384d) quedan como histórico/
+  # archivado (runs viejos no recomputables — sus métricas ya están congeladas y se
+  # resuelven contra el repoPath de su lock, no contra estos paths). Apuntar aquí al
+  # árbol Jina hace que eval:index construya en indexes-jina/ y vuelve estricto el
+  # assert de consistencia de embedding (Fase 2).
+  repos: "eval/workdir/repos-jina"
+  indexes: "eval/workdir/indexes-jina"
+  runs: "eval/runs"
+  artifacts: "eval/runs/{run_id}/artifacts"
+  lock_file: "eval/runs/{run_id}/repos.lock.json"
+
+inputs:
+  repos_manifest: "eval/manifests/repos.yaml"
+  strategies_manifest: "eval/manifests/strategies.yaml"
+  agents_manifest: "eval/manifests/agents.yaml"
+  metrics_manifest: "eval/manifests/metrics.yaml"
+  tasks_manifest: "eval/manifests/tasks.yaml"
+
+# Perfil de embedding — FUENTE DE VERDAD ÚNICA del modelo de vectores del eval.
+# index-repos y run-retrieval lo resuelven y setean LACOCO_EMBEDDING_* para TODOS
+# los subprocesos (indexado y retrieval), y persisten `embedding.json` junto al
+# índice para verificar consistencia al recuperar. El operador ya NO exporta estas
+# variables a mano (antes se caían en silencio → query-MiniLM sobre índice-Jina).
+embedding:
+  model: "jinaai/jina-embeddings-v2-base-code"
+  dim: 768
+  quantized: false
+
+# Grounding — construcción offline del Project Semantic Profile (Ollama).
+# `enrich_concurrency` = lotes de enriquecimiento en vuelo simultáneos; requiere
+# OLLAMA_NUM_PARALLEL>=ese valor en el server para que no encolen. Solo acelera la
+# construcción; el QueryGrounder en consulta es determinista, así que NO altera la
+# línea base del A/B de retrieval — únicamente el wall-clock del build.
+grounding:
+  enrich_concurrency: 6
+
+phases:
+  prepare_repos:
+    enabled: true
+    write_lock_file: true
+    verify_refs: true
+    verify_package_manager: true
+    install_dependencies: true
+    run_baseline_tests: false
+    fail_on_baseline_test_failure: false
+    verify_regression: false
+
+  index_repos:
+    enabled: true
+    force_reindex: false
+    graph: true
+    vectors: true
+    commands:
+      init_template: "npm run dev -- init {repo_path}"
+      index_graph_template: "npm run dev -- index_graph {tsconfig} --db {db_path}"
+      index_vectors_template: "npm run dev -- index_vectors {tsconfig} --lancedb {lancedb_path}"
+      profile_rebuild_template: "npm run dev -- profile rebuild {repo_path} --json"
+
+  retrieval:
+    enabled: true
+    require_gold_for_metrics: false
+    save_context_markdown: true
+    save_context_json: true
+    top_k: 50
+    repetitions_for_latency: 100
+    warmup_repetitions: 5
+    timeout_ms: 120000
+    use_deterministic_sanitizer: true
+    sanitizer_variants:
+      - "deterministic"
+    include_strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+      - "consensus"
+
+  generation:
+    enabled: true
+    agent_id: "opencode"
+    include_strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+      - "consensus"
+    timeout_ms: 600000
+    apply_patch_mode: "agent_modifies_worktree"
+    reset_repo_before_each_task: true
+    save_patch: true
+    save_prompt: true
+    save_agent_logs: true
+    run_tests_after_generation: true
+
+  hallucination_detection:
+    enabled: false
+    analyzer: "typescript-language-service"
+    analyze_only_changed_files: true
+    include_unknown_calls: true
+    timeout_ms: 300000
+
+  report:
+    enabled: true
+    formats:
+      - "jsonl"
+      - "csv"
+      - "markdown"
+    generate_thesis_tables: true
+
+splits:
+  pilot:
+    description: "Corrida inicial para validar infraestructura."
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "typeorm"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "typeorm-001"
+      - "typeorm-002"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+    agents:
+      - "dry-run"
+
+  retrieval_official:
+    description: "Recuperacion sobre tareas con gold listo."
+    require_gold_status: "ready"
+    min_tasks: 20
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+
+  generation_official:
+    description: "Generacion con agente externo y pruebas focalizadas."
+    require_gold_status: "ready"
+    require_target_tests: true
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+    agents:
+      - "opencode"
+
+  semantic_profile_ab:
+    description: "Comparación del intermediario sin grounding y con Project Semantic
+      Profile."
+    require_gold_status: "ready"
+    sanitizer_variants:
+      - "baseline"
+      - "grounded"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+
+  retrieval_grounded:
+    description: "Retrieval con intermediario SLM 4b + Project Semantic Profile
+      (solo grounded)."
+    require_gold_status: "ready"
+    sanitizer_variants:
+      - "grounded"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+
+  generation_grounded:
+    description: "Generación alimentada con el contexto grounded (SLM 4b). Requiere
+      haber corrido retrieval_grounded antes (produce los registros
+      strategy@grounded)."
+    require_gold_status: "ready"
+    require_target_tests: true
+    sanitizer_variant: "grounded"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+      - "agentic"
+    agents:
+      - "opencode"
+
+  retrieval_natural_6:
+    description: >-
+      Re-corrida con retrieval_input.query natural (sin símbolos del gold) sobre
+      las 6 tareas con gold listo de zod, rxjs e inversify. Variante principal
+      (deterministic) genera la tabla M3-M7 base; la variante oracle (cota
+      superior diagnóstica) es opcional. Piloto: 2026-07-05-natural.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "inversify-001"
+      - "inversify-002"
+    sanitizer_variants:
+      - "deterministic"
+    strategies:
+      - "hybrid"
+      - "ictd"
+      - "clcr"
+      - "rpr"
+
+  generation_pilot:
+    description: >-
+      Piloto de generacion sobre las 6 tareas con gold listo. Alimenta
+      generation.jsonl a partir del retrieval.jsonl del run (--run-id debe
+      apuntar a un run que ya tenga retrieval.jsonl). Estrategias: no_context +
+      4 estrategias de retrieval. 1 agente: opencode.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "rxjs-001"
+      - "rxjs-002"
+      - "inversify-001"
+      - "inversify-002"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+    agents:
+      - "opencode"
+
+  generation_pilot_regression:
+    description: >-
+      Piloto de generacion en modo regresion. Solo incluye las tareas con
+      `regression:` en tasks.yaml y broken_patch validado en F0 (zod-001,
+      zod-002, inversify-002, rxjs-001). inversify-001 y rxjs-002 quedan fuera
+      por no tener test discriminante (ver eval/manifests/regression/STATUS.md).
+      El agente parte de un broken_state canonico y debe restaurar verde; M1
+      citable es M1_regression_pass@1.
+    require_gold_status: "ready"
+    repo_ids:
+      - "zod"
+      - "rxjs"
+      - "inversify"
+    task_ids:
+      - "zod-001"
+      - "zod-002"
+      - "inversify-002"
+      - "rxjs-001"
+    strategies:
+      - "no_context"
+      - "hybrid"
+      - "ictd"
+    agents:
+      - "opencode"
+  swe-polybench:
+    description: Smoke de retrieval SWE-PolyBench (svelte, is_func_only + num_nodes==1).
+    strategies:
+      - hybrid
+      - clcr
+      - consensus
+    sanitizer_variants:
+      - deterministic
+    require_gold_status: ready
+  bench15:
+    description: Retrieval A/B 3 repos x 5 (svelte+prettier+mui). base/kind/edge x
+      hybrid/clcr/consensus.
+    strategies:
+      - hybrid
+      - clcr
+      - consensus
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids: &a1
+      - svelte-510
+      - svelte-728
+      - svelte-906
+      - svelte-907
+      - svelte-1116
+      - prettier-14400
+      - prettier-12930
+      - prettier-6604
+      - prettier-5025
+      - prettier-4667
+      - material-ui-11451
+      - material-ui-11858
+      - material-ui-12406
+      - material-ui-13690
+      - material-ui-13778
+    task_ids: *a1
+
+resource_limits:
+  max_parallel_repos: 1
+  max_parallel_tasks: 1
+  max_parallel_agents: 1
+  max_repo_disk_mb: 5000
+  max_run_disk_mb: 30000
+  kill_process_tree_on_timeout: true
+
+reproducibility:
+  record:
+    - "lacoco_git_sha"
+    - "node_version"
+    - "npm_version"
+    - "pnpm_version"
+    - "yarn_version"
+    - "os"
+    - "cpu"
+    - "memory_total"
+    - "repo_commit_sha"
+    - "agent_versions"
+    - "environment_variables_allowlist"
+  environment_variables_allowlist:
+    - "CI"
+    - "LACOCO_AGENT_ENDPOINT"
+    - "LACOCO_AGENT_MODEL"
+    - "LACOCO_EVAL_OPENCODE_MODEL"
+    - "LACOCO_EVAL_OPENCODE_AGENT"
+    - "OPENCODE_SERVER_PASSWORD"
+
+failure_policy:
+  continue_on_task_failure: true
+  continue_on_strategy_failure: true
+  continue_on_repo_prepare_failure: true
+  mark_generation_timeout_as_pass_fail: true
+  write_error_records: true
+
+jsonl_schema_versions:
+  retrieval: 1
+  generation: 2
+  hallucination: 1
+
+artifact_naming:
+  task_dir_template: "{task_id}/{strategy_id}/{agent_id}"
+  files:
+    context_json: "context.json"
+    context_markdown: "context.md"
+    prompt: "prompt.md"
+    patch: "patch.diff"
+    tests_log: "tests.log"
+    agent_stdout: "agent.stdout.log"
+    agent_stderr: "agent.stderr.log"
+    hallucinations: "hallucinations.json"

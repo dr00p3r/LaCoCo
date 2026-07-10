@@ -1,0 +1,293 @@
+manifest_version: 1
+kind: repositories
+updated_at: "2026-07-07"
+
+selection:
+  description: >-
+    Repositorios open source JavaScript/TypeScript con Node.js usados para
+    evaluar LaCoCo en escenarios de recuperacion y generacion de codigo.
+  inclusion_criteria:
+    - "Open source"
+    - "Ecosistema JavaScript/TypeScript con Node.js"
+    - "Proyecto con pruebas automatizadas"
+    - "Popularidad alta o relevancia tecnica para repos de librerias"
+    - "Tamanos pequeno, mediano y grande"
+  notes:
+    - >-
+      Los valores expected_loc son aproximaciones metodologicas usadas para
+      clasificar el tamano. El pipeline debe calcular LOC reales en cada
+      corrida.
+    - >-
+      Cuando framework_from_plan y framework_verified difieren, prevalece
+      framework_verified para la ejecucion; framework_from_plan conserva la
+      trazabilidad con el documento academico.
+
+defaults:
+  clone:
+    depth: 0
+    fetch_tags: true
+    clean_before_task: true
+    clean_command: "git reset --hard HEAD && git clean -fdx"
+  runtime:
+    node_version: ">=20"
+    env:
+      CI: "true"
+      NO_COLOR: "1"
+  install:
+    timeout_ms: 900000
+  build:
+    timeout_ms: 900000
+    optional: true
+  test:
+    timeout_ms: 900000
+    run_before_generation: true
+    run_after_generation: true
+  lacoco_index:
+    graph_db_name: "tensor.sqlite"
+    vector_dir_name: "lancedb"
+    generate_eval_tsconfig_when_missing: true
+    eval_tsconfig_name: "tsconfig.lacoco-eval.json"
+
+repositories:
+  - id: svelte-510
+    display_name: svelte @ 4012414
+    url: https://github.com/sveltejs/svelte.git
+    ref: 4012414fa733628bb029be39195a278301da46be
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-728
+    display_name: svelte @ 5c4905a
+    url: https://github.com/sveltejs/svelte.git
+    ref: 5c4905a595ece6885dfed8c44b26be544130b6a6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-906
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-907
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1116
+    display_name: svelte @ 8057884
+    url: https://github.com/sveltejs/svelte.git
+    ref: 8057884cb64f6c2cdf837411bc3962daf69e2bb5
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-14400
+    display_name: prettier @ 6905b39
+    url: https://github.com/prettier/prettier.git
+    ref: 6905b39ec7bc6ed38732e26ceced5b57677e2600
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test tests/format/html/svg/svg.html
+      tests/config/utils/check-parsers.js
+      tests/format/html/svg/embeded/__snapshots__/jsfmt.spec.js.snap
+      tests/format/html/svg/embeded/svg.svg
+      tests/format/html/svg/embeded/jsfmt.spec.js
+      tests/format/html/svg/embeded/svg.html
+      tests/format/html/svg/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-12930
+    display_name: prettier @ 3147244
+    url: https://github.com/prettier/prettier.git
+    ref: 3147244f55e6e0aafd2cc6fa5875f7c8cfa8e4e3
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/format/typescript/enum/computed-members.ts
+      tests/format/typescript/enum/__snapshots__/jsfmt.spec.js.snap
+      tests/format/typescript/enum/jsfmt.spec.js --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-6604
+    display_name: prettier @ affa24c
+    url: https://github.com/prettier/prettier.git
+    ref: affa24ce764bd14ac087abeef0603012f5c635d6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/typescript_intersection/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_union/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_union/inlining.ts
+      tests/typescript_intersection/jsfmt.spec.js
+      tests/typescript_keyof/keyof.ts
+      tests/typescript_intersection/intersection-parens.ts
+      tests/typescript_conditional_types/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_conditional_types/conditonal-types.ts
+      tests/typescript_keyof/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-5025
+    display_name: prettier @ 93e8b15
+    url: https://github.com/prettier/prettier.git
+    ref: 93e8b15311cc88d30eadf8a34acbc062d0965f2b
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/markdown_footnoteDefinition/long.md
+      tests/markdown_footnoteDefinition/jsfmt.spec.js
+      tests/markdown_footnoteDefinition/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-4667
+    display_name: prettier @ 4a16319
+    url: https://github.com/prettier/prettier.git
+    ref: 4a16319470cfb929799783118ad78afcf99461d2
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests_integration/cli/config/resolve-relative/.prettierrc
+      tests_integration/__tests__/config-resolution.js --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-11451
+    display_name: material-ui @ 04fae47
+    url: https://github.com/mui/material-ui.git
+    ref: 04fae47c2a876f38aacfae866d220ddcbb7358ef
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/ListItem/ListItem.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-11858
+    display_name: material-ui @ 4acfb8d
+    url: https://github.com/mui/material-ui.git
+    ref: 4acfb8da9fb5fc258871aa5a55788fa37208babc
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha
+      packages/material-ui/src/ListItemText/ListItemText.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+      - pages
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-12406
+    display_name: material-ui @ cbc6828
+    url: https://github.com/mui/material-ui.git
+    ref: cbc6828c93df70b897366f0c6d0b17da681d1b89
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Input/Textarea.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13690
+    display_name: material-ui @ ce64258
+    url: https://github.com/mui/material-ui.git
+    ref: ce642582728c63d1837e0a3e3fd455be4b260950
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Tooltip/Tooltip.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13778
+    display_name: material-ui @ 550e949
+    url: https://github.com/mui/material-ui.git
+    ref: 550e949bab55d3fe3f3aba04f76baa7e45d324cc
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Modal/Modal.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript

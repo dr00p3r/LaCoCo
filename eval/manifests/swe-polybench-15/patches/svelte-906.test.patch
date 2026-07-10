@@ -1,0 +1,32 @@
+diff --git a/test/css/samples/attribute-selector-only-name/_config.js b/test/css/samples/attribute-selector-only-name/_config.js
+new file mode 100644
+--- /dev/null
++++ b/test/css/samples/attribute-selector-only-name/_config.js
+@@ -0,0 +1,3 @@
++export default {
++	cascade: false
++};
+\ No newline at end of file
+diff --git a/test/css/samples/attribute-selector-only-name/expected.css b/test/css/samples/attribute-selector-only-name/expected.css
+new file mode 100644
+--- /dev/null
++++ b/test/css/samples/attribute-selector-only-name/expected.css
+@@ -0,0 +1 @@
++[foo][svelte-xyz]{color:red}[baz][svelte-xyz]{color:blue}
+\ No newline at end of file
+diff --git a/test/css/samples/attribute-selector-only-name/input.html b/test/css/samples/attribute-selector-only-name/input.html
+new file mode 100644
+--- /dev/null
++++ b/test/css/samples/attribute-selector-only-name/input.html
+@@ -0,0 +1,11 @@
++<div foo='bar'></div>
++<div baz></div>
++
++<style>
++	[foo] {
++		color: red;
++	}
++	[baz] {
++		color: blue;
++	}
++</style>

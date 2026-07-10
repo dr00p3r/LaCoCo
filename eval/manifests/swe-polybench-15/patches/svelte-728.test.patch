@@ -1,0 +1,100 @@
+diff --git a/test/runtime/samples/component-binding-blowback-c/Nested.html b/test/runtime/samples/component-binding-blowback-c/Nested.html
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/component-binding-blowback-c/Nested.html
+@@ -0,0 +1,18 @@
++<li>
++	{{yield}}
++</li>
++
++<script>
++	const initialValues = {
++		'id-0': 'zero',
++		'id-1': 'one',
++		'id-2': 'two',
++		'id-3': 'three'
++	};
++
++	export default {
++		oncreate() {
++			this.set({ value: initialValues[this.get('id')] });
++		}
++	};
++</script>
+diff --git a/test/runtime/samples/component-binding-blowback-c/_config.js b/test/runtime/samples/component-binding-blowback-c/_config.js
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/component-binding-blowback-c/_config.js
+@@ -0,0 +1,33 @@
++export default {
++	'skip-ssr': true,
++
++	data: {
++		count: 3
++	},
++
++	html: `
++		<input type='number'>
++		<ol>
++			<li>id-2: value is two</li>
++			<li>id-1: value is one</li>
++			<li>id-0: value is zero</li>
++		</ol>
++	`,
++
++	test (assert, component, target, window) {
++		const input = target.querySelector('input');
++
++		input.value = 4;
++		input.dispatchEvent(new window.Event('input'));
++
++		assert.htmlEqual(target.innerHTML, `
++			<input type='number'>
++			<ol>
++				<li>id-3: value is three</li>
++				<li>id-2: value is two</li>
++				<li>id-1: value is one</li>
++				<li>id-0: value is zero</li>
++			</ol>
++		`);
++	}
++};
+diff --git a/test/runtime/samples/component-binding-blowback-c/main.html b/test/runtime/samples/component-binding-blowback-c/main.html
+new file mode 100644
+--- /dev/null
++++ b/test/runtime/samples/component-binding-blowback-c/main.html
+@@ -0,0 +1,34 @@
++<input type='number' bind:value='count'>
++
++<ol>
++	{{#each ids as object @id}}
++		<Nested bind:value='idToValue[object.id]' id='{{object.id}}'>
++			{{object.id}}: value is {{idToValue[object.id]}}
++		</Nested>
++	{{/each}}
++</ol>
++
++<script>
++	import Nested from './Nested.html';
++
++	export default {
++		data() {
++			return {
++				idToValue: Object.create(null)
++			};
++		},
++
++		computed: {
++			ids(count) {
++				return new Array(count)
++					.fill(null)
++					.map((_, i) => ({ id: 'id-' + i}))
++					.reverse();
++			}
++		},
++
++		components: {
++			Nested
++		}
++	};
++</script>
