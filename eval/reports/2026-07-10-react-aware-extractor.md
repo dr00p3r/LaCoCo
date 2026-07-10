@@ -66,10 +66,45 @@ regex — solo type-guards ts-morph). Relación nueva **`RENDERS`** (grupo CPG e
 - Tests: `tests/extractor/react-extraction.test.ts` (9 casos: promoción, no-inundación, forwardRef+RENDERS,
   composición+props, default HOC, `.ts` intacto, puente barrel+HOC estilo mui, RENDERS→CPG).
 
-## 4. Pendiente / siguiente (decisión abierta)
+## 4. Causa raíz definitiva de mui 0.20: `.d.ts` ensombrece el `.js` (medido)
 
-El mecanismo está demostrado; falta medir el **lift de retrieval** end-to-end: re-indexar los 5 repos mui de
-`bench15` con las aristas nuevas y re-correr `consensus`, comparando EditSiteHit/MRR contra el 0.20 baseline.
-Requiere clonar+indexar mui (lento/flaky aquí; usar el shallow single-commit fetch documentado). Matiz: el
-puente es 3-hop y `consensus` expande 1-hop desde las anclas → el lift depende de que las anclas BM25/ANN
-caigan sobre `MenuItem`/`ListItem.js#default`; es la pregunta empírica del benchmark.
+Re-indexando los 5 mui salió la causa **real** (ni gold, ni jsx, ni el extractor): cada componente mui tiene
+`Foo.js` (implementación) **y** `Foo.d.ts` (stub de tipos). Con ambos en el `include`, TypeScript resuelve el
+módulo al `.d.ts` y **descarta el `.js` del programa**. Resultado en `ListItem`: el índice bench15 tenía
+`ListItem.d.ts#ListItemProps` (tipos) pero **NO** `ListItem.js#ListItem.render` — el gold **nunca estuvo en el
+grafo**. Solo **53** nodos `.js` en todo `packages/material-ui/src` (cientos de componentes).
+
+**Fix (eval, `repos.yaml` override por mui):** `exclude: ["**/*.d.ts", "**/*.test.js"]` +
+`moduleResolution: node` + `jsx: react`. Con eso los `.js` pasan a ser la fuente: nodos `.js` 53→**794-985**,
+y los **5/5 gold nodes aparecen en el grafo** (antes 0).
+
+## 5. Resultado medido — mui EditSiteHit@10: 0.20 → 0.80 (4×)
+
+Re-index (graph+vectors, React-aware + exclude-`.d.ts`) de los 5 mui + retrieval `baseline` (run
+`2026-07-10-mui-react`, split `mui5`, overfetch=1):
+
+| estrategia | mui ANTES (bench15) | mui AHORA | EditSiteMRR |
+|---|---|---|---|
+| hybrid    | 0.20 | **0.80** | 0.400 |
+| clcr      | 0.20 | **0.80** | 0.362 |
+| consensus | 0.20 | **0.80** | 0.395 |
+
+4/5 aciertan (11451, 11858, 12406, 13690); 13778 miss real (gold función `removeContainerStyle` fuera de
+top-50). Ranks de símbolo (0-idx): 11858 r0, 13690 r5-7, 11451 r8-9 (símbolo en top-10); 12406 símbolo en
+r10-12 → hit por **file-level fallback**. Baseline verificado: el bench15 tenía mui 0.20 en las 3 estrategias
+porque el gold no estaba indexado.
+
+**Atribución honesta:** el lift (0.20→0.80) viene **enteramente del fix de indexado (`exclude .d.ts`)**, que
+mete el edit-site en el grafo. Las aristas React (RENDERS) son correctas y el grafo de composición se demostró
+en código real, **pero NO dan lift de retrieval sobre `hybrid` en estas 5 celdas**: consensus empata a hybrid
+en EditSiteHit (0.80) y rankea el gold un pelín **peor** (r9 vs r8, r7 vs r5, r12 vs r10) — su expansión de
+grafo demota levemente el ancla semántica fuerte. Consistente con el veredicto de escala
+([[ann-dimensional-anchor-verdict]]): el grafo ≈ hybrid; el lever de mui era el indexado, no la estrategia.
+
+## 6. Pendiente
+- Ablación limpia (exclude-`.d.ts` con extractor viejo vs nuevo) para aislar 0% del efecto RENDERS — el
+  presente run confirma que el lift es del indexado, no de las aristas.
+- Puente cross-file (`MenuItem→ListItem`) a `.js`: TS resuelve imports al `.d.ts` aun excluido del `include`,
+  así que RENDERS cross-file apunta al stub de tipos, no al `.js`. Habría que evitar que TS vea los `.d.ts`
+  (más invasivo) para que la composición conecte al edit-site `.js`.
+- Baselines del consenso (RepoGraph + Aider/PPR) — el siguiente de mayor valor para la tesis.

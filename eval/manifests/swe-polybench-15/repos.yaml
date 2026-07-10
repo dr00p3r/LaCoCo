@@ -226,6 +226,17 @@ repositories:
     source_roots:
       - packages/material-ui/src
     tsconfig_candidates: []
+    # mui es JS con .d.ts hermanos que ensombrecen el .js de implementación (donde
+    # vive el gold). Excluir .d.ts hace que el .js sea la fuente indexada; resolución
+    # node clásica para imports de directorio; jsx para las aristas de composición.
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        jsx: react
+        module: commonjs
+        moduleResolution: node
+      exclude:
+        - "**/*.d.ts"
+        - "**/*.test.js"
     language_scope:
       - javascript
       - typescript
@@ -243,6 +254,14 @@ repositories:
       - packages/material-ui/src
       - pages
     tsconfig_candidates: []
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        jsx: react
+        module: commonjs
+        moduleResolution: node
+      exclude:
+        - "**/*.d.ts"
+        - "**/*.test.js"
     language_scope:
       - javascript
       - typescript
@@ -258,6 +277,17 @@ repositories:
     source_roots:
       - packages/material-ui/src
     tsconfig_candidates: []
+    # mui es JS con .d.ts hermanos que ensombrecen el .js de implementación (donde
+    # vive el gold). Excluir .d.ts hace que el .js sea la fuente indexada; resolución
+    # node clásica para imports de directorio; jsx para las aristas de composición.
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        jsx: react
+        module: commonjs
+        moduleResolution: node
+      exclude:
+        - "**/*.d.ts"
+        - "**/*.test.js"
     language_scope:
       - javascript
       - typescript
@@ -273,6 +303,17 @@ repositories:
     source_roots:
       - packages/material-ui/src
     tsconfig_candidates: []
+    # mui es JS con .d.ts hermanos que ensombrecen el .js de implementación (donde
+    # vive el gold). Excluir .d.ts hace que el .js sea la fuente indexada; resolución
+    # node clásica para imports de directorio; jsx para las aristas de composición.
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        jsx: react
+        module: commonjs
+        moduleResolution: node
+      exclude:
+        - "**/*.d.ts"
+        - "**/*.test.js"
     language_scope:
       - javascript
       - typescript
@@ -288,6 +329,17 @@ repositories:
     source_roots:
       - packages/material-ui/src
     tsconfig_candidates: []
+    # mui es JS con .d.ts hermanos que ensombrecen el .js de implementación (donde
+    # vive el gold). Excluir .d.ts hace que el .js sea la fuente indexada; resolución
+    # node clásica para imports de directorio; jsx para las aristas de composición.
+    lacoco_tsconfig_overrides:
+      compilerOptions:
+        jsx: react
+        module: commonjs
+        moduleResolution: node
+      exclude:
+        - "**/*.d.ts"
+        - "**/*.test.js"
     language_scope:
       - javascript
       - typescript

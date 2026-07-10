@@ -329,6 +329,22 @@ splits:
       - material-ui-13690
       - material-ui-13778
     task_ids: *a1
+  mui5:
+    description: mui-only retrieval (React-aware + exclude .d.ts). hybrid/clcr/consensus.
+    strategies:
+      - hybrid
+      - clcr
+      - consensus
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids: &mui5ids
+      - material-ui-11451
+      - material-ui-11858
+      - material-ui-12406
+      - material-ui-13690
+      - material-ui-13778
+    task_ids: *mui5ids
 
 resource_limits:
   max_parallel_repos: 1
