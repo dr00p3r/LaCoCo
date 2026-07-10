@@ -3,8 +3,9 @@ import type { NodeEmbeddingRecord } from "./model/types.js";
 import { ConnectionDao } from "./dao/connection-dao.js";
 import { EmbeddingDao } from "./dao/embedding-dao.js";
 import { SearchDao } from "./dao/search-dao.js";
+import type { AnnSearchResult } from "./dao/search-dao.js";
 
-export type { NodeEmbeddingRecord };
+export type { NodeEmbeddingRecord, AnnSearchResult };
 
 export interface LanceDbHealth {
   connected: boolean;
@@ -106,7 +107,7 @@ export class LaCoCoLanceDb {
     queryEmbedding: Float32Array,
     filter?: string,
     topK = 50
-  ): Promise<{ node_id: string; score: number }[]> {
+  ): Promise<AnnSearchResult[]> {
     if (!this.table) throw new Error("LanceDB no conectado. Llame a connect() primero.");
     if (filter !== undefined && filter.length === 0) {
       throw new Error("El filtro de LanceDB no puede ser una cadena vacía");

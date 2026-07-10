@@ -77,6 +77,29 @@ const CONFIG_DEFINITIONS = {
         ? null
         : `strategy.default debe ser una de: ${Array.from(STRATEGIES).join(", ")}`,
   },
+  "retrieval.annOverfetch": {
+    type: "number",
+    defaultValue: 1,
+    env: "LACOCO_ANN_OVERFETCH",
+    validate: (value) =>
+      typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5
+        ? null
+        : "retrieval.annOverfetch debe ser un entero entre 1 y 5 (1 = ANN plano actual)",
+  },
+  "hyde.enabled": {
+    type: "boolean",
+    defaultValue: false,
+    env: "LACOCO_HYDE",
+  },
+  "hyde.model": {
+    type: "string",
+    defaultValue: "",
+    env: "LACOCO_HYDE_MODEL",
+    validate: (value) =>
+      typeof value === "string"
+        ? null
+        : "hyde.model debe ser un string (vacío = hereda intermediary.model)",
+  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,

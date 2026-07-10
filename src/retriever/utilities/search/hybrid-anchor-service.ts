@@ -1,8 +1,11 @@
 import type { LaCoCoDatabase } from "../../../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import type { LaCoCoLanceDb } from "../../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import type { LaCoCoLanceDb, AnnSearchResult } from "../../../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import type { SanitizerOutput } from "../../models/utilities/types.js";
 import { EmbeddingGenerator } from "../../../embeddings/embedding-generator.js";
 import { Bm25Service } from "./bm25-service.js";
+import { getIntentWeights } from "../../strategies/helpers/intent-weights.js";
+import { DIMENSIONS, type Dimension } from "../../../domain/dimensions.js";
+import { resolveNumberConfig } from "../../../cli/config.js";
 
 const RRF_K = 60;
 
@@ -15,8 +18,13 @@ export interface HybridAnchor {
 /**
  * Selecciona anclas fusionando rankings BM25 y ANN mediante RRF.
  *
- * La busqueda ANN no aplica filtros dimensionales: las dimensiones solo
- * intervienen posteriormente en las estrategias que recorren el grafo.
+ * Anclaje ANN dimensional (estratificado suave). Con `retrieval.annOverfetch`
+ * (env `LACOCO_ANN_OVERFETCH`, default 1) se sobre-trae el pool ANN y se sesga
+ * la seleccion por intencion->dimension via `getIntentWeights`: cada dimension
+ * recibe una cuota proporcional del top-K y los huecos restantes se rellenan
+ * por orden ANN puro. No es un filtro duro `where`: preserva recall
+ * cross-dimension y solo re-pondera que candidatos entran al pool antes del RRF.
+ * Con overfetch=1 el comportamiento es identico al ANN plano previo.
  */
 export class HybridAnchorService {
   private readonly embeddingGen = new EmbeddingGenerator();
@@ -54,8 +62,14 @@ export class HybridAnchorService {
       if (!bm25Ranks.has(result.nodeId)) bm25Ranks.set(result.nodeId, index + 1);
     }
 
+    const overfetch = Math.max(1, resolveNumberConfig("retrieval.annOverfetch"));
     const embedding = await embeddingPromise;
-    const annResults = await this.lanceDb.search(embedding, undefined, rankingLimit);
+    const annPool = await this.lanceDb.search(embedding, undefined, rankingLimit * overfetch);
+    const annResults =
+      overfetch <= 1
+        ? annPool.slice(0, rankingLimit)
+        : stratifyByDimension(annPool, query, rankingLimit);
+
     const annRanks = new Map<string, number>();
     for (let index = 0; index < annResults.length; index++) {
       const result = annResults[index]!;
@@ -81,4 +95,56 @@ export class HybridAnchorService {
       text: signatures.get(nodeId) ?? nodeId,
     }));
   }
+}
+
+/**
+ * Selecciona `limit` candidatos de un pool ANN sobre-traido, con cuotas por
+ * dimension segun `getIntentWeights(intent, dimensions)`, y rellena los huecos
+ * por orden ANN puro (best-first) para no perder recall cross-dimension.
+ *
+ * El pool viene ordenado por calidad ANN (best-first). El resultado se re-ordena
+ * por posicion ANN original, de modo que la estratificacion decide *que* entra
+ * al top-K pero el ranking dentro del subconjunto sigue siendo el de la ANN.
+ * Filas sin `dimension` (indices antiguos) solo participan en la fase de relleno.
+ */
+function stratifyByDimension(
+  pool: AnnSearchResult[],
+  query: SanitizerOutput,
+  limit: number,
+): AnnSearchResult[] {
+  const weights = getIntentWeights(query.intent, query.dimensions);
+
+  const byDim: Record<Dimension, AnnSearchResult[]> = { SYS: [], CPG: [], DTG: [] };
+  for (const result of pool) {
+    if (result.dimension && byDim[result.dimension]) byDim[result.dimension].push(result);
+  }
+
+  const picked = new Set<string>();
+  const selected: AnnSearchResult[] = [];
+  for (const dimension of DIMENSIONS) {
+    const quota = Math.round(limit * weights[dimension]);
+    for (const result of byDim[dimension].slice(0, quota)) {
+      if (!picked.has(result.node_id)) {
+        picked.add(result.node_id);
+        selected.push(result);
+      }
+    }
+  }
+
+  // Relleno suave: completa hasta `limit` por orden ANN puro (incluye filas sin
+  // dimension), preservando recall cross-dimension frente a un filtro duro.
+  if (selected.length < limit) {
+    for (const result of pool) {
+      if (selected.length >= limit) break;
+      if (!picked.has(result.node_id)) {
+        picked.add(result.node_id);
+        selected.push(result);
+      }
+    }
+  }
+
+  const poolIndex = new Map(pool.map((result, index) => [result.node_id, index]));
+  return selected
+    .sort((left, right) => poolIndex.get(left.node_id)! - poolIndex.get(right.node_id)!)
+    .slice(0, limit);
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HybridAnchorService } from "../../src/retriever/utilities/search/hybrid-anchor-service.js";
 import { Bm25Service } from "../../src/retriever/utilities/search/bm25-service.js";
 import type { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import type { LaCoCoLanceDb } from "../../src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
+import type { LaCoCoLanceDb, AnnSearchResult } from "../../src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { createGraphDb, makeQuery } from "./test-helpers.js";
 
 vi.mock("../../src/embeddings/embedding-generator.js", () => {
@@ -17,8 +17,18 @@ vi.mock("../../src/embeddings/embedding-generator.js", () => {
   return { EmbeddingGenerator: MockEmbeddingGenerator };
 });
 
+/** Pool ANN sintetico: top-20 CPG, luego 5 SYS y 5 DTG mas profundos. */
+function syntheticPool(): AnnSearchResult[] {
+  const pool: AnnSearchResult[] = [];
+  for (let i = 0; i < 20; i++) pool.push({ node_id: `cpg${i}`, score: 1 - i * 0.01, dimension: "CPG" });
+  for (let i = 0; i < 5; i++) pool.push({ node_id: `sys${i}`, score: 0.4 - i * 0.01, dimension: "SYS" });
+  for (let i = 0; i < 5; i++) pool.push({ node_id: `dtg${i}`, score: 0.3 - i * 0.01, dimension: "DTG" });
+  return pool;
+}
+
 describe("HybridAnchorService", () => {
   let db: LaCoCoDatabase;
+  const previousOverfetch = process.env.LACOCO_ANN_OVERFETCH;
 
   beforeEach(() => {
     db = createGraphDb();
@@ -27,6 +37,8 @@ describe("HybridAnchorService", () => {
   afterEach(() => {
     db.close();
     vi.restoreAllMocks();
+    if (previousOverfetch === undefined) delete process.env.LACOCO_ANN_OVERFETCH;
+    else process.env.LACOCO_ANN_OVERFETCH = previousOverfetch;
   });
 
   it("ejecuta BM25 y la generacion del embedding en paralelo", async () => {
@@ -100,5 +112,61 @@ describe("HybridAnchorService", () => {
     expect(orderByScore.score).toBeGreaterThan(orderCreate.score);
     // OrderService.createOrder (rank 1 BM25) supera a CreateOrderDto (rank 2 ANN)
     expect(orderCreate.score).toBeGreaterThan(createDto.score);
+  });
+
+  it("con overfetch=1 pide top-K plano y conserva el orden ANN (comportamiento previo)", async () => {
+    process.env.LACOCO_ANN_OVERFETCH = "1";
+    const search = vi.fn().mockResolvedValue(syntheticPool());
+    const lanceDb = { search } as unknown as LaCoCoLanceDb;
+    const anchors = new HybridAnchorService(db, lanceDb);
+
+    // clean_query sin coincidencias FTS5 -> aisla el canal ANN.
+    const result = await anchors.search(makeQuery("zzznomatchxyz", ["SYS", "CPG", "DTG"]), 20);
+
+    // Una sola llamada ANN, con limite = rankingLimit * 1.
+    expect(search).toHaveBeenCalledWith(expect.any(Float32Array), undefined, 20);
+    // Solo entran los 20 CPG del top plano; nada de SYS/DTG profundos.
+    const ids = result.map((r) => r.nodeId);
+    expect(ids).toContain("cpg0");
+    expect(ids.filter((id) => id.startsWith("cpg"))).toHaveLength(20);
+    expect(ids.some((id) => id.startsWith("sys"))).toBe(false);
+    expect(ids.some((id) => id.startsWith("dtg"))).toBe(false);
+  });
+
+  it("con overfetch=3 sobre-trae y rescata dimensiones sub-representadas via cuotas", async () => {
+    process.env.LACOCO_ANN_OVERFETCH = "3";
+    const search = vi.fn().mockResolvedValue(syntheticPool());
+    const lanceDb = { search } as unknown as LaCoCoLanceDb;
+    const anchors = new HybridAnchorService(db, lanceDb);
+
+    const result = await anchors.search(makeQuery("zzznomatchxyz", ["SYS", "CPG", "DTG"]), 20);
+
+    // Sobre-traccion: limite ANN = rankingLimit * 3.
+    expect(search).toHaveBeenCalledWith(expect.any(Float32Array), undefined, 60);
+    const ids = result.map((r) => r.nodeId);
+    // Las cuotas rescatan SYS y DTG que el top-20 plano habria excluido.
+    expect(ids).toContain("sys0");
+    expect(ids).toContain("dtg0");
+    // Sigue habiendo mayoria CPG (cuota ~7 + relleno) pero ya no los 20.
+    expect(ids.filter((id) => id.startsWith("cpg")).length).toBeLessThan(20);
+    // El ranking dentro del subconjunto respeta el orden ANN (CPG antes que SYS/DTG).
+    expect(ids.indexOf("cpg0")).toBeLessThan(ids.indexOf("sys0"));
+    expect(ids.indexOf("sys0")).toBeLessThan(ids.indexOf("dtg0"));
+  });
+
+  it("tolera filas sin dimension (indices antiguos) rellenando por orden ANN", async () => {
+    process.env.LACOCO_ANN_OVERFETCH = "3";
+    const pool: AnnSearchResult[] = [
+      { node_id: "a", score: 0.9, dimension: undefined },
+      { node_id: "b", score: 0.8, dimension: undefined },
+      { node_id: "c", score: 0.7, dimension: undefined },
+    ];
+    const search = vi.fn().mockResolvedValue(pool);
+    const lanceDb = { search } as unknown as LaCoCoLanceDb;
+    const anchors = new HybridAnchorService(db, lanceDb);
+
+    const result = await anchors.search(makeQuery("zzznomatchxyz", ["SYS", "CPG", "DTG"]), 20);
+    const ids = result.map((r) => r.nodeId);
+    expect(ids).toEqual(["a", "b", "c"]);
   });
 });

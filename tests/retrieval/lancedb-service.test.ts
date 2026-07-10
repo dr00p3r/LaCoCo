@@ -71,6 +71,8 @@ describe("LaCoCoLanceDb", () => {
       const results = await db.search(unitVector(0), "dimension = 'SYS'", 10);
 
       expect(results.map((result) => result.node_id)).toEqual(["file#SYS"]);
+      // La fila conserva su dimension a traves del DAO (usado por el anclaje estratificado).
+      expect(results[0]!.dimension).toBe("SYS");
     } finally {
       await db.close();
       rmSync(dir, { recursive: true, force: true });
