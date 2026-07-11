@@ -1,4 +1,4 @@
-export const STRATEGY_NAMES = ["hybrid", "agentic", "ictd", "clcr", "rpr", "consensus"] as const;
+export const STRATEGY_NAMES = ["hybrid", "agentic", "ictd", "clcr", "rpr", "consensus", "repograph", "ppr"] as const;
 
 export type StrategyName = (typeof STRATEGY_NAMES)[number];
 

@@ -92,6 +92,8 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      - "repograph"
+      - "ppr"
 
   generation:
     enabled: true
@@ -337,6 +339,41 @@ splits:
       - svelte-1932
     agents:
       - opencode
+
+  retrieval_baselines:
+    description: >-
+      A/B de retrieval sobre los 8 svelte multi-hop: aisla el delta del consenso
+      frente a los baselines de grafo repograph (plano) y ppr (Aider/PageRank
+      personalizado, agnostico a la intencion). Mismo indice/anclaje; varia solo el
+      ranker de expansion. EditSiteHit@10 + EditSiteMRR + latencia.
+    strategies:
+      - hybrid
+      - repograph
+      - ppr
+      - clcr
+      - consensus
+    sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+    task_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
 
 resource_limits:
   max_parallel_repos: 1

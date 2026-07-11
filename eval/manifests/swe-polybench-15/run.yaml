@@ -92,6 +92,8 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      - "repograph"
+      - "ppr"
 
   generation:
     enabled: true
@@ -345,6 +347,22 @@ splits:
       - material-ui-13690
       - material-ui-13778
     task_ids: *mui5ids
+  retrieval_baselines:
+    description: >-
+      A/B de baselines a escala (3 repos x 5): consenso vs repograph (grafo plano) vs
+      ppr (Aider/PageRank personalizado). Check de generalizacion del aislamiento del
+      delta del consenso. Mismo indice/anclaje; varia solo el ranker de expansion.
+    strategies:
+      - hybrid
+      - repograph
+      - ppr
+      - clcr
+      - consensus
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids: *a1
+    task_ids: *a1
 
 resource_limits:
   max_parallel_repos: 1

@@ -7,6 +7,8 @@ import { CLCR_DEFAULT_CONFIG, ClcrStrategy, type ClcrConfig } from "./clcr-strat
 import { CONSENSUS_DEFAULT_CONFIG, ConsensusStrategy, type ConsensusConfig } from "./consensus-strategy.js";
 import { HYBRID_DEFAULT_CONFIG, HybridStrategy, type HybridConfig } from "./hybrid-strategy.js";
 import { ICTD_DEFAULT_CONFIG, IctdStrategy, type IctdConfig } from "./ictd-strategy.js";
+import { PPR_DEFAULT_CONFIG, PprStrategy, type PprConfig } from "./ppr-strategy.js";
+import { REPOGRAPH_DEFAULT_CONFIG, RepographStrategy, type RepographConfig } from "./repograph-strategy.js";
 import { RPR_DEFAULT_CONFIG, RprStrategy, type RprConfig } from "./rpr-strategy.js";
 import { isStrategyName, STRATEGY_NAMES, type StrategyName } from "./strategy-names.js";
 
@@ -107,6 +109,28 @@ export const STRATEGY_REGISTRY: Readonly<Record<StrategyName, StrategyEntry>> = 
       db,
       requireLanceDb("consensus", lanceDb),
       getEffectiveStrategyParameters("consensus", options) as unknown as ConsensusConfig,
+    ),
+  },
+  repograph: {
+    name: "repograph",
+    needsLanceDb: true,
+    defaultParameters: REPOGRAPH_DEFAULT_CONFIG,
+    chunkLimitParameter: "chunkLimit",
+    create: ({ db, lanceDb }, options) => new RepographStrategy(
+      db,
+      requireLanceDb("repograph", lanceDb),
+      getEffectiveStrategyParameters("repograph", options) as unknown as RepographConfig,
+    ),
+  },
+  ppr: {
+    name: "ppr",
+    needsLanceDb: true,
+    defaultParameters: PPR_DEFAULT_CONFIG,
+    chunkLimitParameter: "chunkLimit",
+    create: ({ db, lanceDb }, options) => new PprStrategy(
+      db,
+      requireLanceDb("ppr", lanceDb),
+      getEffectiveStrategyParameters("ppr", options) as unknown as PprConfig,
     ),
   },
 };

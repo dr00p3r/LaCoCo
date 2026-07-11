@@ -156,6 +156,64 @@ strategies:
       generation:
         include: true
 
+  - id: repograph
+    label: "RepoGraph flat ego-graph (baseline)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "repograph"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline de ego-graph plano: expande el vecindario K-hop de las anclas y puntua
+      por pura proximidad estructural, sin direccion, dimension ni intencion. Aisla si
+      el consenso gana por "tener grafo" o por su ponderacion.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      max_hops: 2
+      bfs_max_nodes: 5000
+      decay: 0.5
+    hypothesis: >-
+      Baseline piso: el consenso debe batirlo, demostrando que la ponderacion por
+      dimension-de-intencion aporta sobre el grafo sin ponderar.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: ppr
+    label: "Personalized PageRank (Aider baseline)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "ppr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline fuerte estilo Aider: PageRank personalizado hacia las anclas sobre el
+      subgrafo inducido, ponderado por centralidad pero AGNOSTICO a la intencion. Si el
+      consenso lo bate, el delta atribuible es la ponderacion por intencion.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      subgraph_max_hops: 3
+      bfs_max_nodes: 5000
+      damping: 0.85
+      iterations: 40
+      tolerance: 0.000001
+    hypothesis: >-
+      Ranker de grafo ponderado pero sin intencion. El consenso debe batirlo en
+      multi-hop para sostener la tesis de la ponderacion por dimension-de-intencion.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
   - id: rpr
     label: "Relational Path Retrieval"
     kind: "lacoco"
