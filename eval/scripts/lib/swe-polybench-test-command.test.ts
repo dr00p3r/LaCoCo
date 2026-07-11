@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseF2pTestId,
   parseTestCommand,
+  resolveConcreteRunner,
+  synthesizeF2pTestRun,
   toLocalTestCommand,
 } from "./swe-polybench-test-command.js";
 
@@ -15,6 +17,8 @@ const CMD = {
     '. /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set scripts.lint="echo noop" && npm run test -- --reporter json --exit',
   yarnPrettier:
     '. /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set scripts.lint="echo noop" && yarn test tests/format/html/svg/svg.html tests/config/utils/check-parsers.js',
+  yarnPrettierSpec:
+    '. /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set scripts.lint="echo noop" && yarn test tests/format/html/svg/embeded/jsfmt.spec.js tests/format/html/svg/embeded/svg.svg tests/format/html/svg/__snapshots__/jsfmt.spec.js.snap',
   jestTailwind: ". /usr/local/nvm/nvm.sh && npx jest --json --forceExit",
   bespokeVscode:
     ". /usr/local/nvm/nvm.sh && yarn compile ; xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' ./scripts/test.sh --run src/vs/editor/contrib/suggest/test/suggestModel.test.ts --reporter json --no-sandbox --exit",
@@ -110,5 +114,83 @@ describe("toLocalTestCommand", () => {
     expect(local.command).toBeNull();
     expect(local.runnable).toBe(false);
     expect(local.reason).toBe("bespoke:bazel");
+  });
+});
+
+describe("resolveConcreteRunner", () => {
+  it("yarn-script cuyo scripts.test corre jest (prettier) → jest", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.yarnPrettier), "jest")).toBe("jest");
+  });
+
+  it("npm-script cuyo scripts.test corre mocha (svelte) → mocha", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.npmSvelte), "mocha -r ts-node/register")).toBe(
+      "mocha",
+    );
+  });
+
+  it("npm-script sin cuerpo legible → fallback mocha (preserva svelte)", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.npmSvelte), null)).toBe("mocha");
+  });
+
+  it("mocha directo (mui) → mocha, sin importar el cuerpo", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.mochaMui), "jest")).toBe("mocha");
+  });
+
+  it("yarn-script cuyo scripts.test corre vitest → vitest", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.yarnPrettier), "vitest run")).toBe("vitest");
+  });
+
+  it("bespoke → null", () => {
+    expect(resolveConcreteRunner(parseTestCommand(CMD.bespokeAngular), null)).toBeNull();
+  });
+});
+
+describe("synthesizeF2pTestRun", () => {
+  it("mocha: invocación con --grep --reporter dot (sin regresión svelte/mui)", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.mochaMui), ["some-fixture-name"], {
+      concreteRunner: "mocha",
+    });
+    expect(synth.testInvocation).toBe(
+      "./node_modules/.bin/mocha --opts mocha.opts --grep 'some-fixture-name' --reporter dot",
+    );
+    expect(synth.expectedFixtures).toEqual(["some-fixture-name"]);
+  });
+
+  it("jest (prettier): corre el .spec.js, no fixtures ni --json", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.yarnPrettierSpec), ["format"], {
+      concreteRunner: "jest",
+    });
+    expect(synth.testInvocation).not.toBeNull();
+    expect(synth.testInvocation!).toContain("./node_modules/.bin/jest");
+    expect(synth.testInvocation!).toContain("tests/format/html/svg/embeded/jsfmt.spec.js");
+    expect(synth.testInvocation!).not.toContain(".snap");
+    expect(synth.testInvocation!).not.toContain(".svg");
+    expect(synth.testInvocation!).not.toContain("--json");
+    expect(synth.testInvocation!).toContain("--ci");
+    expect(synth.testInvocation!).toContain("--runInBand");
+  });
+
+  it("jest fallback: solo fixtures (sin .spec.js) → usa los directorios", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.yarnPrettier), ["format"], {
+      concreteRunner: "jest",
+    });
+    expect(synth.testInvocation).not.toBeNull();
+    expect(synth.testInvocation!).toContain("tests/format/html/svg");
+    expect(synth.testInvocation!).toContain("tests/config/utils");
+  });
+
+  it("jest sin targets usables → null con motivo", () => {
+    const parsed = { ...parseTestCommand(CMD.jestTailwind), testTargets: [] as string[] };
+    const synth = synthesizeF2pTestRun(parsed, ["format"], { concreteRunner: "jest" });
+    expect(synth.testInvocation).toBeNull();
+    expect(synth.reason).toContain("no spec targets");
+  });
+
+  it("sin títulos F2P → null (comportamiento preservado)", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.mochaMui), [], {
+      concreteRunner: "mocha",
+    });
+    expect(synth.testInvocation).toBeNull();
+    expect(synth.reason).toBe("no F2P titles");
   });
 });

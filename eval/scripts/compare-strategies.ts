@@ -52,6 +52,12 @@ interface StrategyAgg {
   cost_usd_mean?: number | null;
   cost_usd_total?: number | null;
   cost_cells?: number;
+  // Esfuerzo del agente independiente del costo (tokens/tool-calls). Opcionales
+  // para leer generation-metrics.json históricos sin estos campos.
+  tokens_total_mean?: number | null;
+  tool_calls_mean?: number | null;
+  by_tool_mean?: Record<string, number>;
+  effort_cells?: number;
 }
 
 interface CellMetrics {
@@ -271,6 +277,51 @@ function renderMarkdown(metrics: GenerationMetrics): string {
   lines.push("_ΔE2E < 0 y ΔCost < 0 = mejor (menos tiempo/costo total que `no_context`)._");
   lines.push("");
 
+  // --- Esfuerzo del agente: tokens y tool-calls vs baseline ---
+  // Ejes INDEPENDIENTES del costo (sirven cuando el proveedor no reporta `cost`).
+  // Automatiza el conteo manual de greps vía el perfil by_tool.
+  const anyEffort = strategies.some((s) => {
+    const a = metrics.by_strategy[s];
+    return a !== undefined && (a.tokens_total_mean != null || a.tool_calls_mean != null);
+  });
+  if (anyEffort) {
+    const allTools = [
+      ...new Set(strategies.flatMap((s) => Object.keys(metrics.by_strategy[s]?.by_tool_mean ?? {}))),
+    ].sort();
+    lines.push("## Esfuerzo del agente vs baseline (tokens y tool-calls)");
+    lines.push("");
+    lines.push(
+      "Esfuerzo del modelo independiente del costo (parseado del stream de opencode). " +
+        "`by_tool` da la media de llamadas por herramienta — el conteo de greps sale de aquí, sin trabajo manual. " +
+        "ΔTokens/ΔToolCalls vs `no_context`: **< 0 = el contexto reduce el esfuerzo**.",
+    );
+    lines.push("");
+    const toolHead = allTools.map((t) => `${t}`).join(" | ");
+    lines.push(
+      `| estrategia | n | tokens (mean) | ΔTokens | | tool-calls (mean) | ΔToolCalls | |${allTools.length > 0 ? ` ${toolHead} |` : ""}`,
+    );
+    lines.push(`|---|---:|---:|---:|:-:|---:|---:|:-:|${allTools.map(() => "---:|").join("")}`);
+    for (const s of strategies) {
+      const agg = metrics.by_strategy[s];
+      if (agg === undefined) continue;
+      const isBase = s === BASELINE;
+      const label = isBase ? `\`${s}\` (base)` : `\`${s}\``;
+      const dTok = base ? delta(agg.tokens_total_mean ?? null, base.tokens_total_mean ?? null) : null;
+      const dTc = base ? delta(agg.tool_calls_mean ?? null, base.tool_calls_mean ?? null) : null;
+      const toolCols = allTools.map((t) => (agg.by_tool_mean?.[t] ?? 0).toFixed(1)).join(" | ");
+      lines.push(
+        `| ${label} | ${agg.m1_total} | ${fmtMs(agg.tokens_total_mean)} | ` +
+          `${isBase ? "—" : fmtDeltaMs(agg.tokens_total_mean, base?.tokens_total_mean)} | ` +
+          `${isBase ? "" : trend(dTok, false)} | ${fmtMs(agg.tool_calls_mean)} | ` +
+          `${isBase ? "—" : fmtDeltaMs(agg.tool_calls_mean, base?.tool_calls_mean)} | ` +
+          `${isBase ? "" : trend(dTc, false)} |${allTools.length > 0 ? ` ${toolCols} |` : ""}`,
+      );
+    }
+    lines.push("");
+    lines.push("_ΔTokens < 0 y ΔToolCalls < 0 = mejor (menos esfuerzo del modelo que `no_context`)._");
+    lines.push("");
+  }
+
   // --- Vista pareada por tarea: M1 ---
   const tasks = [...new Map(metrics.cells.map((c) => [c.task_id, c.repo_id]))].sort(
     (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
@@ -379,6 +430,36 @@ function renderCsv(metrics: GenerationMetrics): string {
       isBase ? null : delta(agg.cost_usd_mean ?? null, base?.cost_usd_mean ?? null),
       agg.cost_cells ?? 0,
     ]);
+    rows.push([
+      "strategy",
+      s,
+      "TokensTotal",
+      agg.tokens_total_mean ?? null,
+      base?.tokens_total_mean ?? null,
+      isBase ? null : delta(agg.tokens_total_mean ?? null, base?.tokens_total_mean ?? null),
+      agg.effort_cells ?? 0,
+    ]);
+    rows.push([
+      "strategy",
+      s,
+      "ToolCalls",
+      agg.tool_calls_mean ?? null,
+      base?.tool_calls_mean ?? null,
+      isBase ? null : delta(agg.tool_calls_mean ?? null, base?.tool_calls_mean ?? null),
+      agg.effort_cells ?? 0,
+    ]);
+    // Perfil por herramienta (grep/bash/read/…): una fila por herramienta presente.
+    for (const [tool, meanCount] of Object.entries(agg.by_tool_mean ?? {})) {
+      rows.push([
+        "strategy",
+        s,
+        `ToolCalls_${tool}`,
+        meanCount,
+        base?.by_tool_mean?.[tool] ?? null,
+        isBase ? null : delta(meanCount, base?.by_tool_mean?.[tool] ?? null),
+        agg.effort_cells ?? 0,
+      ]);
+    }
   }
   return `${[header.join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n")}\n`;
 }

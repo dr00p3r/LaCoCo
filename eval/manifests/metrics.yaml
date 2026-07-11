@@ -168,6 +168,38 @@ metrics:
     better: "lower"
     source: "provider_reported"
 
+  - id: TokensTotal
+    thesis_id: "M26"
+    name: "Agent tokens (total)"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "generation"
+    what_it_measures: >-
+      Tokens consumidos por el agente (input+output+reasoning+cache), sumados
+      sobre los step_finish del stream de opencode. Eje de esfuerzo INDEPENDIENTE
+      del costo: sirve cuando el proveedor/suscripción no reporta `cost`. ΔTokens
+      < 0 vs no_context = el contexto ahorra esfuerzo del modelo. Media y suma.
+    formula: "mean/sum(tokens.total)"
+    unit: "tokens"
+    better: "lower"
+    source: "provider_reported"
+
+  - id: ToolCalls
+    thesis_id: "M27"
+    name: "Agent tool-calls"
+    role: "agent_outcome"
+    dimension: "Eficiencia"
+    stage: "generation"
+    what_it_measures: >-
+      Número de llamadas a herramientas del agente (read/grep/bash/edit/…),
+      contadas de los eventos tool_use del stream de opencode. Automatiza el
+      conteo manual de greps: el desglose `by_tool` da la media por herramienta,
+      así cada reporte mira la que quiera (grep, bash, …). ΔToolCalls vs no_context.
+    formula: "mean(tool_calls.total); by_tool = mean por herramienta"
+    unit: "calls"
+    better: "lower"
+    source: "provider_reported"
+
   # --- Recuperación: gold_derived (contra patch-evidence gold) ---------------
   # El gold sale del PATCH de referencia (lib/patch-evidence-gold.ts), no del
   # grafo de LaCoCo, para evitar circularidad con estrategias graph-based. K

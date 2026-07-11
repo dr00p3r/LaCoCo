@@ -378,8 +378,13 @@ splits:
     strategies:
       - no_context
       - hybrid
-      - connector
+      - ictd
+      - clcr
+      - rpr
       - consensus
+      - repograph
+      - ppr
+      - connector
     sanitizer_variant: baseline
     sanitizer_variants:
       - baseline
@@ -404,7 +409,7 @@ splits:
 
   gen_p1:
     description: "gen13 particion 1/3 (paralelo por repo)."
-    strategies: [no_context, hybrid, connector, consensus]
+    strategies: [no_context, hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector]
     sanitizer_variant: baseline
     sanitizer_variants: [baseline]
     require_gold_status: ready
@@ -414,7 +419,7 @@ splits:
 
   gen_p2:
     description: "gen13 particion 2/3 (paralelo por repo)."
-    strategies: [no_context, hybrid, connector, consensus]
+    strategies: [no_context, hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector]
     sanitizer_variant: baseline
     sanitizer_variants: [baseline]
     require_gold_status: ready
@@ -424,7 +429,7 @@ splits:
 
   gen_p3:
     description: "gen13 particion 3/3 (paralelo por repo)."
-    strategies: [no_context, hybrid, connector, consensus]
+    strategies: [no_context, hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector]
     sanitizer_variant: baseline
     sanitizer_variants: [baseline]
     require_gold_status: ready

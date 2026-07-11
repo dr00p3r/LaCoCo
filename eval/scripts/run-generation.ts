@@ -27,6 +27,7 @@ import {
 import { loadManifests } from "./lib/load-manifests.js";
 import {
   parseTestCommand,
+  resolveConcreteRunner,
   synthesizeF2pTestRun,
 } from "./lib/swe-polybench-test-command.js";
 import {
@@ -524,6 +525,24 @@ interface SwePolyTestOutcome {
 }
 
 /**
+ * Lee el cuerpo del script delegado (`scripts[scriptName]`) del `package.json`
+ * del repo checked-out, para que {@link resolveConcreteRunner} distinga si un
+ * `npm run test`/`yarn test` corre mocha, jest o vitest. Devuelve `null` si no
+ * hay script que resolver o el `package.json` no se puede leer/parsear.
+ */
+function resolveDelegatedScriptBody(repoPath: string, scriptName: string | null): string | null {
+  if (scriptName === null) return null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(repoPath, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+    };
+    return pkg.scripts?.[scriptName] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Corre los tests F2P de una instancia SWE-PolyBench y devuelve un exit code
  * *confiable* para M1/Pass@1. A diferencia del flujo legacy, aquí:
  *   1. Se aplica el `test_patch` — los tests F2P los CREA/MODIFICA ese patch;
@@ -575,7 +594,12 @@ async function runSwePolybenchTests(
   }
 
   // 2+3. Build (fix en src/) y correr solo los F2P.
-  const command = `npm run build && ${testInvocation}`;
+  // `--if-present`: no-op con exit 0 si el repo no define `scripts.build` (p.ej.
+  // los MUI ~2018, que transpilan `src/` al vuelo con babel-register vía mocha.opts).
+  // Sin esto, `npm run build` aborta con "Missing script: build" antes del runner.
+  // Límite: un repo cuyo build se llame distinto (compile/prepare) se saltaría en
+  // silencio; ninguna instancia del whitelist actual lo necesita.
+  const command = `npm run build --if-present && ${testInvocation}`;
   let exitCode: number | null = null;
   let timedOut = false;
   let durationMs = 0;
@@ -676,9 +700,42 @@ function readExistingGenerationRecords(outputPath: string, runId: string): Gener
     });
 }
 
-export function parseOpenCodeCost(stdout: string): number | null {
-  let total = 0;
-  let found = false;
+/**
+ * Telemetría de esfuerzo del agente extraída del stream NDJSON (`--format json`)
+ * de opencode. Los tres ejes viven en el mismo stdout que ya guardamos por celda:
+ *   - `cost_usd`: suma de `part.cost` en los eventos `step_finish` (proveedor).
+ *   - `tokens`: suma de `part.tokens.{input,output,reasoning}` + `cache.{read,write}`
+ *     en los `step_finish`. Eje INDEPENDIENTE del costo (útil con suscripciones que
+ *     no reportan `cost`).
+ *   - `tool_calls`: conteo de eventos `tool_use` por `part.tool` (`by_tool`) + total.
+ * Cada eje queda `null` si el stream no trajo dato de ese tipo.
+ */
+export interface OpenCodeTelemetry {
+  cost_usd: number | null;
+  tokens: {
+    total: number;
+    input: number;
+    output: number;
+    reasoning: number;
+    cache_read: number;
+    cache_write: number;
+  } | null;
+  tool_calls: { total: number; by_tool: Record<string, number> } | null;
+}
+
+function readFiniteNumber(source: Record<string, unknown>, key: string): number {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export function parseOpenCodeTelemetry(stdout: string): OpenCodeTelemetry {
+  let cost = 0;
+  let costFound = false;
+  const tok = { total: 0, input: 0, output: 0, reasoning: 0, cache_read: 0, cache_write: 0 };
+  let tokensFound = false;
+  const byTool: Record<string, number> = {};
+  let toolTotal = 0;
+
   for (const line of stdout.split("\n")) {
     if (line.trim().length === 0) continue;
     let value: unknown;
@@ -689,13 +746,47 @@ export function parseOpenCodeCost(stdout: string): number | null {
     }
     if (typeof value !== "object" || value === null) continue;
     const event = value as Record<string, unknown>;
-    if (event.type !== "step_finish" || typeof event.part !== "object" || event.part === null) continue;
-    const cost = (event.part as Record<string, unknown>).cost;
-    if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0) continue;
-    total += cost;
-    found = true;
+    if (typeof event.part !== "object" || event.part === null) continue;
+    const part = event.part as Record<string, unknown>;
+
+    if (event.type === "step_finish") {
+      const c = part.cost;
+      if (typeof c === "number" && Number.isFinite(c) && c >= 0) {
+        cost += c;
+        costFound = true;
+      }
+      if (typeof part.tokens === "object" && part.tokens !== null) {
+        const tokens = part.tokens as Record<string, unknown>;
+        tok.input += readFiniteNumber(tokens, "input");
+        tok.output += readFiniteNumber(tokens, "output");
+        tok.reasoning += readFiniteNumber(tokens, "reasoning");
+        if (typeof tokens.cache === "object" && tokens.cache !== null) {
+          const cache = tokens.cache as Record<string, unknown>;
+          tok.cache_read += readFiniteNumber(cache, "read");
+          tok.cache_write += readFiniteNumber(cache, "write");
+        }
+        tokensFound = true;
+      }
+    } else if (event.type === "tool_use") {
+      const tool = part.tool;
+      if (typeof tool === "string" && tool.length > 0) {
+        byTool[tool] = (byTool[tool] ?? 0) + 1;
+        toolTotal += 1;
+      }
+    }
   }
-  return found ? total : null;
+
+  tok.total = tok.input + tok.output + tok.reasoning + tok.cache_read + tok.cache_write;
+  return {
+    cost_usd: costFound ? cost : null,
+    tokens: tokensFound ? tok : null,
+    tool_calls: toolTotal > 0 ? { total: toolTotal, by_tool: byTool } : null,
+  };
+}
+
+/** Compat: costo reportado por el proveedor (delega en {@link parseOpenCodeTelemetry}). */
+export function parseOpenCodeCost(stdout: string): number | null {
+  return parseOpenCodeTelemetry(stdout).cost_usd;
 }
 
 export async function runGeneration(argv = process.argv.slice(2)): Promise<void> {
@@ -954,7 +1045,10 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           }
         }
         const agentDurationMs = Math.round(performance.now() - agentStartedAt);
-        const costUsd = agent.id === "opencode" ? parseOpenCodeCost(agentStdout) : null;
+        const telemetry: OpenCodeTelemetry = agent.id === "opencode"
+          ? parseOpenCodeTelemetry(agentStdout)
+          : { cost_usd: null, tokens: null, tool_calls: null };
+        const costUsd = telemetry.cost_usd;
         if (options.maxBudgetUsd !== undefined && costUsd === null) {
           failures.push(`${cellId}: no provider-reported cost was found; budget enforcement cannot continue safely`);
           stop = true;
@@ -1005,7 +1099,10 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           && testPatchPath !== undefined
           && existsSync(testPatchPath)
         ) {
-          const synth = synthesizeF2pTestRun(parseTestCommand(rawTestCommand), task.target_tests);
+          const parsedTestCmd = parseTestCommand(rawTestCommand);
+          const scriptBody = resolveDelegatedScriptBody(locked.repoPath, parsedTestCmd.scriptName);
+          const concreteRunner = resolveConcreteRunner(parsedTestCmd, scriptBody);
+          const synth = synthesizeF2pTestRun(parsedTestCmd, task.target_tests, { concreteRunner });
           if (synth.testInvocation === null) {
             swePolyInvalid = synth.reason ?? "unsynthesizable";
             writeFileSync(paths.test_log, `(SWE-PolyBench: test no sintetizable: ${swePolyInvalid})\n`, "utf8");
@@ -1073,6 +1170,8 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           agent_exit_code: agentExitCode,
           agent_duration_ms: agentDurationMs,
           cost_usd: costUsd,
+          tokens: telemetry.tokens,
+          tool_calls: telemetry.tool_calls,
           patch_applied: patchApplied,
           patch_size_bytes: patchSizeBytes,
           files_changed_count: filesChangedCount,

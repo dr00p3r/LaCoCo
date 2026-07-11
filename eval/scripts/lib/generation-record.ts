@@ -20,6 +20,22 @@
  * `isPass` reporte fail y `m1_unknown_runner_count` lo agregue aparte.
  */
 
+/** Uso de tokens del agente, sumado sobre los `step_finish` del stream de opencode. */
+export interface AgentTokenUsage {
+  total: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+/** Conteo de tool-calls del agente por herramienta (`read`/`grep`/`bash`/…) + total. */
+export interface AgentToolCalls {
+  total: number;
+  by_tool: Record<string, number>;
+}
+
 export interface GenerationRecord {
   schema_version: 3;
   run_id: string;
@@ -33,6 +49,13 @@ export interface GenerationRecord {
   agent_exit_code: number | null;
   agent_duration_ms: number;
   cost_usd: number | null;
+
+  // Telemetría de esfuerzo del agente (parseada del stream --format json de opencode).
+  // Ejes INDEPENDIENTES del costo (útiles con proveedores/suscripciones que no reportan
+  // `cost`). Opcionales para compat con generation.jsonl v3 históricos sin estos campos;
+  // `null` para agentes no-opencode o cuando el stream no trajo el dato.
+  tokens?: AgentTokenUsage | null;
+  tool_calls?: AgentToolCalls | null;
 
   // Patch capturado del worktree
   patch_applied: boolean;

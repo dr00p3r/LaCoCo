@@ -37,6 +37,13 @@ export type TestRunner =
   | "yarn-script"
   | "bespoke";
 
+/**
+ * Runner CONCRETO ejecutable localmente. A diferencia de {@link TestRunner}, no
+ * incluye los delegadores `npm-script`/`yarn-script`: esos se resuelven al binario
+ * real (mocha/jest/vitest) inspeccionando el `package.json` del repo checked-out.
+ */
+export type ConcreteRunner = "mocha" | "jest" | "vitest";
+
 /** Estilo de reporter de resultados. */
 export type TestReporter = "json" | "custom-reporter" | "default";
 
@@ -199,6 +206,38 @@ export function parseTestCommand(raw: string): ParsedTestCommand {
 }
 
 /**
+ * Resuelve el runner CONCRETO ejecutable a partir del `test_command` parseado y,
+ * cuando este delega (`npm-script`/`yarn-script`), del cuerpo del script delegado
+ * (`scripts[scriptName]`) leído del `package.json` del repo checked-out.
+ *
+ * Por qué leer el repo y no un mapeo estático per-repo: el runner delegado puede
+ * variar entre refs del mismo repo (p.ej. prettier migró de mocha a jest), y un
+ * mapeo manual se desactualiza. Los runners directos (mocha/jest/vitest) ya traen
+ * el binario explícito y se devuelven tal cual.
+ *
+ * Fallback a `"mocha"` cuando el cuerpo no está disponible o no se reconoce: es el
+ * comportamiento histórico que mantiene verde a svelte (cuyo `scripts.test` corre
+ * mocha y cuyo cuerpo puede no leerse). `bespoke` → `null`.
+ */
+export function resolveConcreteRunner(
+  parsed: ParsedTestCommand,
+  scriptBody: string | null,
+): ConcreteRunner | null {
+  if (parsed.runner === "mocha" || parsed.runner === "jest" || parsed.runner === "vitest") {
+    return parsed.runner;
+  }
+  if (parsed.runner === "npm-script" || parsed.runner === "yarn-script") {
+    if (scriptBody !== null) {
+      if (/\bjest\b/.test(scriptBody)) return "jest";
+      if (/\bvitest\b/.test(scriptBody)) return "vitest";
+      if (/\bmocha\b/.test(scriptBody)) return "mocha";
+    }
+    return "mocha"; // fallback compatible con svelte (scripts.test → mocha)
+  }
+  return null; // bespoke
+}
+
+/**
  * Descompone un id de prueba de `F2P` en archivo (si el id lo incluye antes de
  * `->`) y título. Los formatos observados son `<file>-><title>` (code-server,
  * mui, prettier, tailwind) y `<title-anidado>` sin archivo (three.js/qunit,
@@ -302,42 +341,119 @@ export interface SynthesizedF2pRun {
   readonly reason?: string;
 }
 
+/** Opciones de {@link synthesizeF2pTestRun}. */
+export interface SynthesizeOptions {
+  /**
+   * Runner concreto ya resuelto (vía {@link resolveConcreteRunner}). Si se omite,
+   * se mapea desde `parsed.runner` (npm-script/yarn-script → mocha, el histórico).
+   */
+  readonly concreteRunner?: ConcreteRunner | null;
+  /** Ruta al binario de mocha (def. `./node_modules/.bin/mocha`). */
+  readonly mochaBin?: string;
+  /** Fichero de opciones de mocha del repo (def. `mocha.opts`). */
+  readonly mochaOpts?: string;
+  /** Ruta al binario de jest (def. `./node_modules/.bin/jest`). */
+  readonly jestBin?: string;
+}
+
+/** Extensiones de spec que jest puede correr como archivo de test. */
+const JEST_SPEC_RE = /\.(spec|test)\.[cm]?[jt]sx?$/;
+
+/**
+ * Filtra los `testTargets` del `test_command` a lo que jest puede correr como
+ * test file. jest rechaza fixtures (`.snap`/`.svg`/`.html`) con "no tests found";
+ * solo acepta specs. Preferimos los `.spec.js`/`.test.js` explícitos; si no hay
+ * ninguno (el comando lista solo fixtures), caemos a los DIRECTORIOS únicos de
+ * esos fixtures como patrones de path — jest los trata como regex sobre rutas de
+ * test y corre el `jsfmt.spec.js` de cada dir. Esto cubre el modelo snapshot de
+ * prettier, donde el spec de un directorio testea todos sus fixtures hermanos.
+ */
+function jestScopeTargets(targets: string[]): string[] {
+  const specs = targets.filter((t) => JEST_SPEC_RE.test(t));
+  if (specs.length > 0) return [...new Set(specs)];
+  const dirs = targets
+    .filter((t) => t.includes("/"))
+    .map((t) => t.slice(0, t.lastIndexOf("/")));
+  return [...new Set(dirs)];
+}
+
 /**
  * Sintetiza la invocación local del runner que corre SOLO los tests F2P y cuyo
  * exit code refleja su pass/fail. Es la pieza runner-side que
  * {@link toLocalTestCommand} dejó explícitamente sin hacer ("NO inventa
  * patrones `--grep`/`-t` de F2P").
  *
- * Cubre el caso mocha/npm-script (svelte y la mayoría del whitelist). El runner
- * DEBE, aparte: (1) aplicar el `test_patch` antes —los tests F2P los crea ese
- * patch—, (2) construir el repo si el fix va en `src/`, y (3) validar la guarda
- * anti-cero-match con {@link expectedFixtures}. jest/vitest/bespoke → `null`.
+ * Cubre mocha (svelte/mui y la mayoría del whitelist) y jest (prettier). El
+ * runner concreto se pasa vía `opts.concreteRunner` (resuelto con
+ * {@link resolveConcreteRunner} leyendo el `package.json` del repo); si se omite,
+ * se mapea desde `parsed.runner` con el histórico (delegadores → mocha). El
+ * llamador DEBE, aparte: (1) aplicar el `test_patch` antes —los tests F2P los crea
+ * ese patch—, (2) construir el repo si el fix va en `src/`, y (3) validar la
+ * guarda anti-cero-match con {@link expectedFixtures}. vitest/bespoke → `null`.
  *
- * @param mochaBin ruta al binario de mocha (def. `./node_modules/.bin/mocha`).
- * @param mochaOpts fichero de opciones de mocha del repo (def. `mocha.opts`).
+ * Nota sobre la guarda para jest: NO se aísla por título F2P (los ids de prettier
+ * son símbolos como `isScriptLikeTag`, no títulos jest, y `-t` sería demasiado
+ * amplio); se acota corriendo los spec files del `test_command`. Por eso la guarda
+ * `expectedF2pCount` actúa como **liveness check** (ran===0 ⇒ inválido), no como
+ * conteo exacto: el `exitCode` agregado del spec es la señal de grading correcta,
+ * porque el snapshot F2P vive en el `test_patch` aplicado.
  */
 export function synthesizeF2pTestRun(
   parsed: ParsedTestCommand,
   f2pTitles: string[],
-  mochaBin = "./node_modules/.bin/mocha",
-  mochaOpts = "mocha.opts",
+  opts: SynthesizeOptions = {},
 ): SynthesizedF2pRun {
+  const mochaBin = opts.mochaBin ?? "./node_modules/.bin/mocha";
+  const mochaOpts = opts.mochaOpts ?? "mocha.opts";
+  const jestBin = opts.jestBin ?? "./node_modules/.bin/jest";
+
   const fixtures = [...new Set(f2pTitles.map((t) => f2pFixtureSlug(t)).filter((s) => s !== ""))];
   if (fixtures.length === 0) {
     return { testInvocation: null, grepPattern: null, expectedFixtures: [], reason: "no F2P titles" };
   }
-  const isMocha = parsed.runner === "mocha" || parsed.runner === "npm-script" || parsed.runner === "yarn-script";
-  if (!isMocha) {
-    return {
-      testInvocation: null,
-      grepPattern: null,
-      expectedFixtures: fixtures,
-      reason: `runner ${parsed.runner} not supported yet (mocha/npm-script only)`,
-    };
+
+  // Runner concreto: preferir el resuelto vía package.json; si no, mapear
+  // parsed.runner (delegadores npm-script/yarn-script → mocha, el histórico).
+  const runner: ConcreteRunner | null = opts.concreteRunner
+    ?? (parsed.runner === "mocha" || parsed.runner === "npm-script" || parsed.runner === "yarn-script"
+      ? "mocha"
+      : parsed.runner === "jest"
+        ? "jest"
+        : parsed.runner === "vitest"
+          ? "vitest"
+          : null);
+
+  if (runner === "mocha") {
+    const grepPattern = fixtures.map(escapeRegex).join("|");
+    // Reporter `dot`: compacto y parseable por parseTestRunnerOutput; NO usar
+    // `json`, que el volcado de código-generado-en-fallo de svelte corrompe.
+    const testInvocation = `${mochaBin} --opts ${mochaOpts} --grep '${grepPattern.replace(/'/g, "'\\''")}' --reporter dot`;
+    return { testInvocation, grepPattern, expectedFixtures: fixtures };
   }
-  const grepPattern = fixtures.map(escapeRegex).join("|");
-  // Reporter `dot`: compacto y parseable por parseTestRunnerOutput; NO usar
-  // `json`, que el volcado de código-generado-en-fallo de svelte corrompe.
-  const testInvocation = `${mochaBin} --opts ${mochaOpts} --grep '${grepPattern.replace(/'/g, "'\\''")}' --reporter dot`;
-  return { testInvocation, grepPattern, expectedFixtures: fixtures };
+
+  if (runner === "jest") {
+    const specTargets = jestScopeTargets(parsed.testTargets);
+    if (specTargets.length === 0) {
+      return {
+        testInvocation: null,
+        grepPattern: null,
+        expectedFixtures: fixtures,
+        reason: "jest: no spec targets to scope F2P run",
+      };
+    }
+    const quoted = specTargets.map((t) => `'${t.replace(/'/g, "'\\''")}'`).join(" ");
+    // Sin --json (parseJest lee la línea "Tests: N passed, M total" del reporter
+    // por defecto, que --json suprime). --ci: no escribe snapshots nuevos → un F2P
+    // cuyo snapshot no matchea FALLA (grading correcto). --runInBand: determinista.
+    const testInvocation = `${jestBin} ${quoted} --ci --runInBand --colors=false`;
+    return { testInvocation, grepPattern: null, expectedFixtures: fixtures };
+  }
+
+  // vitest/bespoke aún no soportados en generación.
+  return {
+    testInvocation: null,
+    grepPattern: null,
+    expectedFixtures: fixtures,
+    reason: `runner ${runner ?? parsed.runner} not supported yet (mocha/jest only)`,
+  };
 }

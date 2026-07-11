@@ -21,7 +21,7 @@ export LACOCO_AGENT_MODEL="qwen3:4b-instruct"        # ollama pull qwen3:4b-inst
 export LACOCO_AGENT_ENDPOINT="http://localhost:11434"
 
 # Modelo de generación de opencode = deepseek-v4-flash en high
-export LACOCO_EVAL_OPENCODE_MODEL="opencode-go/deepseek-v4-flash"  # id EXACTO de `opencode models`
+export LACOCO_EVAL_OPENCODE_MODEL="opencode-go/deepseek-v4-pro"  # id EXACTO de `opencode models`
 export LACOCO_EVAL_OPENCODE_AGENT="build"                       # ver nota "high" abajo
 ```
 

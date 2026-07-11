@@ -145,3 +145,42 @@ describe("panel norte: end-to-end time y costo", () => {
     expect(agg.no_context!.end_to_end_ms_mean).toBe(300);
   });
 });
+
+describe("panel norte: esfuerzo del agente (tokens + tool-calls)", () => {
+  it("promedia tokens/tool-calls solo sobre celdas con telemetría y perfila by_tool", () => {
+    const cells = [
+      buildCellMetrics(rec({
+        strategy_id: "hybrid", task_id: "zod-001",
+        tokens: { total: 1000, input: 800, output: 100, reasoning: 100, cache_read: 0, cache_write: 0 },
+        tool_calls: { total: 5, by_tool: { grep: 2, read: 3 } },
+      }), undefined),
+      buildCellMetrics(rec({
+        strategy_id: "hybrid", task_id: "zod-002",
+        tokens: { total: 3000, input: 2000, output: 500, reasoning: 500, cache_read: 0, cache_write: 0 },
+        tool_calls: { total: 9, by_tool: { grep: 4, bash: 5 } },
+      }), undefined),
+      // celda sin telemetría (record v3 histórico / no-opencode): NO cuenta en las medias.
+      buildCellMetrics(rec({ strategy_id: "hybrid", task_id: "zod-003" }), undefined),
+    ];
+    const agg = aggregateByStrategy(cells).hybrid!;
+
+    expect(agg.effort_cells).toBe(2);                 // la tercera celda no tiene telemetría
+    expect(agg.tokens_total_mean).toBe(2000);         // (1000+3000)/2
+    expect(agg.tokens_total_sum).toBe(4000);
+    expect(agg.tool_calls_mean).toBe(7);              // (5+9)/2
+    // by_tool promedia sobre las 2 celdas con telemetría (ausencia = 0):
+    expect(agg.by_tool_mean.grep).toBe(3);            // (2+4)/2
+    expect(agg.by_tool_mean.read).toBe(1.5);          // (3+0)/2
+    expect(agg.by_tool_mean.bash).toBe(2.5);          // (0+5)/2
+  });
+
+  it("sin telemetría en ninguna celda → medias null y by_tool vacío", () => {
+    const agg = aggregateByStrategy([
+      buildCellMetrics(rec({ strategy_id: "no_context" }), undefined),
+    ]).no_context!;
+    expect(agg.effort_cells).toBe(0);
+    expect(agg.tokens_total_mean).toBeNull();
+    expect(agg.tool_calls_mean).toBeNull();
+    expect(agg.by_tool_mean).toEqual({});
+  });
+});

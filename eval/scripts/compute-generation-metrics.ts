@@ -66,6 +66,13 @@ interface StrategyAggregate {
   cost_usd_mean: number | null;
   cost_usd_total: number | null;
   cost_cells: number;
+  // Esfuerzo del agente independiente del costo (parseado del stream de opencode).
+  tokens_total_mean: number | null;
+  tokens_total_sum: number | null;
+  tool_calls_mean: number | null;
+  // Perfil de herramientas: media por herramienta a traves de las celdas con telemetria.
+  by_tool_mean: Record<string, number>;
+  effort_cells: number;
 }
 
 function mean(values: number[]): number | null {
@@ -117,6 +124,10 @@ interface GenerationCellMetrics {
   cost_usd: number | null;
   retrieval_overhead_ms: number;
   end_to_end_ms: number;
+  // Esfuerzo del agente (null si el registro no trae telemetria: v3 historicos / no-opencode).
+  tokens_total: number | null;
+  tool_calls_total: number | null;
+  tool_calls_by_tool: Record<string, number> | null;
 }
 
 /** Registro de retrieval (subset): timings para el join end-to-end. */
@@ -211,6 +222,9 @@ function buildCellMetricsInternal(
     cost_usd: rec.cost_usd,
     retrieval_overhead_ms: retrievalOverheadMs,
     end_to_end_ms: retrievalOverheadMs + rec.agent_duration_ms,
+    tokens_total: rec.tokens?.total ?? null,
+    tool_calls_total: rec.tool_calls?.total ?? null,
+    tool_calls_by_tool: rec.tool_calls?.by_tool ?? null,
   };
 }
 
@@ -262,6 +276,21 @@ export function aggregateByStrategy(cells: GenerationCellMetrics[]): Record<stri
     const overheadValues = list.map((c) => c.retrieval_overhead_ms);
     const costValues = list.map((c) => c.cost_usd).filter((v): v is number => v !== null);
 
+    // Esfuerzo del agente (tokens/tool-calls): solo celdas con telemetria. by_tool_mean
+    // promedia el conteo de cada herramienta sobre esas celdas (ausencia = 0).
+    const effortCells = list.filter((c) => c.tool_calls_total !== null || c.tokens_total !== null);
+    const tokenValues = list.map((c) => c.tokens_total).filter((v): v is number => v !== null);
+    const toolCallValues = list.map((c) => c.tool_calls_total).filter((v): v is number => v !== null);
+    const toolNames = new Set<string>();
+    for (const c of effortCells) for (const t of Object.keys(c.tool_calls_by_tool ?? {})) toolNames.add(t);
+    const byToolMean: Record<string, number> = {};
+    if (effortCells.length > 0) {
+      for (const name of toolNames) {
+        const sum = effortCells.reduce((s, c) => s + (c.tool_calls_by_tool?.[name] ?? 0), 0);
+        byToolMean[name] = sum / effortCells.length;
+      }
+    }
+
     out[strategy] = {
       m1_pass_rate: total > 0 ? passCount / total : 0,
       m1_pass_rate_ci: m1PassCi,
@@ -286,6 +315,11 @@ export function aggregateByStrategy(cells: GenerationCellMetrics[]): Record<stri
       cost_usd_mean: mean(costValues),
       cost_usd_total: costValues.length > 0 ? costValues.reduce((s, v) => s + v, 0) : null,
       cost_cells: costValues.length,
+      tokens_total_mean: mean(tokenValues),
+      tokens_total_sum: tokenValues.length > 0 ? tokenValues.reduce((s, v) => s + v, 0) : null,
+      tool_calls_mean: mean(toolCallValues),
+      by_tool_mean: byToolMean,
+      effort_cells: effortCells.length,
     };
   }
   return out;
@@ -352,6 +386,13 @@ function renderCsv(byStrategy: Record<string, StrategyAggregate>): string {
     pushCi("strategy", strategy, "EndToEndMs_p95", agg.end_to_end_ms_p95, agg.m1_total, null);
     pushCi("strategy", strategy, "CostUsd_mean", agg.cost_usd_mean, agg.cost_cells, null);
     pushCi("strategy", strategy, "CostUsd_total", agg.cost_usd_total, agg.cost_cells, null);
+    // Esfuerzo del agente independiente del costo (tokens/tool-calls) + perfil por herramienta.
+    pushCi("strategy", strategy, "TokensTotal_mean", agg.tokens_total_mean, agg.effort_cells, null);
+    pushCi("strategy", strategy, "TokensTotal_sum", agg.tokens_total_sum, agg.effort_cells, null);
+    pushCi("strategy", strategy, "ToolCalls_mean", agg.tool_calls_mean, agg.effort_cells, null);
+    for (const [tool, meanCount] of Object.entries(agg.by_tool_mean)) {
+      pushCi("strategy", strategy, `ToolCalls_${tool}_mean`, meanCount, agg.effort_cells, null);
+    }
   }
   return `${[header.join(","), ...rows.map((r) => r.map(csvCell).join(","))].join("\n")}\n`;
 }
@@ -414,6 +455,25 @@ function renderMarkdown(
         `${fmtMs(agg.agent_duration_ms_mean)} / ${fmtMs(agg.agent_duration_ms_p95)} | ` +
         `${fmtMs(agg.end_to_end_ms_mean)} / ${fmtMs(agg.end_to_end_ms_p95)} | ` +
         `${fmtUsd(agg.cost_usd_mean)} / ${fmtUsd(agg.cost_usd_total)} | ${agg.cost_cells} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Esfuerzo del agente por estrategia (tokens y tool-calls)");
+  lines.push("");
+  lines.push("Ejes de esfuerzo INDEPENDIENTES del costo (parseados del stream `--format json` de opencode), útiles cuando el proveedor no reporta `cost`. `by_tool` promedia el conteo de cada herramienta sobre las celdas con telemetría (p.ej. `grep`, `bash`, `read`).");
+  lines.push("");
+  // Union de herramientas presentes en cualquier estrategia, orden estable.
+  const allTools = [...new Set(Object.values(byStrategy).flatMap((a) => Object.keys(a.by_tool_mean)))].sort();
+  const toolHeader = allTools.map((t) => `${t} (mean)`).join(" | ");
+  lines.push(`| strategy | effort cells | tokens (mean / sum) | tool-calls (mean)${allTools.length > 0 ? ` | ${toolHeader}` : ""} |`);
+  lines.push(`|---|---:|---:|---:|${allTools.map(() => "---:|").join("")}`);
+  const fmtNum = (v: number | null): string => (v === null ? "N/A" : Math.round(v).toLocaleString("en-US"));
+  const fmtMean = (v: number): string => v.toFixed(1);
+  for (const [strategy, agg] of Object.entries(byStrategy)) {
+    const toolCols = allTools.map((t) => fmtMean(agg.by_tool_mean[t] ?? 0)).join(" | ");
+    lines.push(
+      `| ${strategy} | ${agg.effort_cells} | ${fmtNum(agg.tokens_total_mean)} / ${fmtNum(agg.tokens_total_sum)} | ` +
+        `${agg.tool_calls_mean === null ? "N/A" : fmtMean(agg.tool_calls_mean)}${allTools.length > 0 ? ` | ${toolCols}` : ""} |`,
     );
   }
   lines.push("");

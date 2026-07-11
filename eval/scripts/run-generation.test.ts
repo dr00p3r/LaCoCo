@@ -7,6 +7,7 @@ import {
   buildPrompt,
   loadRequiredEnrichedPrompt,
   parseOpenCodeCost,
+  parseOpenCodeTelemetry,
   validateRetrievalContexts,
   type RetrievalJsonlRecord,
 } from "./run-generation.js";
@@ -240,5 +241,69 @@ describe("OpenCode cost parsing", () => {
 
   it("returns null when the provider reports no cost", () => {
     expect(parseOpenCodeCost('{"type":"step_start"}')).toBeNull();
+  });
+});
+
+describe("OpenCode telemetry parsing (tokens + tool-calls)", () => {
+  const stream = [
+    JSON.stringify({
+      type: "step_finish",
+      part: { cost: 0.02, tokens: { total: 19737, input: 19156, output: 192, reasoning: 389, cache: { write: 0, read: 0 } } },
+    }),
+    JSON.stringify({ type: "tool_use", part: { tool: "read", callID: "a" } }),
+    JSON.stringify({ type: "tool_use", part: { tool: "grep", callID: "b" } }),
+    JSON.stringify({ type: "tool_use", part: { tool: "grep", callID: "c" } }),
+    JSON.stringify({ type: "tool_use", part: { tool: "bash", callID: "d" } }),
+    "not json",
+    JSON.stringify({ type: "tool_use", part: { cost: 99 } }), // sin `tool`: no cuenta, no aporta costo
+    JSON.stringify({
+      type: "step_finish",
+      part: { cost: 0.01, tokens: { total: 32955, input: 169, output: 102, reasoning: 172, cache: { write: 5, read: 32512 } } },
+    }),
+  ].join("\n");
+
+  it("sums token usage across step_finish (incl. cache) sin contar tool_use", () => {
+    const t = parseOpenCodeTelemetry(stream);
+    expect(t.tokens).not.toBeNull();
+    expect(t.tokens).toEqual({
+      input: 19156 + 169,
+      output: 192 + 102,
+      reasoning: 389 + 172,
+      cache_read: 0 + 32512,
+      cache_write: 0 + 5,
+      total: 19325 + 294 + 561 + 32512 + 5,
+    });
+  });
+
+  it("counts tool_use by tool, exponiendo el by_tool completo", () => {
+    const t = parseOpenCodeTelemetry(stream);
+    expect(t.tool_calls).not.toBeNull();
+    expect(t.tool_calls?.total).toBe(4);
+    expect(t.tool_calls?.by_tool).toEqual({ read: 1, grep: 2, bash: 1 });
+  });
+
+  it("el costo sale solo de step_finish, nunca de tool_use (guard cost:99)", () => {
+    // 0.02 + 0.01 = 0.03; el tool_use con cost:99 se ignora.
+    expect(parseOpenCodeTelemetry(stream).cost_usd).toBeCloseTo(0.03, 10);
+  });
+
+  it("tool_use sin `part.tool` string no infla el total", () => {
+    const only = JSON.stringify({ type: "tool_use", part: { cost: 99 } });
+    expect(parseOpenCodeTelemetry(only).tool_calls).toBeNull();
+  });
+
+  it("stream sin tokens ni tools → tokens y tool_calls null", () => {
+    const noEffort = [
+      JSON.stringify({ type: "step_finish", part: { cost: 0.5 } }),
+      JSON.stringify({ type: "step_start" }),
+    ].join("\n");
+    const t = parseOpenCodeTelemetry(noEffort);
+    expect(t.cost_usd).toBe(0.5);
+    expect(t.tokens).toBeNull();
+    expect(t.tool_calls).toBeNull();
+  });
+
+  it("cost null cuando no hay step_finish", () => {
+    expect(parseOpenCodeTelemetry('{"type":"step_start"}').cost_usd).toBeNull();
   });
 });
