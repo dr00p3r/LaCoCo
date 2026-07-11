@@ -94,6 +94,7 @@ phases:
       - "consensus"
       - "repograph"
       - "ppr"
+      - "connector"
 
   generation:
     enabled: true
@@ -106,6 +107,9 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      - "repograph"
+      - "ppr"
+      - "connector"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
@@ -340,6 +344,43 @@ splits:
     agents:
       - opencode
 
+  generation_eff:
+    description: >-
+      A/B de generacion (eje EFICIENCIA) sobre los 8 svelte multi-hop. Compara el
+      agente nativo (no_context) vs hybrid vs los baselines de grafo (repograph/ppr)
+      vs consensus, alimentados con el contexto de su retrieval. KPI = dE2E + dCost
+      CONDICIONADO a los casos que PASAN (dPass@1 ~ 0 con modelo capaz).
+    strategies:
+      - no_context
+      - hybrid
+      - repograph
+      - ppr
+      - consensus
+    sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+    task_ids:
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+    agents:
+      - opencode
+
   retrieval_baselines:
     description: >-
       A/B de retrieval sobre los 8 svelte multi-hop: aisla el delta del consenso
@@ -352,6 +393,7 @@ splits:
       - ppr
       - clcr
       - consensus
+      - connector
     sanitizer_variant: baseline
     sanitizer_variants:
       - baseline

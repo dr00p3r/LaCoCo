@@ -4,6 +4,7 @@ import type { LlmClient } from "../../slms/llm-client.js";
 import type { RecoveryStrategy } from "../models/strategies/types.js";
 import { AGENTIC_DEFAULT_CONFIG, AgenticStrategy, type AgenticConfig } from "./agentic-strategy.js";
 import { CLCR_DEFAULT_CONFIG, ClcrStrategy, type ClcrConfig } from "./clcr-strategy.js";
+import { CONNECTOR_DEFAULT_CONFIG, ConnectorStrategy, type ConnectorConfig } from "./connector-strategy.js";
 import { CONSENSUS_DEFAULT_CONFIG, ConsensusStrategy, type ConsensusConfig } from "./consensus-strategy.js";
 import { HYBRID_DEFAULT_CONFIG, HybridStrategy, type HybridConfig } from "./hybrid-strategy.js";
 import { ICTD_DEFAULT_CONFIG, IctdStrategy, type IctdConfig } from "./ictd-strategy.js";
@@ -131,6 +132,17 @@ export const STRATEGY_REGISTRY: Readonly<Record<StrategyName, StrategyEntry>> = 
       db,
       requireLanceDb("ppr", lanceDb),
       getEffectiveStrategyParameters("ppr", options) as unknown as PprConfig,
+    ),
+  },
+  connector: {
+    name: "connector",
+    needsLanceDb: true,
+    defaultParameters: CONNECTOR_DEFAULT_CONFIG,
+    chunkLimitParameter: "chunkLimit",
+    create: ({ db, lanceDb }, options) => new ConnectorStrategy(
+      db,
+      requireLanceDb("connector", lanceDb),
+      getEffectiveStrategyParameters("connector", options) as unknown as ConnectorConfig,
     ),
   },
 };

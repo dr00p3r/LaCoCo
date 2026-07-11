@@ -214,6 +214,39 @@ strategies:
       generation:
         include: true
 
+  - id: connector
+    label: "Structural Connector Retrieval (SCR)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "connector"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Mecanismo nuevo: puntua por CONECTIVIDAD tipada entre anclas (Dijkstra entre
+      pares con costo por dimension-de-intencion), acreditando los nodos internos que
+      conectan los sintomas ('el fix en la confluencia'). Inyeccion guardada: las anclas conservan su score, los conectores se inyectan capados bajo la ancla top-protegida.
+      Determinista, costo-cero. Frente al SOTA: RepoGraph/Aider type-blind, LocAgent/CoSIL
+      LLM-in-loop.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      subgraph_max_hops: 3
+      bfs_max_nodes: 5000
+      max_path_anchors: 15
+      path_decay: 0.6
+      hub_dampening: 0.5
+      top_anchors_protected: 3
+    hypothesis: >-
+      Debe sostener el gold-ancla (464) Y el conector multi-hop (1231) a la vez via inyeccion guardada,
+      rompiendo el techo 0.750 que consensus/repograph no superan.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
   - id: rpr
     label: "Relational Path Retrieval"
     kind: "lacoco"

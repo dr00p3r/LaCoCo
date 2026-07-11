@@ -94,6 +94,7 @@ phases:
       - "consensus"
       - "repograph"
       - "ppr"
+      - "connector"
 
   generation:
     enabled: true
@@ -358,6 +359,7 @@ splits:
       - ppr
       - clcr
       - consensus
+      - connector
     sanitizer_variants:
       - baseline
     require_gold_status: ready
