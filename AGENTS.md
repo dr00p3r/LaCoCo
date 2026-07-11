@@ -10,21 +10,26 @@ Pipeline de consulta:
 
 ```text
 prompt original
-  -> AgentIntermediary1
-     (el SLM genera route, clean_query, embedding_input, intent,
+  -> skill instalada en el agente
+     (el agente genera clean_query, embedding_input, intent,
       dimensions y confidence)
+  -> JSON estructurado por stdin
   -> RecoveryStrategy
   -> ContextAggregator
-  -> PromptInjector
-  -> LLM o agente de codificación
+  -> contextBlock JSON
+  -> agente de codificación usa el contexto como evidencia
 ```
 
-`AgentIntermediary1` es el único filtro dimensional. No existe ni debe añadirse un componente `DimensionalFilter` separado. Toda transformación semántica del prompt pertenece al SLM: no usar stopwords, extracción de keywords, reglas heurísticas ni fallbacks locales. `QueryGrounder` puede tokenizar léxicamente el prompt completo, sin descartar stopwords ni inferir significado, únicamente para recuperar evidencias del Project Semantic Profile. Si Ollama falla o devuelve un contrato inválido, la consulta debe fallar explícitamente.
+LaCoCo no debe limpiar, reescribir ni clasificar semanticamente el prompt dentro
+del core antes de retrieval. Esa responsabilidad pertenece al agente externo,
+guiado por `.lacoco/skill.md`. La CLI valida el contrato estructurado recibido
+por stdin y falla explicitamente si falta informacion obligatoria; no debe
+inferir dimensiones, keywords ni rutas RAG mediante reglas locales.
 
-`SlmClassifier` solicita un esquema JSON estructurado a Ollama con temperatura
-cero y semilla fija. Toda propuesta `LLM_DIRECT` se somete a una segunda
-verificación del propio SLM antes de omitir retrieval; el código local valida el
-contrato, pero no reemplaza ni corrige semánticamente la decisión.
+`AgentIntermediary1`, `SlmClassifier`, `QueryGrounder` y `semantic-profile`
+quedan como codigo legacy/eval mientras se decide su eliminacion definitiva. No
+deben volver a conectarse al flujo activo de `retrieve`, `context export`,
+`inspect-query`, watcher o comandos principales.
 
 ## Grafo
 
@@ -60,9 +65,9 @@ src/
       helpers/          pesos por intent y recorridos de grafo compartidos
     utilities/
       filters/          agregación e inyección de contexto
-      mini-agents/      AgentIntermediary1
+      mini-agents/      legacy AgentIntermediary1 para eval/histórico
       search/           servicios internos de búsqueda
-  semantic-profile/    inventario, enriquecimiento SLM, persistencia y grounding
+  semantic-profile/    legacy Project Semantic Profile para eval/histórico
   slms/                 cliente local de Ollama e interfaz LlmClient
 tests/retrieval/        pruebas Vitest del pipeline de retrieval
 ```
@@ -83,96 +88,36 @@ tests/retrieval/        pruebas Vitest del pipeline de retrieval
   `health().maintenance` expone contadores, necesidad de mantenimiento y el
   último resultado; `optimizeIfNeeded(true)` permite ejecución explícita.
 
-El Project Semantic Profile vive en tablas SQLite separadas del grafo. Sus
-alias, dominios y descripciones nunca son nodos SYS/CPG/DTG. `profile rebuild`
-extrae evidencias determinísticas, reutiliza términos sin cambios por hash,
-enriquece lotes con `LlmClient` y promueve el build atómicamente. Reindexar el
-grafo invalida el perfil. El watcher solo mantiene un perfil ya construido.
-
 El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. La primera ejecución puede requerir descargar el modelo.
 
-## Modelo de build del Project Semantic Profile
+## Skill de retrieval
 
-- **Modelo permanente**: `qwen3:4b-instruct` (4B instruct, cuantizado Q4_K_M, ~2.5 GB).
-  Adoptado tras el A/B `2026-07-08-grounding-ab-svelte728-7b-vs-4b.md`:
-  2.74× más rápido que `qwen2.5:7b-instruct` (31 min vs 85 min en svelte-728)
-  con métricas de retrieval idénticas.
-- **Concurrencia por defecto**: 4 (`profile.enrichConcurrency`, ver `src/cli/state/config-store.ts`).
-  Alinear con `OLLAMA_NUM_PARALLEL` del server para no saturar los slots.
-- **VRAM típica**: 5998 MB / 8188 MB con `num_ctx: 8192` (deja ~2.2 GB libres).
-- **No usar** `qwen2.5-coder:1.5b` para el perfil: entra en bucle de repetición
-  e ignora IDs (ver `build-grounding-profiles.ts:123-125`).
-- **No usar** `qwen2.5:7b-instruct` para builds grandes (>1000 términos): el
-  contexto de 4096 tokens causa prompt cache thrashing por batch
-  (`memory_seq_rm [208, end)` en cada llamada) y el modelo no paraleliza en
-  8 GB de VRAM con la KV cache del 7B.
+`lacoco skill update [proyecto]` genera `.lacoco/skill.md` desde el grafo
+indexado. Ese archivo es el snapshot canonico de LaCoCo para el proyecto.
 
-## Modelo del intermediario (default `agent.model`)
+`lacoco skill install [proyecto] --agent <codex|claude|opencode|all>` instala un
+paquete `SKILL.md` en el agente destino. `skill update --install <agents>`
+genera el snapshot y sincroniza los agentes en un solo paso. La skill instalada
+debe indicar que, ante tareas que dependan del codigo del repositorio, el agente
+primero construye el JSON estructurado, llama a `lacoco retrieve` por stdin,
+usa `contextBlock` como evidencia y recien despues responde o edita.
 
-- **Default**: `qwen3:4b-instruct`. El 4B es la línea base vigente del
-  intermediario SLM (clasificador de query). Es el mismo modelo del build de
-  perfil — valida con `temp: 0, seed: 42` y produce JSON estructurado
-  consistente en prompts de retrieval (REPL, gist, URLs), a diferencia del
-  1.5B que entraba en bucle de repetición.
-- **Override**: `LACOCO_AGENT_MODEL` (env) o `npm run dev -- config set agent.model <name> --local`.
-- **Para pruebas A/B**: setear `LACOCO_INTERMEDIARY_MODEL` por separado
-  (p. ej. `qwen2.5:7b-instruct`) sin tocar `agent.model`. El intermediario del
-  eval runner (`run-retrieval.ts:freezeSlmQuery`) honra `intermediary.model`
-  con su propio `keep_alive` y `num_ctx`.
+Targets actuales:
 
-### Defaults del enriquecedor (Fase 0, `SEMANTIC_ENRICHMENT_PROMPT_VERSION: 2`)
+- `codex`: `${CODEX_HOME:-~/.codex}/skills/lacoco-<project>/SKILL.md`
+- `claude`: `${CLAUDE_HOME:-~/.claude}/skills/lacoco-<project>/SKILL.md`
+- `opencode`: `${XDG_CONFIG_HOME:-~/.config}/opencode/skills/lacoco-<project>/SKILL.md` y `opencode.jsonc.skills.paths`
 
-| Parámetro | Valor | Razón |
-|---|---|---|
-| `BATCH_SIZE` | 3 | Prompts <1500 tokens, caben en `num_ctx: 8192` sin truncamiento |
-| `MAX_ALIASES` | 4 | El 4B produce 1-5 aliases naturalmente; 4 cubre el 90%+. Fallback a 6 si la cobertura cae. |
-| `MAX_DOMAINS` | 2 | El 4B produce 1-2 dominios típicamente |
-| `MAX_DESCRIPTION_LENGTH` | 240 | El 4B produce descripciones de 130-180 chars; 240 deja holgura. `coerceDescription` aplica el cap duro en storage. |
-| `format` | `ENRICHMENT_SCHEMA` | El schema refleja la salida natural del 4B (aliases como strings, `domain` key). `format: "json"` sin schema lo desvía a un formato compacto que requiere más parsing. |
-| `num_predict` | 2048 | Output típico: 800-1500 tokens. 2048 cubre el peor caso. |
-| `num_ctx` | 8192 | Con 4B (~2.5 GB), deja 2+ GB para KV cache 8K → elimina `memory_seq_rm` por batch. |
+El watcher actualiza grafo y vectores, pero no reescribe la skill. Si cambia una
+parte arquitectonica importante, ejecutar manualmente `skill update --install
+<agents>` despues de reindexar. No reintroducir actualizacion automatica de
+skills dentro del daemon sin una decision explicita de producto.
 
-### Robustez ante variaciones del modelo
+## Modelo de agente local
 
-El 4B con `temp: 0, seed: 42` produce el schema correctamente la mayoría de las
-veces, pero rechaza ocasionalmente con HTTP 500 (`peg-native format error`):
-trailing commas, descripciones ligeramente sobre el cap, o alias que exceden
-el cap. El enriquecedor maneja esto con:
-
-- **Retry en `#enrichBatch`**: 3 intentos con backoff (200ms × attempt). El 4B
-  suele recuperarse en retry 2-3; las causas son estocásticas entre batches
-  (carga de slots, estado de cache), no deterministas per-call.
-- **Degradación controlada**: tras 3 fallos, el batch entero cae a
-  `minimalEnrichment` (sin aliases/dominios, con `canonical_term` como
-  description). El build **no aborta**: el perfil sigue adelante, los términos
-  faltantes quedan disponibles para grounding por su forma canónica.
-- **Parser tolerante**: `parseAliases` acepta tanto `["str1", "str2"]` (4B)
-  como `[{value, language, confidence}]` (formato verboso, por compat con
-  otras SLMs). `parseDomains` acepta `domain` (4B) o `name` (verboso).
-- **Match por índice posicional**: si el LLM omite el `id` (la 4B a veces
-  lo hace), se usa la posición en el array como fallback. Solo aplica cuando
-  el id está ausente; si el id está presente pero no matchea, se ignora
-  (la SLM está mintiendo sobre qué término enriquece).
-
-### Métricas de build (svelte-728, 1121 términos)
-
-| Build | Wall | Speedup vs 7B | Aliases | A/B retrieval |
-|---|---:|---:|---:|---|
-| 7B (`qwen2.5:7b-instruct`, prompt v1) | 85 min | 1× | 5307 | baseline |
-| 4B (`qwen3:4b-instruct`, prompt v1) | 31 min | 2.74× | 3558 | M3-M5 idéntico |
-| 4B Fase 0 (prompt v2 + retry + schema 4B) | 17 min | **5×** | 2933 | M3-M5 idéntico |
-
-El schema tightening (MAX_ALIASES=4 vs 8, MAX_DOMAINS=2 vs 3, drop term-level
-confidence) **no degrada las métricas M3-M5 del A/B** — más aliases ≠ mejor
-grounding. La reducción de 17% en aliases (3558→2933) refleja el cap más
-estricto, no pérdida de calidad.
-
-- **Aislamiento**: el modelo del build no afecta la query en tiempo de
-  retrieval — el `QueryGrounder` es determinista (alias exact + FTS5). El A/B
-  es válido con cualquier intermediario (incluido el 7B).
-- **Invariante**: `promptVersion` y `model` se persisten en
-  `semantic_profile_builds`. Bumpear `SEMANTIC_ENRICHMENT_PROMPT_VERSION`
-  invalida el caché por cambio de contrato, no por cambio de modelo.
+`agent.model` y `agent.endpoint` solo aplican a consumidores que aun llaman a
+Ollama, principalmente la estrategia `agentic` y scripts legacy/eval. El flujo
+normal de `retrieve` no instancia un intermediario SLM ni requiere Ollama.
 
 ## Retrieval
 
@@ -243,32 +188,32 @@ El flag sigue funcionando como override por comando si se necesita mezclar dirs.
 ## Comandos
 
 ```bash
-npm run typecheck
-npm test
-npm run build
-npm run dev -- init
-npm run dev -- status
-npm run dev -- config list
-npm run dev -- config get <clave>
-npm run dev -- config set <clave> <valor> --local
-npm run dev -- config set <clave> <valor> --global
-npm run dev -- project list
-npm run dev -- project inspect <proyecto>
-npm run dev -- project remove <proyecto>
-npm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid
-npm run dev -- watch start [proyecto]
-npm run dev -- watch stop [proyecto]
-npm run dev -- watch restart [proyecto]
-npm run dev -- watch status [proyecto]
-npm run dev -- watch list
-npm run dev -- index_graph <ruta-tsconfig>
-npm run dev -- index_vectors <ruta-tsconfig>
-npm run dev -- profile rebuild [proyecto] --json
-npm run dev -- profile ground [proyecto] "<consulta>" --json
-npm run dev -- profile status [proyecto] --verify --json
-npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid
-npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
-npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm run dev -- init
+pnpm run dev -- status
+pnpm run dev -- config list
+pnpm run dev -- config get <clave>
+pnpm run dev -- config set <clave> <valor> --local
+pnpm run dev -- config set <clave> <valor> --global
+pnpm run dev -- project list
+pnpm run dev -- project inspect <proyecto>
+pnpm run dev -- project remove <proyecto>
+pnpm run dev -- watch start [proyecto]
+pnpm run dev -- watch stop [proyecto]
+pnpm run dev -- watch restart [proyecto]
+pnpm run dev -- watch status [proyecto]
+pnpm run dev -- watch list
+pnpm run dev -- index_graph <ruta-tsconfig-o-proyecto>
+pnpm run dev -- index_vectors <ruta-tsconfig-o-proyecto>
+pnpm run dev -- skill update [proyecto] --json
+pnpm run dev -- skill update [proyecto] --install codex,claude,opencode --json
+pnpm run dev -- skill install [proyecto] --agent all --json
+printf '%s' '<json>' | pnpm run dev -- retrieve [proyecto] --strategy hybrid
+printf '%s' '<json>' | pnpm run dev -- retrieve [proyecto] --strategy hybrid --json
+printf '%s' '<json>' | pnpm run dev -- context export [proyecto] --output contexto.md --strategy hybrid
+printf '%s' '<json>' | pnpm run dev -- inspect-query [proyecto] --strategy hybrid
 ```
 
 `retrieve` y `context export` aceptan `--chunks <entero>` y
@@ -277,10 +222,11 @@ controla `anchorLimit` para `hybrid` y `chunkLimit` para las demás estrategias;
 el segundo controla el presupuesto de `ContextAggregator`.
 
 Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
-Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy` u
-`--ollama`, la CLI resuelve `strategy.default`, `agent.endpoint` y `agent.model` desde la
-configuración persistente, respetando la precedencia env > local > global >
-default. Los flags explícitos siempre tienen prioridad.
+Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy`, la CLI
+resuelve `strategy.default` desde la configuración persistente, respetando la
+precedencia env > local > global > default. Los flags explícitos siempre tienen
+prioridad. `agent.endpoint` y `agent.model` solo se usan cuando la estrategia o
+un script legacy necesita Ollama.
 Cuando se omiten `--db` o `--lancedb`, la CLI usa rutas por proyecto bajo
 `paths.data`: `tensor.sqlite` para SQLite y `lancedb` para LanceDB. Las rutas
 explícitas se normalizan a absolutas; las rutas resueltas se guardan en el
@@ -291,18 +237,29 @@ opcional que resuelve el proyecto desde el registro (por nombre, id o ruta). Si
 se omite, usan `process.cwd()`. Las rutas de almacenamiento (`db` y `lancedb`)
 se resuelven siempre desde el proyecto registrado; no aceptan flags explícitos.
 
-El grounding es experimental y está desactivado por defecto. `retrieve`,
-`context export` e `inspect-query` aceptan `--grounding` y `--no-grounding`; la
-configuración persistente es `profile.groundingEnabled`. Si se solicita y el
-perfil no está `ready`, la consulta falla explícitamente.
+Los tres comandos leen el contrato estructurado desde stdin:
+
+```json
+{
+  "schemaVersion": 1,
+  "originalPrompt": "Prompt original del usuario",
+  "clean_query": "\"OrderService\" OR \"sales container\"",
+  "embedding_input": "Modificar el contenedor que coordina ventas",
+  "intent": "refactor",
+  "dimensions": ["CPG", "DTG"],
+  "confidence": 0.9,
+  "strategy": "hybrid",
+  "chunks": 20,
+  "maxTokens": 4000
+}
+```
 
 `retrieve --json` reserva stdout para un unico documento con
-`schemaVersion: 2`. El resultado incluye clasificacion, grounding, chunks, parámetros
-efectivos de estrategia, presupuesto del agregador, prompt
-enriquecido y metadatos de almacenamiento; los errores usan `ok: false` y exit
-code no cero. Logs y diagnosticos deben permanecer en stderr para no romper
-hooks. `retrieve` no genera respuestas finales: su salida está destinada a un
-agente externo.
+`schemaVersion: 3`. El resultado incluye clasificacion, chunks, parametros
+efectivos de estrategia, presupuesto del agregador, `contextBlock` y metadatos
+de almacenamiento; los errores usan `ok: false` y exit code no cero. Logs y
+diagnosticos deben permanecer en stderr. `retrieve` no genera respuestas
+finales ni prompts enriquecidos: su salida es contexto para un agente externo.
 
 Los watchers administrados por CLI registran PID, comando y rutas en el registro
 de proyectos, usan locks atómicos por proyecto bajo el estado de LaCoCo y marcan
@@ -323,8 +280,8 @@ consumidores que necesiten observabilidad inmediata pueden pasar `onError`.
   los nombres válidos viven en `src/retriever/strategies/strategy-names.ts` y
   alimentan CLI, `inspect-query`, configuración, esta tabla y sus pruebas.
 
-En benchmarks con `eval:retrieval -- --use-slm`, el intermediario se ejecuta
-una sola vez por tarea y variante. Su contrato completo se persiste y se
+En benchmarks legacy con `eval:retrieval -- --use-slm`, el intermediario se
+ejecuta una sola vez por tarea y variante. Su contrato completo se persiste y se
 reutiliza en todas las estrategias; `sanitizer_variant` debe identificar
 `agent_intermediary`, no `deterministic`. Retrieval y generación usan raíces de
 artefactos separadas. Antes de generar, el runner valida todos los
@@ -340,9 +297,9 @@ archivos del patch se aplican antes de ejecutar pruebas.
 
 Antes de cerrar cambios de comportamiento:
 
-1. Ejecutar `npm run typecheck`.
-2. Ejecutar `npm test`.
-3. Ejecutar `npm run build` si se modificó CLI, configuración o contratos públicos.
+1. Ejecutar `pnpm run typecheck`.
+2. Ejecutar `pnpm test`.
+3. Ejecutar `pnpm run build` si se modificó CLI, configuración o contratos públicos.
 4. Buscar imports, opciones y documentación obsoletos con `rg`.
 
 La suite incluye una prueba E2E del binario CLI que crea un proyecto temporal,
@@ -353,7 +310,6 @@ prueba se omite explícitamente.
 
 ## Riesgos conocidos
 
-- El intermediario depende obligatoriamente de Ollama; no existe fallback local cuando el modelo no está disponible.
-- El Project Semantic Profile requiere construcción explícita y permanece opt-in hasta revisar su benchmark A/B.
+- El codigo legacy del intermediario y Project Semantic Profile sigue existiendo para reproducibilidad de evals historicos, pero no forma parte del flujo activo.
 - La prueba end-to-end del binario CLI se omite en runners que bloquean `spawnSync`.
 - Faltan benchmarks comparables de precisión, latencia y consumo entre estrategias.

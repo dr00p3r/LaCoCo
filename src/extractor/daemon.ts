@@ -25,9 +25,6 @@ import { SqliteCallbacks } from "./sqlite-callbacks.js";
 import { VectorCallbacks } from "./vector-callbacks.js";
 import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
 import { CompositeCallbacks, SourceNodeBuffer } from "./composite-callbacks.js";
-import type { LlmClient } from "../slms/llm-client.js";
-import { SemanticProfileBuilder } from "../semantic-profile/semantic-profile-builder.js";
-import { SemanticProfileStore } from "../semantic-profile/semantic-profile-store.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos auxiliares
@@ -53,15 +50,9 @@ export interface DaemonOptions {
   watchDebounceMs?: number;
   /** Recibe errores operativos sin detener las colas del daemon. */
   onError?: (event: DaemonErrorEvent) => void;
-  /** Dependencias para mantener incrementalmente un perfil ya construido. */
-  semanticProfile?: {
-    llm: LlmClient;
-    model: string;
-    projectRoot?: string;
-  };
 }
 
-export type DaemonErrorScope = "watcher" | "file-queue" | "vector-queue" | "embeddings" | "extractor" | "semantic-profile";
+export type DaemonErrorScope = "watcher" | "file-queue" | "vector-queue" | "embeddings" | "extractor";
 
 export interface DaemonErrorEvent {
   scope: DaemonErrorScope;
@@ -100,10 +91,6 @@ export class DaemonManager {
   private vectorsPromise: Promise<void> | null = null;
   private fileOperationChain: Promise<void> = Promise.resolve();
   private vectorOperationChain: Promise<void> = Promise.resolve();
-  private semanticOperationChain: Promise<void> = Promise.resolve();
-  private semanticRefreshQueued = false;
-  private readonly semanticProfile: DaemonOptions["semanticProfile"];
-  private readonly projectRoot: string;
   private readonly onError: ((event: DaemonErrorEvent) => void) | undefined;
   private readonly failures: Record<DaemonErrorScope, number> = {
     watcher: 0,
@@ -111,7 +98,6 @@ export class DaemonManager {
     "vector-queue": 0,
     embeddings: 0,
     extractor: 0,
-    "semantic-profile": 0,
   };
   private lastError: DaemonErrorEvent | null = null;
   private readonly pendingVectorDeletes = new Map<string, Set<string>>();
@@ -124,10 +110,8 @@ export class DaemonManager {
     this.lanceDbPath = opts.lanceDbPath ?? "./lancedb";
     this.watchDebounceMs = opts.watchDebounceMs ?? 80;
     this.onError = opts.onError;
-    this.semanticProfile = opts.semanticProfile;
 
     const projectRoot = path.dirname(this.tsConfigFilePath);
-    this.projectRoot = opts.semanticProfile?.projectRoot ?? projectRoot;
     this.watchGlob =
       opts.watchGlob ?? path.join(projectRoot, "**", "*.{ts,tsx}");
 
@@ -175,7 +159,6 @@ export class DaemonManager {
       }
       await this.fileOperationChain;
       await this.vectorOperationChain;
-      await this.semanticOperationChain;
       if (this.vectorCallbacks) {
         await this.vectorCallbacks.flush();
       }
@@ -183,7 +166,6 @@ export class DaemonManager {
         await this.lanceDb.close();
         this.lanceDb = null;
       }
-      this.semanticProfile?.llm.abort();
 
       this.db.close();
       console.log("\n[Daemon] 🛑 Apagado limpio completado.");
@@ -250,7 +232,6 @@ export class DaemonManager {
       }
     });
     this.db.populateMetadata();
-    this.db.bumpGraphRevision();
 
     console.timeEnd("[Daemon] Cold start");
     console.log(
@@ -260,7 +241,6 @@ export class DaemonManager {
     if (this.indexVectors && this.sqliteCallbacks.nodesWritten > 0) {
       this.vectorsPromise = this.#generateEmbeddings();
     }
-    this.#enqueueSemanticProfileRefresh();
   }
 
   async #generateEmbeddings(): Promise<void> {
@@ -312,10 +292,7 @@ export class DaemonManager {
     console.log(`\n[Daemon] 👀 Observando cambios en: ${this.watchGlob}`);
     console.log("[Daemon]    (Ctrl+C para detener)\n");
 
-    const semanticGlobs = [
-      path.join(path.dirname(this.tsConfigFilePath), "**", "*.{json,jsonc,css,scss,sass,less,sql,graphql,gql,yaml,yml,md}"),
-    ];
-    this.watcher = chokidar.watch([this.watchGlob, ...semanticGlobs], {
+    this.watcher = chokidar.watch(this.watchGlob, {
       persistent: true,
       ignoreInitial: true,          // El cold start ya procesó el estado inicial
       ignored: (filePath: string) => ["node_modules", ".git", ".lacoco", "dist", "build", "coverage", "eval/workdir"]
@@ -362,14 +339,7 @@ export class DaemonManager {
     filePath: string,
     event: "change" | "add"
   ): Promise<void> {
-    if (!isTypeScriptFile(filePath)) {
-      const store = new SemanticProfileStore(this.db.getRawDb());
-      if (store.getState().activeBuildId) {
-        store.markStale();
-        this.#enqueueSemanticProfileRefresh();
-      }
-      return;
-    }
+    if (!isTypeScriptFile(filePath)) return;
     const label = `[Daemon] 🔥 Hot reload [${event}] ${path.relative(process.cwd(), filePath)}`;
     console.time(label);
 
@@ -443,8 +413,6 @@ export class DaemonManager {
         this.vectorNodeBuffer.get(sourcePath).map((row) => row.id)
       );
       this.db.populateMetadataForNodes([...new Set([...allPurgedIds, ...newNodeIds])]);
-      this.db.bumpGraphRevision();
-      this.#enqueueSemanticProfileRefresh();
 
       console.log(
         `[Daemon]    ↳ ${this.sqliteCallbacks.nodesWritten} nodos, ${this.sqliteCallbacks.edgesWritten} aristas actualizados` +
@@ -476,20 +444,11 @@ export class DaemonManager {
    * Elimina de la base de datos todos los registros del archivo borrado.
    */
   #handleFileDelete(filePath: string): void {
-    if (!isTypeScriptFile(filePath)) {
-      const store = new SemanticProfileStore(this.db.getRawDb());
-      if (store.getState().activeBuildId) {
-        store.markStale();
-        this.#enqueueSemanticProfileRefresh();
-      }
-      return;
-    }
+    if (!isTypeScriptFile(filePath)) return;
     const relativePath = path.relative(process.cwd(), filePath);
     try {
       console.log(`[Daemon] 🗑  Archivo eliminado: ${relativePath}`);
       this.#purgeFile(filePath);
-      this.db.bumpGraphRevision();
-      this.#enqueueSemanticProfileRefresh();
       const sourceFile = this.project.getSourceFile(filePath);
       if (sourceFile) this.project.removeSourceFile(sourceFile);
       if (this.indexVectors) this.#enqueueVectorUpdates([filePath]);
@@ -546,28 +505,6 @@ export class DaemonManager {
       })
       .catch((err: unknown) => {
         this.#recordError("vector-queue", err);
-      });
-  }
-
-  #enqueueSemanticProfileRefresh(): void {
-    if (!this.semanticProfile || this.semanticRefreshQueued) return;
-    const state = new SemanticProfileStore(this.db.getRawDb()).getState();
-    if (!state.activeBuildId) return;
-    this.semanticRefreshQueued = true;
-    this.semanticOperationChain = this.semanticOperationChain
-      .then(async () => {
-        this.semanticRefreshQueued = false;
-        await this.fileOperationChain;
-        await new SemanticProfileBuilder(
-          this.db.getRawDb(),
-          this.projectRoot,
-          this.semanticProfile!.llm,
-          this.semanticProfile!.model,
-        ).rebuild();
-      })
-      .catch((error: unknown) => {
-        this.semanticRefreshQueued = false;
-        this.#recordError("semantic-profile", error);
       });
   }
 

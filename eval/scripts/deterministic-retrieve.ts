@@ -49,47 +49,40 @@ function parseSanitizer(encoded: string): SanitizerOutput {
   return value as SanitizerOutput;
 }
 
-function createRuntime(sanitized: SanitizerOutput): RetrieveRuntime {
+function createRuntime(): RetrieveRuntime {
   const disabledLlm = new DisabledLlmClient();
   return {
     createDatabase: (dbPath) => new LaCoCoDatabase(dbPath),
-    // Cliente Ollama REAL (igual que el runtime de producción en pipeline.ts).
-    // Solo la estrategia `agentic` lo usa para planificar; las demás estrategias
-    // operan sobre el sanitizer YA CONGELADO (createIntermediary), así que esto no
-    // reintroduce variabilidad en hybrid/ictd/clcr/rpr. Honra LACOCO_AGENT_ENDPOINT
-    // y LACOCO_AGENT_MODEL vía config. Si Ollama no está, `agentic` fallará con un
-    // error claro y el resto de estrategias sigue intacto.
-    createOllama: (endpoint) =>
-      new OllamaService(
-        endpoint ?? resolveStringConfig("agent.endpoint"),
-        resolveStringConfig("agent.model"),
-        resolveNumberConfig("timeout.ms"),
-      ),
-    createIntermediary: () => ({ sanitize: async () => sanitized }),
     createStrategy: async (
       strategyName,
       db,
       lanceDbPath,
-      ollamaEndpoint,
-      ollamaTimeoutMs,
-      ollama,
       strategyOptions: StrategyRuntimeOptions = {},
     ) => {
       const entry = getStrategyEntry(strategyName);
       const lanceDb = entry.needsLanceDb ? new LaCoCoLanceDb(lanceDbPath) : undefined;
+      const ollama = entry.name === "agentic"
+        ? new OllamaService(
+            resolveStringConfig("agent.endpoint"),
+            resolveStringConfig("agent.model"),
+            resolveNumberConfig("timeout.ms"),
+          )
+        : disabledLlm;
       try {
         if (lanceDb) await lanceDb.connect();
         return {
           strategy: entry.create({
             db,
             ...(lanceDb ? { lanceDb } : {}),
-            ollamaEndpoint,
-            ...(ollamaTimeoutMs === undefined ? {} : { ollamaTimeoutMs }),
-            ollama: ollama ?? disabledLlm,
+            ollamaEndpoint: resolveStringConfig("agent.endpoint"),
+            ollamaTimeoutMs: resolveNumberConfig("timeout.ms"),
+            ollama,
           }, strategyOptions),
           ...(lanceDb ? { connectedLanceDb: lanceDb } : {}),
+          ...(entry.name === "agentic" ? { ollama } : {}),
         };
       } catch (error) {
+        if (entry.name === "agentic") ollama.abort();
         if (lanceDb) await lanceDb.close();
         throw error;
       }
@@ -105,11 +98,21 @@ export async function runDeterministicRetrieve(argv = process.argv.slice(2)): Pr
   }
   const [project, query, strategy, encodedSanitizer] = argv as [string, string, string, string];
   const sanitized = parseSanitizer(encodedSanitizer);
+  const structuredInput = JSON.stringify({
+    schemaVersion: 1,
+    originalPrompt: query,
+    clean_query: sanitized.clean_query,
+    embedding_input: sanitized.embedding_input,
+    intent: sanitized.intent,
+    dimensions: sanitized.dimensions,
+    confidence: sanitized.confidence,
+    strategy,
+  });
   return runRetrieve(
-    query,
-    { strategy, verbose: false, json: true, grounding: false },
+    structuredInput,
+    { strategy, verbose: false, json: true },
     { stdout: process.stdout, stderr: process.stderr },
-    createRuntime(sanitized),
+    createRuntime(),
     project,
   );
 }

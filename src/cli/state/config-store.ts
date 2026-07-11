@@ -59,15 +59,6 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "agent.model debe ser un nombre no vacío",
   },
-  "intermediary.model": {
-    type: "string",
-    defaultValue: "",
-    env: "LACOCO_INTERMEDIARY_MODEL",
-    validate: (value) =>
-      typeof value === "string"
-        ? null
-        : "intermediary.model debe ser un string (vacío = hereda agent.model)",
-  },
   "strategy.default": {
     type: "string",
     defaultValue: "hybrid",
@@ -112,20 +103,6 @@ const CONFIG_DEFINITIONS = {
       typeof value === "number" && Number.isInteger(value) && value >= 0
         ? null
         : "watcher.debounceMs debe ser un entero mayor o igual a cero",
-  },
-  "profile.groundingEnabled": {
-    type: "boolean",
-    defaultValue: false,
-    env: "LACOCO_PROFILE_GROUNDING",
-  },
-  "profile.enrichConcurrency": {
-    type: "number",
-    defaultValue: 4,
-    env: "LACOCO_ENRICH_CONCURRENCY",
-    validate: (value) =>
-      typeof value === "number" && Number.isInteger(value) && value > 0
-        ? null
-        : "profile.enrichConcurrency debe ser un entero positivo",
   },
   "paths.data": {
     type: "string",

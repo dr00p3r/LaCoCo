@@ -20,7 +20,7 @@ import {
   readIndexEmbeddingMetadata,
   resolveEmbeddingProfile,
 } from "./lib/embedding-profile.js";
-import { resolveIntermediaryModel, resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
+import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
 import { resolveDbPath } from "../../src/cli/storage-paths.js";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
@@ -304,7 +304,7 @@ async function freezeSlmQuery(
   // este modelo no altera qué términos recupera, solo si el SLM emite JSON válido.
   const ollama = new OllamaService(
     resolveStringConfig("agent.endpoint"),
-    resolveIntermediaryModel(),
+    resolveStringConfig("agent.model"),
     resolveNumberConfig("timeout.ms"),
   );
   let db: LaCoCoDatabase | undefined;
@@ -625,7 +625,7 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   console.log(`Selected tasks (${tasks.length}): ${tasks.map(({ id }) => id).join(", ")}`);
   console.log(`Selected strategies (${strategies.length}): ${strategies.map(({ id }) => id).join(", ")}`);
   console.log(`Sanitizer variants (${sanitizerVariants.length}): ${sanitizerVariants.join(", ")}`);
-  console.log(`SLM intermediary: ${options.useSlm === true ? `active and frozen once per task (${resolveIntermediaryModel()})` : "selected by sanitizer variant"}`);
+  console.log(`SLM intermediary: ${options.useSlm === true ? `legacy path active (${resolveStringConfig("agent.model")})` : "selected by sanitizer variant"}`);
   console.log(`Combinations: ${tasks.length * strategies.length * sanitizerVariants.length}`);
   if (!settings.enabled) {
     console.log("Retrieval phase is disabled by run.yaml.");
@@ -702,7 +702,7 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   const failures: string[] = [];
   let stop = false;
   const slmCache = isSlmCacheEnabled()
-    ? new SlmCache(defaultSlmCachePath(layout.workdir), resolveIntermediaryModel())
+    ? new SlmCache(defaultSlmCachePath(layout.workdir), resolveStringConfig("agent.model"))
     : null;
   if (slmCache !== null) {
     console.log(`SLM cache: ${slmCache.getPath()} (${slmCache.size()} entradas previas)`);

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { StrategyDefinition, TaskDefinition } from "./lib/types.js";
 import {
   buildPrompt,
+  hasAgentSkillRetrieveEvidence,
   loadRequiredEnrichedPrompt,
   parseOpenCodeCost,
   validateRetrievalContexts,
@@ -217,5 +218,37 @@ describe("OpenCode cost parsing", () => {
 
   it("returns null when the provider reports no cost", () => {
     expect(parseOpenCodeCost('{"type":"step_start"}')).toBeNull();
+  });
+
+  it("detects agent-skill retrieval evidence", () => {
+    const stdout = [
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          type: "tool",
+          tool: "bash",
+          state: {
+            input: { command: "printf '%s' '{}' | lacoco retrieve /repo --json" },
+            output: '{ "ok": true, "contextBlock": "evidence" }',
+          },
+        },
+      }),
+    ].join("\n");
+    const noContextBlock = [
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          type: "tool",
+          tool: "bash",
+          state: {
+            input: { command: "printf '%s' '{}' | lacoco retrieve /repo --json" },
+            output: '{ "ok": true, "chunks": [] }',
+          },
+        },
+      }),
+    ].join("\n");
+
+    expect(hasAgentSkillRetrieveEvidence(stdout)).toBe(true);
+    expect(hasAgentSkillRetrieveEvidence(noContextBlock)).toBe(false);
   });
 });

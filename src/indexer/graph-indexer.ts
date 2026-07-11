@@ -81,6 +81,5 @@ export class GraphIndexer {
 
         console.log(`[CLI] 🏷️  Poblando metadatos dimensionales...`);
         this.db.populateMetadata();
-        this.db.bumpGraphRevision();
     }
 }

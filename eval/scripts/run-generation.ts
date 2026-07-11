@@ -13,7 +13,7 @@
  *   - Hay un budget USD opcional que detiene el runner al alcanzarse.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
 import { asBoolean, asNumber, asRecord, asString, asStringArray } from "./lib/config.js";
@@ -62,6 +62,55 @@ interface GenerationSettings {
   sanitizerVariant: string;
   continueOnTaskFailure: boolean;
   continueOnStrategyFailure: boolean;
+}
+
+const GENERATED_LOCKFILE_PATCH_EXCLUDES = [
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+];
+
+function ensureLaCoCoCliBin(runDirectory: string): { binDir: string; cliPath: string } {
+  const cliPath = join(PROJECT_ROOT, "dist", "cli", "index.js");
+  const binDir = join(runDirectory, "bin");
+  const wrapperPath = join(binDir, "lacoco");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(
+    wrapperPath,
+    [
+      "#!/usr/bin/env sh",
+      `: "\${LACOCO_CLI:=${cliPath}}"`,
+      'exec node "$LACOCO_CLI" "$@"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  chmodSync(wrapperPath, 0o755);
+  return { binDir, cliPath };
+}
+
+function agentEnvironment(input: {
+  strategy: StrategyDefinition;
+  agent: AgentDefinition;
+  runDirectory: string;
+  lacocoBinDir: string;
+  lacocoCliPath: string;
+}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    npm_config_loglevel: "silent",
+    npm_config_update_notifier: "false",
+    PATH: `${input.lacocoBinDir}:${process.env.PATH ?? ""}`,
+    LACOCO_CLI: input.lacocoCliPath,
+  };
+
+  if (input.agent.id === "opencode" && input.strategy.id === "no_context") {
+    const configHome = join(input.runDirectory, "opencode-no-skills-config");
+    mkdirSync(join(configHome, "opencode"), { recursive: true });
+    env.XDG_CONFIG_HOME = configHome;
+  }
+
+  return env;
 }
 
 /**
@@ -200,7 +249,7 @@ function findRetrievalRecord(
   taskId: string,
   strategyId: string,
 ): RetrievalJsonlRecord | null {
-  if (strategyId === "no_context") return null;
+  if (strategyId === "no_context" || strategyId === "lacoco_skill") return null;
   const matches = records.filter((record) =>
     record.task_id === taskId && record.strategy_id === strategyId
   );
@@ -223,6 +272,11 @@ function resolveContextPath(record: RetrievalJsonlRecord): string {
 
 function resolveArtifactPath(artifactPath: string): string {
   return isAbsolute(artifactPath) ? artifactPath : join(PROJECT_ROOT, artifactPath);
+}
+
+function isAgentSkillStrategy(strategy: StrategyDefinition): boolean {
+  const extra = strategy as { kind?: unknown; output_context_policy?: unknown };
+  return extra.kind === "agent_skill" || extra.output_context_policy === "agent_skill";
 }
 
 export function loadRequiredEnrichedPrompt(record: RetrievalJsonlRecord): string {
@@ -280,7 +334,7 @@ export function validateRetrievalContexts(
   for (const task of tasks) {
     let frozenSanitizerPath: string | null = null;
     for (const strategy of strategies) {
-      if (strategy.id === "no_context") continue;
+      if (strategy.id === "no_context" || isAgentSkillStrategy(strategy)) continue;
       const recId = recordStrategyId(strategy.id, sanitizerVariant);
       const matches = records.filter((r) => r.task_id === task.id && r.strategy_id === recId);
       if (matches.length === 0) {
@@ -342,7 +396,27 @@ export function buildPrompt(
     ].join("\n"),
   );
 
-  if (strategy.id === "no_context") {
+  if (isAgentSkillStrategy(strategy)) {
+    sections.push(
+      [
+        "# Contexto recuperado por LaCoCo",
+        "",
+        "No hay contexto preinyectado en este prompt.",
+        "",
+        "Debes usar la skill LaCoCo instalada para este repositorio antes de editar codigo:",
+        "",
+        "1. Carga la skill del repositorio si tu agente lo requiere.",
+        "2. Construye una consulta estructurada a partir de la tarea.",
+        "3. Ejecuta obligatoriamente `lacoco retrieve` con JSON por stdin, tal como indica la skill.",
+        "4. Confirma que la respuesta JSON tenga `ok: true` y lee `contextBlock` antes de inspeccionar o editar archivos.",
+        "5. Si el contexto no basta, inspecciona archivos o ejecuta otra consulta LaCoCo mas especifica.",
+        "",
+        "La carga de la skill o su snapshot inicial NO cuenta como recuperacion suficiente.",
+        "Esta celda se marca invalida si el log no contiene una ejecucion real de `lacoco retrieve` con `contextBlock`.",
+        "No edites archivos ni cierres la respuesta antes de recuperar contexto con LaCoCo.",
+      ].join("\n"),
+    );
+  } else if (strategy.id === "no_context") {
     sections.push(
       [
         "# Contexto recuperado por LaCoCo",
@@ -432,6 +506,39 @@ function buildAgentCommand(
     throw new Error(`agent ${agent.id}.command is null; cannot build invocation`);
   }
   return [agent.command, ...args].map(shellQuote).join(" ");
+}
+
+async function installLaCoCoSkillForAgent(
+  repoPath: string,
+  agentId: string,
+  logPath: string,
+): Promise<void> {
+  const target = agentId === "opencode"
+    ? "opencode"
+    : agentId === "codex-cli"
+      ? "codex"
+      : agentId === "claude-code"
+        ? "claude"
+        : null;
+  if (target === null) return;
+
+  await executeCommand({
+    command: [
+      process.execPath,
+      "--import",
+      "tsx",
+      join(PROJECT_ROOT, "src", "cli", "index.ts"),
+      "skill",
+      "update",
+      repoPath,
+      "--install",
+      target,
+      "--json",
+    ].map(shellQuote).join(" "),
+    cwd: PROJECT_ROOT,
+    timeoutMs: 120_000,
+    logPath,
+  });
 }
 
 interface ParsedTestResult {
@@ -670,6 +777,33 @@ export function parseOpenCodeCost(stdout: string): number | null {
   return found ? total : null;
 }
 
+export function hasAgentSkillRetrieveEvidence(stdout: string): boolean {
+  for (const line of stdout.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (typeof value !== "object" || value === null) continue;
+    const event = value as Record<string, unknown>;
+    if (event.type !== "tool_use" || typeof event.part !== "object" || event.part === null) continue;
+    const part = event.part as Record<string, unknown>;
+    if (part.tool !== "bash" || typeof part.state !== "object" || part.state === null) continue;
+    const state = part.state as Record<string, unknown>;
+    const input = typeof state.input === "object" && state.input !== null
+      ? state.input as Record<string, unknown>
+      : {};
+    const command = typeof input.command === "string" ? input.command : "";
+    const output = typeof state.output === "string" ? state.output : "";
+    if (command.includes("lacoco retrieve") && output.includes("\"ok\": true") && output.includes("\"contextBlock\"")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function runGeneration(argv = process.argv.slice(2)): Promise<void> {
   const options = parseRunOptions(argv);
   const manifestsDir = resolveManifestsDir(options.manifestsDir);
@@ -691,7 +825,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
     (strategy) =>
       strategy.enabled &&
       strategy.generation_enabled &&
-      (strategy.lacoco_strategy !== null || strategy.id === "no_context") &&
+      (strategy.lacoco_strategy !== null || strategy.id === "no_context" || isAgentSkillStrategy(strategy)) &&
       settings.strategyIds.has(strategy.id) &&
       (options.strategyId === undefined || strategy.id === options.strategyId),
   );
@@ -732,8 +866,13 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
   }
   const lockedById = new Map(lock.repositories.map((r) => [r.id, r]));
 
-  const retrievalRecords = loadRetrievalJsonl(layout.runDirectory);
-  const skipCells = validateRetrievalContexts(retrievalRecords, tasks, strategies, settings.sanitizerVariant);
+  const needsPrecomputedRetrieval = strategies.some((strategy) =>
+    strategy.id !== "no_context" && !isAgentSkillStrategy(strategy)
+  );
+  const retrievalRecords = needsPrecomputedRetrieval ? loadRetrievalJsonl(layout.runDirectory) : [];
+  const skipCells = needsPrecomputedRetrieval
+    ? validateRetrievalContexts(retrievalRecords, tasks, strategies, settings.sanitizerVariant)
+    : new Set<string>();
   if (skipCells.size > 0) {
     const bySortedCell = [...skipCells].sort();
     console.warn(
@@ -744,6 +883,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
 
   mkdirSync(layout.runDirectory, { recursive: true });
   mkdirSync(layout.generationArtifactsDirectory, { recursive: true });
+  const lacocoCli = ensureLaCoCoCliBin(layout.runDirectory);
   const outputPath = join(layout.runDirectory, "generation.jsonl");
   const existingRecords = options.resume
     ? readExistingGenerationRecords(outputPath, layout.runId)
@@ -785,7 +925,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         const recStrategyId = recordStrategyId(strategy.id, settings.sanitizerVariant);
         // Celda sin registro de retrieval (la tarea no se recuperó para esta
         // estrategia) → saltar sin abortar el run. `no_context` no necesita registro.
-        if (strategy.id !== "no_context" && skipCells.has(cellKey(task.id, strategy.id))) {
+        if (strategy.id !== "no_context" && !isAgentSkillStrategy(strategy) && skipCells.has(cellKey(task.id, strategy.id))) {
           console.warn(`  skip ${task.id} x ${recStrategyId} x ${agent.id}: sin registro de retrieval`);
           continue;
         }
@@ -874,6 +1014,14 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           }
         }
 
+        if (isAgentSkillStrategy(strategy)) {
+          await installLaCoCoSkillForAgent(
+            locked.repoPath,
+            agent.id,
+            join(cellDir, "lacoco-skill-install.log"),
+          );
+        }
+
         const retrievalRecord = findRetrievalRecord(retrievalRecords, task.id, recStrategyId);
         const prompt = buildPrompt(task, strategy, retrievalRecord, regressionInfo);
         mkdirSync(cellDir, { recursive: true });
@@ -908,7 +1056,13 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
             cwd: PROJECT_ROOT,
             timeoutMs: settings.agentTimeoutMs,
             logPath: paths.stdout,
-            env: { npm_config_loglevel: "silent", npm_config_update_notifier: "false" },
+            env: agentEnvironment({
+              strategy,
+              agent,
+              runDirectory: layout.runDirectory,
+              lacocoBinDir: lacocoCli.binDir,
+              lacocoCliPath: lacocoCli.cliPath,
+            }),
           });
           agentExitCode = result.exitCode;
           agentStdout = result.stdout;
@@ -933,7 +1087,11 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         }
         if (costUsd !== null) spentUsd += costUsd;
 
-        const diff = await captureWorkingTreeDiff({ repoPath: locked.repoPath, timeoutMs: 60_000 });
+        const diff = await captureWorkingTreeDiff({
+          repoPath: locked.repoPath,
+          timeoutMs: 60_000,
+          excludePatchPaths: GENERATED_LOCKFILE_PATCH_EXCLUDES,
+        });
         const patchApplied = diff.length > 0;
         const patchSizeBytes = Buffer.byteLength(diff, "utf8");
         const filesChangedCount = (diff.match(/^diff --git /gm) ?? []).length;
@@ -953,6 +1111,12 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
             : patchLimitErrors.length > 0
               ? { type: "patch_limit_exceeded", message: patchLimitErrors.join("; ") }
               : null;
+        if (recordError === null && isAgentSkillStrategy(strategy) && !hasAgentSkillRetrieveEvidence(agentStdout)) {
+          recordError = {
+            type: "agent_skill_retrieval_missing",
+            message: "agent_skill strategy did not execute lacoco retrieve and read a contextBlock",
+          };
+        }
         if (stop && costUsd === null) {
           recordError = recordError ?? {
             type: "cost_unavailable",

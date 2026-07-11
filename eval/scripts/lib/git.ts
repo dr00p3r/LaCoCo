@@ -18,6 +18,10 @@ export interface ResetRepoOptions {
   excludes?: string[];
 }
 
+export interface CaptureWorkingTreeDiffOptions extends ResetRepoOptions {
+  excludePatchPaths?: string[];
+}
+
 async function gitStep(
   options: GitRepositoryOptions,
   name: string,
@@ -110,14 +114,18 @@ export async function resetRepoClean(options: ResetRepoOptions): Promise<void> {
  * Devuelve string vacio si no hay cambios. Usado para extraer el
  * `patch.diff` que produce el agente.
  */
-export async function captureWorkingTreeDiff(options: ResetRepoOptions): Promise<string> {
+export async function captureWorkingTreeDiff(options: CaptureWorkingTreeDiffOptions): Promise<string> {
   if (!existsSync(join(options.repoPath, ".git"))) {
     throw new Error(`captureWorkingTreeDiff: ${options.repoPath} is not a Git checkout`);
   }
   const timeoutMs = options.timeoutMs ?? 60_000;
   const logPath = join(options.repoPath, ".git", "lacoco-diff.log");
+  const excludePatchPaths = options.excludePatchPaths ?? [];
+  const unstageExcluded = excludePatchPaths.length === 0
+    ? ""
+    : ` && git reset --quiet -- ${excludePatchPaths.map(shellQuote).join(" ")}`;
   const result = await executeCommand({
-    command: "git add -A && git diff --cached --binary",
+    command: `git add -A${unstageExcluded} && git diff --cached --binary`,
     cwd: options.repoPath,
     timeoutMs,
     logPath,

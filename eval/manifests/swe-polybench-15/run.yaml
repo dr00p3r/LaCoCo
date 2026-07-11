@@ -104,6 +104,7 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      - "lacoco_skill"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
@@ -171,6 +172,37 @@ splits:
       - "clcr"
       - "rpr"
       - "agentic"
+    agents:
+      - "opencode"
+
+  generation_lacoco_skill_smoke:
+    description: >-
+      Smoke de generacion para validar que opencode activa la skill LaCoCo y
+      recupera contexto en vivo, sin contexto preinyectado por el harness.
+    require_gold_status: "ready"
+    require_target_tests: true
+    repo_ids:
+      - "svelte-510"
+    task_ids:
+      - "svelte-510"
+    strategies:
+      - "lacoco_skill"
+    agents:
+      - "opencode"
+
+  generation_no_context_vs_lacoco_skill:
+    description: >-
+      Comparacion directa sobre svelte-510 entre baseline sin contexto y
+      recuperacion en vivo via skill LaCoCo.
+    require_gold_status: "ready"
+    require_target_tests: true
+    repo_ids:
+      - "svelte-510"
+    task_ids:
+      - "svelte-510"
+    strategies:
+      - "no_context"
+      - "lacoco_skill"
     agents:
       - "opencode"
 

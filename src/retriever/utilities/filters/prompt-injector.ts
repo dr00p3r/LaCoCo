@@ -28,6 +28,14 @@ ${blocks}
   },
 };
 
+export function renderContextBlock(chunks: ContextChunk[], version = "v1"): string {
+  const templateFn = TEMPLATES[version];
+  if (!templateFn) {
+    throw new Error(`Template de inyección desconocido: ${version}`);
+  }
+  return chunks.length === 0 ? "" : templateFn(chunks);
+}
+
 export class PromptInjector {
   /**
    * Inyecta chunks de contexto en el prompt original.
@@ -42,17 +50,8 @@ export class PromptInjector {
     chunks: ContextChunk[],
     version = "v1"
   ): string {
-    const templateFn = TEMPLATES[version];
-    if (!templateFn) {
-      throw new Error(`Template de inyección desconocido: ${version}`);
-    }
-
-    if (chunks.length === 0) {
-      // Sin contexto recuperado: no inyectamos nada, pasamos directo
-      return originalPrompt;
-    }
-
-    const contextBlock = templateFn(chunks);
+    const contextBlock = renderContextBlock(chunks, version);
+    if (contextBlock.length === 0) return originalPrompt;
     return `${contextBlock}\n${originalPrompt}`;
   }
 }

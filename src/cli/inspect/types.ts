@@ -15,7 +15,7 @@ export interface InspectOptions {
 }
 
 export interface InspectQueryOptions {
-  prompt: string;
+  structuredInputJson: string;
   db: string;
   lancedb: string;
   budget: number;
@@ -23,11 +23,7 @@ export interface InspectQueryOptions {
   mode: InspectMode;
   output: string;
   cdn: boolean;
-  ollama: string;
-  model: string;
-  timeoutMs?: number;
   chunks?: number;
-  grounding: boolean;
 }
 
 export interface InspectStats {

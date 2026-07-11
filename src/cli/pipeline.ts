@@ -2,13 +2,11 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
-import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
-import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import {
   ContextAggregator,
   DEFAULT_CONTEXT_MAX_TOKENS,
 } from "../retriever/utilities/filters/context-aggregator.js";
-import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
+import { renderContextBlock } from "../retriever/utilities/filters/prompt-injector.js";
 import {
   getEffectiveStrategyParameters,
   getStrategyEntry,
@@ -17,18 +15,11 @@ import {
   type StrategyRuntimeOptions,
 } from "../retriever/strategies/registry.js";
 import type { RecoveryStrategy } from "../retriever/models/strategies/types.js";
-import type { SanitizerOutput } from "../retriever/models/utilities/types.js";
+import type { IntentTag, SanitizerOutput } from "../retriever/models/utilities/types.js";
 import type { LlmClient } from "../slms/llm-client.js";
 import { OllamaService } from "../slms/ollama-service.js";
-import { SemanticProfileStore } from "../semantic-profile/semantic-profile-store.js";
-import { QueryGrounder } from "../semantic-profile/query-grounder.js";
-import type {
-  GroundingDiagnostics,
-  QueryGrounding,
-} from "../semantic-profile/types.js";
-import type { DetailedClassification } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
+import { DIMENSIONS, type Dimension } from "../domain/dimensions.js";
 import { resolveConfig } from "./state/config-store.js";
-import { resolveIntermediaryModel } from "./config.js";
 import { writeTextFileAtomic } from "./state/json-store.js";
 import { inspectProject } from "./state/project-registry.js";
 import { resolveDbPath, resolveLanceDbPath } from "./storage-paths.js";
@@ -37,25 +28,34 @@ export interface JsonOption { json: boolean; }
 
 export interface RetrieveCliOptions {
   strategy?: string;
-  ollama?: string;
   verbose: boolean;
   json?: boolean;
   chunks?: number;
   maxTokens?: number;
-  grounding?: boolean;
 }
 
 export interface ContextExportCliOptions extends Omit<RetrieveCliOptions, "json">, JsonOption {
   output: string;
 }
 
+export interface StructuredRetrieveInput {
+  schemaVersion: 1;
+  originalPrompt: string;
+  clean_query: string;
+  embedding_input: string;
+  intent: IntentTag;
+  dimensions: Dimension[];
+  confidence: number;
+  strategy?: string;
+  chunks?: number;
+  maxTokens?: number;
+}
+
 type ResolvedRetrieveCliOptions = RetrieveCliOptions & {
   db: string;
   lancedb: string;
   strategy: string;
-  ollama: string;
   maxTokens: number;
-  grounding: boolean;
 };
 
 export interface CliStreams {
@@ -63,60 +63,46 @@ export interface CliStreams {
   stderr: Pick<NodeJS.WritableStream, "write">;
 }
 
-export interface RetrieveIntermediary {
-  sanitize(prompt: string, grounding?: QueryGrounding): Promise<SanitizerOutput>;
-  sanitizeDetailed?(prompt: string, grounding?: QueryGrounding): Promise<DetailedClassification>;
-}
-
 export interface RetrieveRuntime {
   createDatabase(dbPath: string): LaCoCoDatabase;
-  createOllama(endpoint: string): LlmClient;
-  createIntermediary(ollama: LlmClient, endpoint: string, timeoutMs: number): RetrieveIntermediary;
   createStrategy(
     strategyName: string,
     db: LaCoCoDatabase,
     lanceDbPath: string,
-    ollamaEndpoint: string,
-    ollamaTimeoutMs?: number,
-    ollama?: LlmClient,
     strategyOptions?: StrategyRuntimeOptions,
-  ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }>;
+  ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb; ollama?: LlmClient }>;
 }
 
 interface RetrievedContext {
   id: string;
   generatedAt: string;
-  originalQuery: string;
+  originalPrompt: string;
   options: {
     strategy: string;
     db: string;
     lancedb: string;
-    ollama: string;
     strategyParameters: StrategyParameters;
     maxTokens: number;
   };
-  sanitized: SanitizerOutput;
-  grounding: GroundingDiagnostics;
+  structuredQuery: SanitizerOutput;
   chunks: ReturnType<ContextAggregator["aggregate"]>;
-  enrichedPrompt: string;
+  contextBlock: string;
 }
 
 export interface RetrieveJsonSuccess {
-  schemaVersion: 2;
+  schemaVersion: 3;
   ok: true;
   contextId: string;
   generatedAt: string;
-  query: string;
+  originalPrompt: string;
   strategy: string;
-  route: SanitizerOutput["route"];
-  classification: {
-    intent: SanitizerOutput["intent"];
-    confidence: number;
-    dimensions: SanitizerOutput["dimensions"];
+  query: {
     cleanQuery: string;
     embeddingInput: string;
+    intent: IntentTag;
+    dimensions: Dimension[];
+    confidence: number;
   };
-  grounding: GroundingDiagnostics;
   retrieval: {
     chunkCount: number;
     chunks: RetrievedContext["chunks"];
@@ -127,11 +113,11 @@ export interface RetrieveJsonSuccess {
     sqlite: string;
     lancedb: string;
   };
-  enrichedPrompt: string;
+  contextBlock: string;
 }
 
 export interface RetrieveJsonFailure {
-  schemaVersion: 2;
+  schemaVersion: 3;
   ok: false;
   error: {
     stage: string;
@@ -141,30 +127,28 @@ export interface RetrieveJsonFailure {
 
 export type RetrieveJsonResult = RetrieveJsonSuccess | RetrieveJsonFailure;
 
+const INTENTS: readonly IntentTag[] = [
+  "understand",
+  "refactor",
+  "create",
+  "debug",
+  "integrate",
+  "unknown",
+];
+
 const defaultRetrieveRuntime: RetrieveRuntime = {
   createDatabase: (dbPath) => new LaCoCoDatabase(dbPath),
-  createOllama: (endpoint) =>
-    new OllamaService(endpoint, resolveStringConfig("agent.model"), resolveNumberConfig("timeout.ms")),
-  // El clasificador puede usar un modelo distinto al de generación vía
-  // intermediary.model (vacío = hereda agent.model → reutiliza el mismo cliente).
-  createIntermediary: (ollama, endpoint, timeoutMs) => {
-    const model = resolveIntermediaryModel();
-    const client = model === resolveStringConfig("agent.model")
-      ? ollama
-      : new OllamaService(endpoint, model, timeoutMs);
-    return new AgentIntermediary1(new SlmClassifier(client));
-  },
   createStrategy: createRecoveryStrategy,
 };
 
 /**
- * Ejecuta el pipeline observable de `lacoco retrieve`.
+ * Ejecuta `lacoco retrieve` con una query estructurada producida por el agente.
  *
- * stdout queda reservado para el resultado final; los mensajes operativos y
- * errores se escriben en stderr para permitir pipes y redirecciones.
+ * LaCoCo ya no sanitiza ni clasifica el prompt: el agente externo decide cuándo
+ * llamar a retrieval y entrega clean_query/embedding_input/intent/dimensions.
  */
 export async function runRetrieve(
-  query: string,
+  structuredInputJson: string,
   options: RetrieveCliOptions,
   streams: CliStreams = { stdout: process.stdout, stderr: process.stderr },
   runtime: RetrieveRuntime = defaultRetrieveRuntime,
@@ -178,12 +162,13 @@ export async function runRetrieve(
   };
 
   try {
-    const resolvedOptions = resolveRetrieveOptions(options, project);
-    const context = await retrieveContext(query, resolvedOptions, streams, runtime);
+    const structuredInput = parseStructuredRetrieveInput(structuredInputJson);
+    const resolvedOptions = resolveRetrieveOptions(options, structuredInput, project);
+    const context = await retrieveContext(structuredInput, resolvedOptions, streams, runtime);
 
     writeStdout(options.json
       ? JSON.stringify(createRetrieveJsonSuccess(context), null, 2)
-      : context.enrichedPrompt);
+      : context.contextBlock);
 
     if (resolvedOptions.verbose) writeStderr("[CLI] retrieve completado");
     return 0;
@@ -202,21 +187,19 @@ function createRetrieveJsonSuccess(
   context: RetrievedContext,
 ): RetrieveJsonSuccess {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     ok: true,
     contextId: context.id,
     generatedAt: context.generatedAt,
-    query: context.originalQuery,
+    originalPrompt: context.originalPrompt,
     strategy: context.options.strategy,
-    route: context.sanitized.route,
-    classification: {
-      intent: context.sanitized.intent,
-      confidence: context.sanitized.confidence,
-      dimensions: context.sanitized.dimensions,
-      cleanQuery: context.sanitized.clean_query,
-      embeddingInput: context.sanitized.embedding_input,
+    query: {
+      intent: context.structuredQuery.intent,
+      confidence: context.structuredQuery.confidence,
+      dimensions: context.structuredQuery.dimensions,
+      cleanQuery: context.structuredQuery.clean_query,
+      embeddingInput: context.structuredQuery.embedding_input,
     },
-    grounding: context.grounding,
     retrieval: {
       chunkCount: context.chunks.length,
       chunks: context.chunks,
@@ -227,20 +210,20 @@ function createRetrieveJsonSuccess(
       sqlite: context.options.db,
       lancedb: context.options.lancedb,
     },
-    enrichedPrompt: context.enrichedPrompt,
+    contextBlock: context.contextBlock,
   };
 }
 
 function createRetrieveJsonFailure(stage: string, message: string): RetrieveJsonFailure {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     ok: false,
     error: { stage, message },
   };
 }
 
 export async function runContextExport(
-  query: string,
+  structuredInputJson: string,
   options: ContextExportCliOptions,
   streams: CliStreams = { stdout: process.stdout, stderr: process.stderr },
   runtime: RetrieveRuntime = defaultRetrieveRuntime,
@@ -254,8 +237,9 @@ export async function runContextExport(
   };
 
   try {
-    const resolvedOptions = resolveRetrieveOptions(options, project);
-    const context = await retrieveContext(query, resolvedOptions, streams, runtime);
+    const structuredInput = parseStructuredRetrieveInput(structuredInputJson);
+    const resolvedOptions = resolveRetrieveOptions(options, structuredInput, project);
+    const context = await retrieveContext(structuredInput, resolvedOptions, streams, runtime);
     const markdown = renderContextMarkdown(context);
     const outputPath = path.resolve(options.output);
     writeTextFileAtomic(outputPath, markdown);
@@ -264,7 +248,7 @@ export async function runContextExport(
       writeStdout(JSON.stringify({
         id: context.id,
         output: outputPath,
-        query: context.originalQuery,
+        originalPrompt: context.originalPrompt,
         strategy: context.options.strategy,
         chunks: context.chunks.length,
       }, null, 2));
@@ -280,12 +264,55 @@ export async function runContextExport(
   }
 }
 
-function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): ResolvedRetrieveCliOptions {
+export function parseStructuredRetrieveInput(raw: string): StructuredRetrieveInput {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new PipelineStageError("entrada estructurada", new Error("stdin debe contener JSON válido", {
+      cause: err instanceof Error ? err : undefined,
+    }));
+  }
+
+  if (!isRecord(parsed)) throw new PipelineStageError("entrada estructurada", "stdin debe contener un objeto JSON");
+  if (parsed.schemaVersion !== 1) throw new PipelineStageError("entrada estructurada", "schemaVersion debe ser 1");
+
+  const originalPrompt = requiredString(parsed, "originalPrompt");
+  const cleanQuery = requiredString(parsed, "clean_query");
+  const embeddingInput = requiredString(parsed, "embedding_input");
+  const intent = requiredIntent(parsed.intent);
+  const dimensions = requiredDimensions(parsed.dimensions);
+  const confidence = requiredConfidence(parsed.confidence);
+  const strategy = optionalString(parsed, "strategy");
+  const chunks = optionalPositiveInteger(parsed, "chunks");
+  const maxTokens = optionalPositiveInteger(parsed, "maxTokens");
+
+  return {
+    schemaVersion: 1,
+    originalPrompt,
+    clean_query: cleanQuery,
+    embedding_input: embeddingInput,
+    intent,
+    dimensions,
+    confidence,
+    ...(strategy === undefined ? {} : { strategy }),
+    ...(chunks === undefined ? {} : { chunks }),
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+  };
+}
+
+function resolveRetrieveOptions(
+  options: RetrieveCliOptions,
+  input: StructuredRetrieveInput,
+  project?: string,
+): ResolvedRetrieveCliOptions {
   const projectPath = resolveRetrieveProjectPath(project);
-  const entry = getStrategyEntry(options.strategy ?? resolveStringConfig("strategy.default"));
-  const strategyOptions = options.chunks === undefined ? {} : { chunks: options.chunks };
+  const strategyName = options.strategy ?? input.strategy ?? resolveStringConfig("strategy.default");
+  const entry = getStrategyEntry(strategyName);
+  const chunks = options.chunks ?? input.chunks;
+  const strategyOptions = chunks === undefined ? {} : { chunks };
   getEffectiveStrategyParameters(entry.name, strategyOptions);
-  const maxTokens = options.maxTokens ?? DEFAULT_CONTEXT_MAX_TOKENS;
+  const maxTokens = options.maxTokens ?? input.maxTokens ?? DEFAULT_CONTEXT_MAX_TOKENS;
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
     throw new Error("maxTokens debe ser un entero positivo");
   }
@@ -294,9 +321,8 @@ function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): 
     db: resolveDbPath(projectPath),
     lancedb: resolveLanceDbPath(projectPath),
     strategy: entry.name,
-    ollama: options.ollama ?? resolveStringConfig("agent.endpoint"),
     maxTokens,
-    grounding: options.grounding ?? resolveBooleanConfig("profile.groundingEnabled"),
+    ...(chunks === undefined ? {} : { chunks }),
   };
 }
 
@@ -327,7 +353,7 @@ function resolveNumberConfig(key: string): number {
 }
 
 async function retrieveContext(
-  query: string,
+  input: StructuredRetrieveInput,
   options: ResolvedRetrieveCliOptions,
   streams: CliStreams,
   runtime: RetrieveRuntime,
@@ -344,79 +370,46 @@ async function retrieveContext(
     if (options.verbose) writeStderr(message);
   };
 
+  const structuredQuery: SanitizerOutput = {
+    route: "RAG",
+    clean_query: input.clean_query,
+    embedding_input: input.embedding_input,
+    dimensions: input.dimensions,
+    intent: input.intent,
+    confidence: input.confidence,
+  };
+
   try {
     verbose(`[CLI] retrieve: strategy=${options.strategy} db=${options.db}`);
 
     stage = "SQLite";
     db = runtime.createDatabase(options.db);
-    ollama = runtime.createOllama(options.ollama);
-
-    let grounding: QueryGrounding | undefined;
-    if (options.grounding) {
-      stage = "query grounding";
-      grounding = new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(query);
-    }
-
-    stage = "intermediario";
-    const intermediary = runtime.createIntermediary(ollama, options.ollama, resolveNumberConfig("timeout.ms"));
-    let detailed: DetailedClassification | undefined;
-    let sanitized: SanitizerOutput;
-    if (grounding) {
-      if (!intermediary.sanitizeDetailed) {
-        throw new Error("El intermediario configurado no soporta grounding detallado");
-      }
-      detailed = await intermediary.sanitizeDetailed(query, grounding);
-      sanitized = detailed.output;
-    } else {
-      sanitized = await intermediary.sanitize(query);
-    }
-    const groundingDiagnostics = createGroundingDiagnostics(grounding, detailed);
-
-    verbose(
-      `[CLI] intermediario: route=${sanitized.route} intent=${sanitized.intent} ` +
-        `confidence=${sanitized.confidence.toFixed(2)} clean_query=${JSON.stringify(sanitized.clean_query)}`,
-    );
-
-    if (sanitized.route === "LLM_DIRECT") {
-      return createRetrievedContext(
-        query,
-        options,
-        sanitized,
-        groundingDiagnostics,
-        [],
-        sanitized.embedding_input || query,
-      );
-    }
 
     stage = "selección de estrategia";
     const created = await runtime.createStrategy(
       options.strategy,
       db,
       options.lancedb,
-      options.ollama,
-      resolveNumberConfig("timeout.ms"),
-      ollama,
       options.chunks === undefined ? {} : { chunks: options.chunks },
     );
     lanceDb = created.connectedLanceDb;
+    ollama = created.ollama;
 
     stage = `retrieval:${options.strategy}`;
-    const chunks = await created.strategy.retrieve(sanitized);
+    const chunks = await created.strategy.retrieve(structuredQuery);
 
     stage = "agregación";
     const aggregator = new ContextAggregator();
     const aggregated = aggregator.aggregate(chunks, options.maxTokens);
     verbose(`[CLI] chunks recuperados: ${aggregated.length}`);
 
-    const injector = new PromptInjector();
-    const enrichedPrompt = injector.inject(query, aggregated);
+    const contextBlock = renderContextBlock(aggregated);
     return createRetrievedContext(
-      query,
+      input.originalPrompt,
       options,
-      sanitized,
-      groundingDiagnostics,
+      structuredQuery,
       aggregated,
-      enrichedPrompt,
+      contextBlock,
     );
   } catch (err) {
     throw new PipelineStageError(stage, err);
@@ -440,47 +433,43 @@ async function retrieveContext(
 }
 
 function createRetrievedContext(
-  originalQuery: string,
+  originalPrompt: string,
   options: ResolvedRetrieveCliOptions,
-  sanitized: SanitizerOutput,
-  grounding: GroundingDiagnostics,
+  structuredQuery: SanitizerOutput,
   chunks: RetrievedContext["chunks"],
-  enrichedPrompt: string,
+  contextBlock: string,
 ): RetrievedContext {
   return {
-    id: createContextId(originalQuery),
+    id: createContextId(originalPrompt, structuredQuery),
     generatedAt: new Date().toISOString(),
-    originalQuery,
+    originalPrompt,
     options: {
       strategy: options.strategy,
       db: options.db,
       lancedb: options.lancedb,
-      ollama: options.ollama,
       strategyParameters: getEffectiveStrategyParameters(
         options.strategy as (typeof STRATEGY_NAMES)[number],
         options.chunks === undefined ? {} : { chunks: options.chunks },
       ),
       maxTokens: options.maxTokens,
     },
-    sanitized,
-    grounding,
+    structuredQuery,
     chunks,
-    enrichedPrompt,
+    contextBlock,
   };
 }
 
 function renderContextMarkdown(context: RetrievedContext): string {
   const frontMatter = [
     "---",
-    "lacoco_export_version: 1",
+    "lacoco_export_version: 2",
     `context_id: ${yamlString(context.id)}`,
-    `question: ${yamlString(context.originalQuery)}`,
+    `question: ${yamlString(context.originalPrompt)}`,
     `generated_at: ${yamlString(context.generatedAt)}`,
     `strategy: ${yamlString(context.options.strategy)}`,
-    `route: ${yamlString(context.sanitized.route)}`,
-    `intent: ${yamlString(context.sanitized.intent)}`,
-    `confidence: ${context.sanitized.confidence}`,
-    `dimensions: [${context.sanitized.dimensions.map(yamlString).join(", ")}]`,
+    `intent: ${yamlString(context.structuredQuery.intent)}`,
+    `confidence: ${context.structuredQuery.confidence}`,
+    `dimensions: [${context.structuredQuery.dimensions.map(yamlString).join(", ")}]`,
     `chunks: ${context.chunks.length}`,
     `max_tokens: ${context.options.maxTokens}`,
     `strategy_parameters: ${yamlString(JSON.stringify(context.options.strategyParameters))}`,
@@ -503,7 +492,7 @@ function renderContextMarkdown(context: RetrievedContext): string {
 
 ## Question
 
-${context.originalQuery}
+${context.originalPrompt}
 
 ## Retrieval Metadata
 
@@ -512,28 +501,25 @@ ${context.originalQuery}
 | Context ID | \`${context.id}\` |
 | Generated at | ${context.generatedAt} |
 | Strategy | \`${context.options.strategy}\` |
-| Route | \`${context.sanitized.route}\` |
-| Intent | \`${context.sanitized.intent}\` |
-| Confidence | \`${context.sanitized.confidence.toFixed(2)}\` |
-| Dimensions | ${context.sanitized.dimensions.length > 0 ? context.sanitized.dimensions.map((dim) => `\`${dim}\``).join(", ") : "-"} |
+| Intent | \`${context.structuredQuery.intent}\` |
+| Confidence | \`${context.structuredQuery.confidence.toFixed(2)}\` |
+| Dimensions | ${context.structuredQuery.dimensions.length > 0 ? context.structuredQuery.dimensions.map((dim) => `\`${dim}\``).join(", ") : "-"} |
 | Strategy parameters | \`${JSON.stringify(context.options.strategyParameters)}\` |
 | Max tokens | \`${context.options.maxTokens}\` |
-| Grounding | \`${context.grounding.enabled}\` |
-| Semantic profile build | ${context.grounding.profileBuildId ? `\`${context.grounding.profileBuildId}\`` : "-"} |
 | SQLite | \`${context.options.db}\` |
 | LanceDB | \`${context.options.lancedb}\` |
 
 ## Clean Query
 
-${fencedBlock(context.sanitized.clean_query || "(empty)")}
+${fencedBlock(context.structuredQuery.clean_query || "(empty)")}
 
 ## Embedding Input
 
-${fencedBlock(context.sanitized.embedding_input)}
+${fencedBlock(context.structuredQuery.embedding_input)}
 
-## Enriched Prompt
+## Context Block
 
-${fencedBlock(context.enrichedPrompt)}
+${fencedBlock(context.contextBlock)}
 
 ## Retrieved Chunks
 
@@ -541,48 +527,18 @@ ${chunkSections}
 `;
 }
 
-function createContextId(query: string): string {
+function createContextId(originalPrompt: string, query: SanitizerOutput): string {
   return crypto
     .createHash("sha256")
-    .update(query.trim().replace(/\s+/g, " "))
+    .update(JSON.stringify({
+      originalPrompt: originalPrompt.trim().replace(/\s+/g, " "),
+      clean_query: query.clean_query,
+      embedding_input: query.embedding_input,
+      intent: query.intent,
+      dimensions: query.dimensions,
+    }))
     .digest("hex")
     .slice(0, 16);
-}
-
-function createGroundingDiagnostics(
-  grounding: QueryGrounding | undefined,
-  detailed: DetailedClassification | undefined,
-): GroundingDiagnostics {
-  if (!grounding) {
-    return {
-      enabled: false,
-      profileBuildId: null,
-      candidates: [],
-      domains: [],
-      usedTermIds: [],
-      initialUnsupportedClauses: [],
-      repairCount: 0,
-      durationMs: null,
-    };
-  }
-  return {
-    enabled: true,
-    profileBuildId: grounding.profileBuildId,
-    candidates: grounding.candidates,
-    domains: grounding.domains,
-    usedTermIds: detailed?.usedTermIds ?? [],
-    initialUnsupportedClauses: detailed?.initialUnsupportedClauses ?? [],
-    repairCount: detailed?.repairCount ?? 0,
-    durationMs: grounding.durationMs,
-  };
-}
-
-function resolveBooleanConfig(key: string): boolean {
-  const entry = resolveConfig(key);
-  if (typeof entry.value !== "boolean") {
-    throw new Error(`La configuración ${key} debe ser boolean`);
-  }
-  return entry.value;
 }
 
 function yamlString(value: string): string {
@@ -607,34 +563,35 @@ async function createRecoveryStrategy(
   strategyName: string,
   db: LaCoCoDatabase,
   lanceDbPath: string,
-  ollamaEndpoint: string,
-  ollamaTimeoutMs?: number,
-  ollama?: LlmClient,
   strategyOptions: StrategyRuntimeOptions = {},
-): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }> {
+): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb; ollama?: LlmClient }> {
   let lanceDb: LaCoCoLanceDb | undefined;
+  let ollama: LlmClient | undefined;
 
   try {
     const entry = getStrategyEntry(strategyName);
     lanceDb = entry.needsLanceDb ? new LaCoCoLanceDb(lanceDbPath) : undefined;
     if (lanceDb) await lanceDb.connect();
-    const deps = {
-      db,
-      ollamaEndpoint,
-      ollama: ollama ?? new OllamaService(
-        ollamaEndpoint,
+    if (strategyName === "agentic") {
+      ollama = new OllamaService(
+        resolveStringConfig("agent.endpoint"),
         resolveStringConfig("agent.model"),
-        ollamaTimeoutMs,
-      ),
-      ...(lanceDb ? { lanceDb } : {}),
-      ...(ollamaTimeoutMs !== undefined ? { ollamaTimeoutMs } : {}),
-    };
-
+        resolveNumberConfig("timeout.ms"),
+      );
+    }
     return {
-      strategy: entry.create(deps, strategyOptions),
+      strategy: entry.create({
+        db,
+        ollamaEndpoint: resolveStringConfig("agent.endpoint"),
+        ...(ollama ? { ollama } : {}),
+        ...(lanceDb ? { lanceDb } : {}),
+        ollamaTimeoutMs: resolveNumberConfig("timeout.ms"),
+      }, strategyOptions),
       ...(lanceDb ? { connectedLanceDb: lanceDb } : {}),
+      ...(ollama ? { ollama } : {}),
     };
   } catch (error) {
+    ollama?.abort();
     if (lanceDb) await lanceDb.close();
     throw error;
   }
@@ -642,6 +599,68 @@ async function createRecoveryStrategy(
 
 export function strategyHelp(): string {
   return `Estrategia de recuperación (${STRATEGY_NAMES.join(", ")}); por defecto strategy.default`;
+}
+
+function requiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new PipelineStageError("entrada estructurada", `${key} debe ser un string no vacío`);
+  }
+  return value;
+}
+
+function optionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new PipelineStageError("entrada estructurada", `${key} debe ser un string no vacío`);
+  }
+  return value;
+}
+
+function optionalPositiveInteger(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new PipelineStageError("entrada estructurada", `${key} debe ser un entero positivo`);
+  }
+  return value;
+}
+
+function requiredIntent(value: unknown): IntentTag {
+  if (!INTENTS.includes(value as IntentTag)) {
+    throw new PipelineStageError("entrada estructurada", `intent debe ser uno de: ${INTENTS.join(", ")}`);
+  }
+  return value as IntentTag;
+}
+
+function requiredDimensions(value: unknown): Dimension[] {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > DIMENSIONS.length ||
+    new Set(value).size !== value.length ||
+    value.some((dimension) => !DIMENSIONS.includes(dimension as Dimension))
+  ) {
+    throw new PipelineStageError("entrada estructurada", `dimensions debe contener valores únicos de: ${DIMENSIONS.join(", ")}`);
+  }
+  return value as Dimension[];
+}
+
+function requiredConfidence(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
+    throw new PipelineStageError("entrada estructurada", "confidence debe ser un número entre 0 y 1");
+  }
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatError(err: unknown): string {

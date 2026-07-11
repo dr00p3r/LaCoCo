@@ -51,7 +51,7 @@ describe("Project Semantic Profile", () => {
     db.close();
   });
 
-  it("marca el perfil obsoleto cuando cambia la revisión del grafo", async () => {
+  it("mantiene el perfil legacy desacoplado de cambios del grafo", async () => {
     const root = createProject();
     const db = new LaCoCoDatabase(path.join(root, "tensor.sqlite"));
     db.insertNode({
@@ -63,11 +63,18 @@ describe("Project Semantic Profile", () => {
       isDeprecated: 0,
     });
     await new SemanticProfileBuilder(db.getRawDb(), root, createEnrichmentLlm(), "test-model").rebuild();
-    db.bumpGraphRevision();
+    db.insertNode({
+      id: `${root}/src/index.ts#secondary`,
+      kind: "FUNCTION",
+      name: "secondary",
+      filepath: path.join(root, "src/index.ts"),
+      signature: "function secondary(): void",
+      isDeprecated: 0,
+    });
 
-    expect(() => new SemanticProfileStore(db.getRawDb()).groundQuery("main"))
-      .toThrow("obsoleto");
-    expect(db.getSemanticProfileState().status).toBe("stale");
+    expect(new SemanticProfileStore(db.getRawDb()).groundQuery("main").candidates.length)
+      .toBeGreaterThan(0);
+    expect(new SemanticProfileStore(db.getRawDb()).getState().status).toBe("ready");
     db.close();
   });
 

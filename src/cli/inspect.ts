@@ -2,16 +2,15 @@ import fs from "node:fs";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { getStrategyEntry } from "../retriever/strategies/registry.js";
-import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
-import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
 import { OllamaService } from "../slms/ollama-service.js";
 import { expandBfs } from "./inspect/bfs.js";
 import { computeStats, findRootNodes, loadEdges, loadNodes } from "./inspect/data-loaders.js";
 import { generateHtml } from "./inspect/html-renderer.js";
 import { getCytoscapeTag } from "./inspect/cytoscape-cache.js";
 import type { InspectOptions, InspectQueryOptions } from "./inspect/types.js";
-import { SemanticProfileStore } from "../semantic-profile/semantic-profile-store.js";
-import { QueryGrounder } from "../semantic-profile/query-grounder.js";
+import { parseStructuredRetrieveInput } from "./pipeline.js";
+import { resolveNumberConfig, resolveStringConfig } from "./config.js";
+import type { SanitizerOutput } from "../retriever/models/utilities/types.js";
 
 export type { Focus, InspectMode, InspectOptions, InspectQueryOptions } from "./inspect/types.js";
 
@@ -50,31 +49,37 @@ export async function inspect(options: InspectOptions): Promise<void> {
 
 export async function inspectQuery(options: InspectQueryOptions): Promise<void> {
   const db = new LaCoCoDatabase(options.db);
-  const ollama = new OllamaService(options.ollama, options.model, options.timeoutMs);
+  let ollama: OllamaService | undefined;
   let lanceDb: LaCoCoLanceDb | undefined;
 
   try {
-    const intermediary = new AgentIntermediary1(new SlmClassifier(ollama));
-    const grounding = options.grounding
-      ? new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(options.prompt)
-      : undefined;
-    const sanitized = grounding
-      ? (await intermediary.sanitizeDetailed(options.prompt, grounding)).output
-      : await intermediary.sanitize(options.prompt);
-    if (sanitized.route === "LLM_DIRECT") {
-      throw new Error("El prompt no requiere RAG; no hay subgrafo que visualizar");
-    }
+    const input = parseStructuredRetrieveInput(options.structuredInputJson);
+    const sanitized: SanitizerOutput = {
+      route: "RAG",
+      clean_query: input.clean_query,
+      embedding_input: input.embedding_input,
+      dimensions: input.dimensions,
+      intent: input.intent,
+      confidence: input.confidence,
+    };
 
     const entry = getStrategyEntry(options.strategy);
     if (entry.needsLanceDb) {
       lanceDb = new LaCoCoLanceDb(options.lancedb);
       await lanceDb.connect();
     }
+    if (entry.name === "agentic") {
+      ollama = new OllamaService(
+        resolveStringConfig("agent.endpoint"),
+        resolveStringConfig("agent.model"),
+        resolveNumberConfig("timeout.ms"),
+      );
+    }
     const strategy = entry.create({
       db,
-      ollamaEndpoint: options.ollama,
-      ollama,
-      ...(options.timeoutMs !== undefined ? { ollamaTimeoutMs: options.timeoutMs } : {}),
+      ollamaEndpoint: resolveStringConfig("agent.endpoint"),
+      ...(ollama ? { ollama } : {}),
+      ollamaTimeoutMs: resolveNumberConfig("timeout.ms"),
       ...(lanceDb ? { lanceDb } : {}),
     }, options.chunks === undefined ? {} : { chunks: options.chunks });
     const chunks = await strategy.retrieve(sanitized);
@@ -100,13 +105,13 @@ export async function inspectQuery(options: InspectQueryOptions): Promise<void> 
       anchors: anchorScores,
       stats,
       mode: options.mode,
-      title: `LaCoCo: "${options.prompt.slice(0, 60)}"`,
+      title: `LaCoCo: "${input.originalPrompt.slice(0, 60)}"`,
       cytoscapeTag,
     });
     fs.writeFileSync(options.output, html, "utf-8");
     console.log(`[inspect-query] HTML generado -> ${options.output}`);
   } finally {
-    ollama.abort();
+    ollama?.abort();
     if (lanceDb) await lanceDb.close();
     db.close();
   }

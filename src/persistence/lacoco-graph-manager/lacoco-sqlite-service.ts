@@ -9,8 +9,6 @@ import { MigrationDao } from "./dao/migration-dao.js";
 import { ConnectionDao } from "./dao/connection-dao.js";
 import { MetadataDao } from "./dao/metadata-dao.js";
 import { type Dimension } from "../../domain/dimensions.js";
-import { SemanticProfileStore } from "../../semantic-profile/semantic-profile-store.js";
-import type { SemanticProfileState } from "../../semantic-profile/types.js";
 
 export type { GraphNode, GraphEdge };
 
@@ -96,14 +94,6 @@ export class LaCoCoDatabase {
 
   populateMetadataForNodes(ids: string[]): void {
     this.metadataDao.populateForNodes(ids);
-  }
-
-  bumpGraphRevision(): string {
-    return new SemanticProfileStore(this.db).bumpGraphRevision();
-  }
-
-  getSemanticProfileState(): SemanticProfileState {
-    return new SemanticProfileStore(this.db).getState();
   }
 
   close(): void {

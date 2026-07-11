@@ -3,8 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DaemonManager } from "../extractor/daemon.js";
 import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
-import { resolveNumberConfig, resolveStringConfig } from "./config.js";
-import { OllamaService } from "../slms/ollama-service.js";
+import { resolveNumberConfig } from "./config.js";
 import { formatProjectDetails, formatProjectList } from "./formatters.js";
 import { projectPathFromTsconfig, resolveDbPath, resolveLanceDbPath } from "./storage-paths.js";
 import {
@@ -202,12 +201,6 @@ export function startForegroundWatcher(
   markWatcherRunning(watcherProjectId, process.pid, process.argv);
 
   const db = new LaCoCoDatabase(resolvedOptions.db);
-  const profileModel = resolveStringConfig("agent.model");
-  const profileOllama = new OllamaService(
-    resolveStringConfig("agent.endpoint"),
-    profileModel,
-    resolveNumberConfig("timeout.ms"),
-  );
 
   const daemon = new DaemonManager({
     tsConfigFilePath: rutaTsconfig,
@@ -216,11 +209,6 @@ export function startForegroundWatcher(
     indexEmbeddings: true,
     lanceDbPath: resolvedOptions.lancedb,
     watchDebounceMs: resolveNumberConfig("watcher.debounceMs"),
-    semanticProfile: {
-      llm: profileOllama,
-      model: profileModel,
-      projectRoot: projectPath,
-    },
   });
 
   let shuttingDown = false;

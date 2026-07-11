@@ -7,7 +7,7 @@ import {
   type ContextExportCliOptions,
   type RetrieveCliOptions,
 } from "../pipeline.js";
-import { resolveBooleanConfig, resolveNumberConfig, resolveStringConfig } from "../config.js";
+import { resolveStringConfig } from "../config.js";
 import { resolveDbPath, resolveLanceDbPath } from "../storage-paths.js";
 import { inspectProject } from "../state/project-registry.js";
 
@@ -24,37 +24,33 @@ function registerContextExport(program: Command): void {
     .description("Exporta y administra contextos recuperados.");
 
   context
-    .command("export [project] <query>")
-    .description("Recupera contexto y lo exporta como Markdown identificable por pregunta.")
+    .command("export [project]")
+    .description("Lee una query estructurada desde stdin y exporta contexto como Markdown.")
     .requiredOption("-o, --output <path>", "Archivo Markdown de salida")
     .option("-s, --strategy <name>", strategyHelp())
     .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
-    .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
-    .option("--grounding", "Usa el Project Semantic Profile", undefined)
-    .option("--no-grounding", "Desactiva el Project Semantic Profile")
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
     .option("--json", "Imprime JSON válido", false)
-    .action(async (project: string | undefined, query: string, options: ContextExportCliOptions) => {
-      const exitCode = await runContextExport(query, options, undefined, undefined, project);
+    .action(async (project: string | undefined, options: ContextExportCliOptions) => {
+      const input = await readStdin();
+      const exitCode = await runContextExport(input, options, undefined, undefined, project);
       if (exitCode !== 0) process.exitCode = exitCode;
     });
 }
 
 function registerRetrieve(program: Command): void {
   program
-    .command("retrieve [project] <query>")
-    .description("Recupera contexto del proyecto y devuelve un prompt enriquecido para hooks.")
+    .command("retrieve [project]")
+    .description("Lee una query estructurada desde stdin y devuelve contexto recuperado.")
     .option("-s, --strategy <name>", strategyHelp())
     .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("--max-tokens <number>", "Presupuesto de tokens del agregador", parsePositiveInteger)
-    .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
-    .option("--grounding", "Usa el Project Semantic Profile", undefined)
-    .option("--no-grounding", "Desactiva el Project Semantic Profile")
-    .option("--json", "Imprime un resultado JSON estructurado para hooks", false)
+    .option("--json", "Imprime un resultado JSON estructurado", false)
     .option("-v, --verbose", "Imprime diagnóstico del pipeline en stderr", false)
-    .action(async (project: string | undefined, query: string, options: RetrieveCliOptions) => {
-      const exitCode = await runRetrieve(query, options, undefined, undefined, project);
+    .action(async (project: string | undefined, options: RetrieveCliOptions) => {
+      const input = await readStdin();
+      const exitCode = await runRetrieve(input, options, undefined, undefined, project);
       if (exitCode !== 0) process.exitCode = exitCode;
     });
 }
@@ -86,27 +82,24 @@ function registerInspect(program: Command): void {
 
 function registerInspectQuery(program: Command): void {
   program
-    .command("inspect-query [project] <prompt>")
-    .description("Pipeline RAG completo → visualización del subgrafo recuperado para un prompt.")
+    .command("inspect-query [project]")
+    .description("Lee una query estructurada desde stdin y visualiza el subgrafo recuperado.")
     .option("-b, --budget <num>", "Máximo de nodos a expandir", "75")
     .option("-s, --strategy <name>", strategyHelp())
     .option("--chunks <number>", "Máximo de chunks producido por la estrategia", parsePositiveInteger)
     .option("-m, --mode <mode>", "Modo de visualización (default, tensor, scores)", "default")
     .option("-o, --output <path>", "Archivo HTML de salida", "inspect-query.html")
     .option("--cdn", "Usar CDN para Cytoscape.js en vez de embeberlo", false)
-    .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
-    .option("--grounding", "Usa el Project Semantic Profile", undefined)
-    .option("--no-grounding", "Desactiva el Project Semantic Profile")
-    .action(async (project: string | undefined, prompt: string, options: InspectQueryCliOptions) => {
+    .action(async (project: string | undefined, options: InspectQueryCliOptions) => {
       const budget = parseBudget(options.budget);
       if (budget === null) return;
       const mode = ["default", "tensor", "scores"].includes(options.mode)
         ? options.mode as "default" | "tensor" | "scores"
         : "default";
-      const ollamaEndpoint = options.ollama ?? resolveStringConfig("agent.endpoint");
+      const input = await readStdin();
       const projectPath = resolveInspectQueryProjectPath(project);
       await inspectQuery({
-        prompt,
+        structuredInputJson: input,
         db: resolveDbPath(projectPath),
         lancedb: resolveLanceDbPath(projectPath),
         budget,
@@ -114,10 +107,6 @@ function registerInspectQuery(program: Command): void {
         mode,
         output: options.output,
         cdn: options.cdn,
-        ollama: ollamaEndpoint,
-        model: resolveStringConfig("agent.model"),
-        timeoutMs: resolveNumberConfig("timeout.ms"),
-        grounding: options.grounding ?? resolveBooleanConfig("profile.groundingEnabled"),
         ...(options.chunks === undefined ? {} : { chunks: options.chunks }),
       });
     });
@@ -154,9 +143,7 @@ interface InspectQueryCliOptions {
   mode: string;
   output: string;
   cdn: boolean;
-  ollama?: string;
   chunks?: number;
-  grounding?: boolean;
 }
 
 function resolveInspectQueryProjectPath(project?: string): string {
@@ -167,4 +154,12 @@ function resolveInspectQueryProjectPath(project?: string): string {
   } catch {
     return project;
   }
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf-8");
 }

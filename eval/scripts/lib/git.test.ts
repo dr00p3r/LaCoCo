@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyBrokenPatch,
+  captureWorkingTreeDiff,
   parseTestRunnerOutput,
   resetRepoClean,
   verifyBrokenState,
@@ -74,6 +75,23 @@ describe("resetRepoClean with excludes", () => {
 
     expect(existsSync(join(repo, "node_modules", "a", "x"))).toBe(true);
     expect(existsSync(join(repo, ".pnpm", "b", "y"))).toBe(true);
+  });
+});
+
+describe("captureWorkingTreeDiff", () => {
+  it("can exclude generated lockfiles from captured patches", async () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, "hello.txt"), "changed\n");
+    writeFileSync(join(repo, "package-lock.json"), "{}\n");
+
+    const diff = await captureWorkingTreeDiff({
+      repoPath: repo,
+      timeoutMs: 10_000,
+      excludePatchPaths: ["package-lock.json"],
+    });
+
+    expect(diff).toContain("diff --git a/hello.txt b/hello.txt");
+    expect(diff).not.toContain("package-lock.json");
   });
 });
 

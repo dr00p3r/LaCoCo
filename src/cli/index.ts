@@ -4,9 +4,9 @@ import { Command } from "commander";
 import { pathToFileURL } from "node:url";
 import { registerIndexingCommands } from "./commands/indexing-commands.js";
 import { registerRetrievalCommands } from "./commands/retrieval-commands.js";
+import { registerSkillCommands } from "./commands/skill-commands.js";
 import { registerStateCommands } from "./commands/state-commands.js";
 import { registerWatchCommands } from "./commands/watch-command.js";
-import { registerProfileCommands } from "./commands/profile-commands.js";
 import { formatError } from "./formatters.js";
 
 export const program = new Command();
@@ -19,7 +19,7 @@ registerStateCommands(program);
 registerRetrievalCommands(program);
 registerWatchCommands(program);
 registerIndexingCommands(program);
-registerProfileCommands(program);
+registerSkillCommands(program);
 
 export {
   runRetrieve,
@@ -27,11 +27,11 @@ export {
   type RetrieveCliOptions,
   type ContextExportCliOptions,
   type CliStreams,
-  type RetrieveIntermediary,
   type RetrieveRuntime,
   type RetrieveJsonResult,
   type RetrieveJsonSuccess,
   type RetrieveJsonFailure,
+  type StructuredRetrieveInput,
 } from "./pipeline.js";
 
 if (isMainModule()) {

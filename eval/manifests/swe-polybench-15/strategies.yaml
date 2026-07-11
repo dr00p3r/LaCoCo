@@ -215,6 +215,27 @@ strategies:
         include: false
         reason: "No mezclar con agentes externos en la corrida base."
 
+  - id: lacoco_skill
+    label: "LaCoCo agent skill live retrieval"
+    kind: "agent_skill"
+    enabled: true
+    lacoco_strategy: null
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: false
+    generation_enabled: true
+    output_context_policy: "agent_skill"
+    description: >-
+      Condición de generación donde el agente externo no recibe contexto
+      preinyectado. El runner instala la skill LaCoCo del repositorio y el agente
+      debe ejecutar `lacoco retrieve` por stdin antes de editar.
+    metrics:
+      retrieval:
+        include: false
+        reason: "El retrieval ocurre dentro del agente mediante skill."
+      generation:
+        include: true
+
 execution_matrix:
   official_retrieval:
     include_strategy_ids:

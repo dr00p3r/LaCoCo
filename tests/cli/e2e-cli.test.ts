@@ -99,6 +99,66 @@ describe("lacoco CLI E2E", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("genera una skill Markdown desde el grafo indexado", (context) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lacoco-e2e-skill-"));
+    const projectDir = path.join(tempDir, "project-skill");
+    const stateHome = path.join(tempDir, "state-home");
+    const codexSkills = path.join(tempDir, "codex-skills");
+    const claudeSkills = path.join(tempDir, "claude-skills");
+    const opencodeConfig = path.join(tempDir, "opencode", "opencode.jsonc");
+    const opencodeSkills = path.join(tempDir, "opencode", "skills");
+
+    try {
+      createFixtureProject(projectDir);
+
+      runCli(["index_graph", path.join(projectDir, "tsconfig.json")], stateHome);
+      const output = JSON.parse(runCli([
+        "skill",
+        "update",
+        projectDir,
+        "--install",
+        "codex,claude,opencode",
+        "--json",
+      ], stateHome, {
+        LACOCO_CODEX_SKILLS_DIR: codexSkills,
+        LACOCO_CLAUDE_SKILLS_DIR: claudeSkills,
+        LACOCO_OPENCODE_CONFIG_PATH: opencodeConfig,
+        LACOCO_OPENCODE_SKILLS_DIR: opencodeSkills,
+      })) as {
+        output: string;
+        skillName: string;
+        installs: Array<{ agent: string; path: string; configPath?: string }>;
+      };
+      const skill = fs.readFileSync(output.output, "utf-8");
+      const codex = output.installs.find((install) => install.agent === "codex");
+      const claude = output.installs.find((install) => install.agent === "claude");
+      const opencode = output.installs.find((install) => install.agent === "opencode");
+
+      expect(output.output).toBe(path.join(projectDir, ".lacoco", "skill.md"));
+      expect(output.skillName).toBe("lacoco-project-skill");
+      expect(skill).toContain("LaCoCo Project Retrieval Skill");
+      expect(skill).toContain('"schemaVersion": 1');
+      expect(skill).toContain("OrderService");
+      expect(skill).toContain("lacoco retrieve");
+      expect(codex?.path).toBe(path.join(codexSkills, output.skillName, "SKILL.md"));
+      expect(claude?.path).toBe(path.join(claudeSkills, output.skillName, "SKILL.md"));
+      expect(opencode?.path).toBe(path.join(opencodeSkills, output.skillName, "SKILL.md"));
+      expect(fs.readFileSync(codex!.path, "utf-8")).toContain(`name: ${output.skillName}`);
+      expect(fs.readFileSync(claude!.path, "utf-8")).toContain("Mandatory workflow");
+      const opencodeConfigJson = JSON.parse(fs.readFileSync(opencodeConfig, "utf-8")) as {
+        skills: { paths: string[] };
+      };
+      expect(opencodeConfigJson.skills.paths).toContain(path.join(opencodeSkills, output.skillName));
+    } catch (err) {
+      if (isSpawnPermissionError(err)) {
+        context.skip();
+      }
+      throw err;
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function runCli(

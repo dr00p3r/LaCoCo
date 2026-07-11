@@ -18,7 +18,6 @@ import {
   configureProjectStorage,
   type ProjectRecord,
 } from "../../src/cli/state/project-registry.js";
-import { SemanticProfileStore } from "../../src/semantic-profile/semantic-profile-store.js";
 
 interface CliResult {
   code: number;
@@ -27,166 +26,27 @@ interface CliResult {
 }
 
 describe("lacoco retrieve CLI", () => {
-  it.each([
-    ["sin caracteres especiales", "OrderService"],
-    ["con paréntesis", "OrderService(save)"],
-    ["con paréntesis anidados", "OrderService(createOrder(dto))"],
-    ["con comillas simples", "OrderService's save"],
-    ["con comillas dobles", 'OrderService "save"'],
-    ["con comilla invertida real", "`"],
-    ["con saltos de línea", "OrderService\ncreateOrder"],
-    ["con unicode", "qué hace OrderService"],
-  ])("finaliza sin error para consultas %s", async (_label, query) => {
+  it("recupera contexto desde una query estructurada sin intermediario local", async () => {
     const temp = createTempIndexedDb();
     try {
-      const result = await runRetrieveWithFakes(query, temp.dbPath);
+      const result = await runRetrieveWithFakes(structuredInput(), temp.project.id);
 
       expect(result.code).toBe(0);
-      expect(result.stdout.length).toBeGreaterThan(0);
+      expect(result.stdout).toContain("### Contexto del Proyecto");
+      expect(result.stdout).toContain("file1#OrderService");
       expect(result.stderr).not.toContain("fts5:");
-      expect(result.stderr).not.toMatch(/\n\s+at\s/u);
     } finally {
       temp.cleanup();
     }
   });
 
-  it("rechaza consultas vacías con stderr y código distinto de cero", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      const result = await runRetrieveWithFakes("", temp.dbPath);
-
-      expect(result.code).not.toBe(0);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("El prompt no puede estar vacío");
-      expect(result.stderr).not.toMatch(/\n\s+at\s/u);
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("produce la misma salida en dos ejecuciones consecutivas sobre el mismo estado", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      const first = await runRetrieveWithFakes("OrderService", temp.dbPath);
-      const second = await runRetrieveWithFakes("OrderService", temp.dbPath);
-
-      expect(first.code).toBe(0);
-      expect(second.code).toBe(0);
-      expect(second.stdout).toBe(first.stdout);
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("imprime el resultado recuperado una sola vez en stdout", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      const result = await runRetrieveWithFakes("OrderService", temp.dbPath);
-      const markerCount = countOccurrences(result.stdout, "### Contexto del Proyecto");
-
-      expect(result.code).toBe(0);
-      expect(markerCount).toBe(1);
-      expect(result.stderr).not.toContain("### Contexto del Proyecto");
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("exporta el contexto recuperado a Markdown identificable por pregunta", async () => {
-    const temp = createTempIndexedDb();
-    const output = path.join(temp.dir, "contexto.md");
-    try {
-      const result = await runContextExportWithFakes("OrderService(save)", temp.dbPath, output, temp.project.id);
-      const markdown = readFileSync(output, "utf-8");
-
-      expect(result.code).toBe(0);
-      expect(result.stdout).toContain(`Contexto exportado: ${output}`);
-      expect(result.stdout).not.toContain("### Contexto del Proyecto");
-      expect(result.stderr).not.toContain("fts5:");
-      expect(existsSync(output)).toBe(true);
-      expect(markdown).toContain("lacoco_export_version: 1");
-      expect(markdown).toContain("context_id:");
-      expect(markdown).toContain('question: "OrderService(save)"');
-      expect(markdown).toContain("## Question");
-      expect(markdown).toContain("OrderService(save)");
-      expect(markdown).toContain("## Retrieved Chunks");
-      expect(markdown).toContain("file1#OrderService");
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("resuelve estrategia y endpoint desde configuración cuando no se pasan opciones", async () => {
-    const temp = createTempIndexedDb();
-    const previousStrategy = process.env.LACOCO_STRATEGY;
-    const previousEndpoint = process.env.LACOCO_AGENT_ENDPOINT;
-    const capture: RuntimeCapture = {
-      ollamaEndpoints: [],
-    };
-
-    try {
-      process.env.LACOCO_STRATEGY = "agentic";
-      process.env.LACOCO_AGENT_ENDPOINT = "http://ollama.local:11434";
-
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "OrderService",
-        {
-          verbose: false,
-        },
-        streams,
-        createFakeRuntime(capture),
-      );
-
-      expect(code).toBe(0);
-      expect(read().stdout).toContain("### Contexto del Proyecto");
-      expect(capture.ollamaEndpoints).toContain("http://ollama.local:11434");
-      expect(capture.strategyName).toBe("agentic");
-      expect(capture.strategyOllamaEndpoint).toBe("http://ollama.local:11434");
-    } finally {
-      restoreEnv("LACOCO_STRATEGY", previousStrategy);
-      restoreEnv("LACOCO_AGENT_ENDPOINT", previousEndpoint);
-      temp.cleanup();
-    }
-  });
-
-  it("usa rutas de almacenamiento registradas cuando retrieve no recibe --db", async () => {
-    const temp = createTempIndexedDb();
-    const capture: RuntimeCapture = {
-      ollamaEndpoints: [],
-    };
-
-    try {
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "OrderService",
-        {
-          verbose: false,
-        },
-        streams,
-        createFakeRuntime(capture),
-      );
-
-      expect(code).toBe(0);
-      expect(read().stdout).toContain("file1#OrderService");
-      expect(capture.dbPath).toBe(temp.dbPath);
-      expect(capture.lanceDbPath).toBe(path.join(temp.dir, ".lacoco", "lancedb"));
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("devuelve un único documento JSON con contexto para hooks", async () => {
+  it("devuelve JSON v3 con contextBlock y metadata de recuperación", async () => {
     const temp = createTempIndexedDb();
     try {
       const { streams, read } = createCapturedStreams();
       const code = await runRetrieve(
-        "OrderService",
-        {
-          strategy: "agentic",
-          verbose: false,
-          json: true,
-        },
+        structuredInput({ strategy: "agentic" }),
+        { verbose: false, json: true },
         streams,
         createFakeRuntime(),
         temp.project.id,
@@ -195,25 +55,23 @@ describe("lacoco retrieve CLI", () => {
 
       expect(code).toBe(0);
       expect(result).toMatchObject({
-        schemaVersion: 2,
+        schemaVersion: 3,
         ok: true,
-        query: "OrderService",
+        originalPrompt: "Modifica OrderService",
         strategy: "agentic",
-        route: "RAG",
-        classification: {
-          intent: "understand",
+        query: {
+          intent: "refactor",
           dimensions: ["CPG"],
-          cleanQuery: "OrderService",
+          cleanQuery: '"OrderService"',
         },
-        grounding: { enabled: false, profileBuildId: null },
         retrieval: {
           strategyParameters: { chunkLimit: 50 },
           maxTokens: 4000,
         },
       });
       if (result.ok) {
+        expect(result.contextBlock).toContain("### Contexto del Proyecto");
         expect(result.retrieval.chunkCount).toBe(result.retrieval.chunks.length);
-        expect(result.retrieval.chunkCount).toBeGreaterThan(0);
         expect(result.retrieval.chunks[0]?.nodeId).toBe("file1#OrderService");
       }
     } finally {
@@ -221,13 +79,13 @@ describe("lacoco retrieve CLI", () => {
     }
   });
 
-  it("aplica --chunks y reporta el parámetro efectivo", async () => {
+  it("aplica overrides de CLI sobre strategy/chunks/maxTokens del JSON", async () => {
     const temp = createTempIndexedDb();
     try {
       const { streams, read } = createCapturedStreams();
       const code = await runRetrieve(
-        "OrderService",
-        { strategy: "agentic", verbose: false, json: true, chunks: 1 },
+        structuredInput({ strategy: "hybrid", chunks: 10, maxTokens: 4000 }),
+        { strategy: "agentic", chunks: 1, maxTokens: 1, verbose: false, json: true },
         streams,
         createFakeRuntime(),
         temp.project.id,
@@ -235,148 +93,61 @@ describe("lacoco retrieve CLI", () => {
       const result = JSON.parse(read().stdout) as RetrieveJsonResult;
 
       expect(code).toBe(0);
-      expect(result.ok && result.retrieval.chunkCount).toBe(1);
+      expect(result.ok && result.strategy).toBe("agentic");
       expect(result.ok && result.retrieval.strategyParameters.chunkLimit).toBe(1);
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("aplica --max-tokens al ContextAggregator", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "OrderService",
-        { strategy: "agentic", verbose: false, json: true, maxTokens: 1 },
-        streams,
-        createFakeRuntime(),
-        temp.project.id,
-      );
-      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
-
-      expect(code).toBe(0);
-      expect(result.ok && result.retrieval.chunkCount).toBe(0);
       expect(result.ok && result.retrieval.maxTokens).toBe(1);
+      expect(result.ok && result.retrieval.chunkCount).toBe(0);
     } finally {
       temp.cleanup();
     }
   });
 
-  it.each([
-    ["chunks", { chunks: 0 }, "chunks debe ser un entero positivo"],
-    ["maxTokens", { maxTokens: 1.5 }, "maxTokens debe ser un entero positivo"],
-  ])("rechaza %s inválido antes de ejecutar el pipeline", async (_name, invalid, message) => {
+  it("rechaza JSON inválido con salida parseable", async () => {
     const { streams, read } = createCapturedStreams();
-    const runtime = createFakeRuntime();
     const code = await runRetrieve(
-      "OrderService",
-      { strategy: "agentic", verbose: false, json: true, ...invalid },
+      "{",
+      { verbose: false, json: true },
       streams,
-      runtime,
+      createFakeRuntime(),
+    );
+    const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+    expect(code).toBe(1);
+    expect(result).toEqual({
+      schemaVersion: 3,
+      ok: false,
+      error: {
+        stage: "entrada estructurada",
+        message: "stdin debe contener JSON válido",
+      },
+    });
+  });
+
+  it("rechaza dimensiones inválidas antes de ejecutar estrategia", async () => {
+    const { streams, read } = createCapturedStreams();
+    const code = await runRetrieve(
+      JSON.stringify({
+        ...JSON.parse(structuredInput()),
+        dimensions: ["BAD"],
+      }),
+      { verbose: false, json: true },
+      streams,
+      createFakeRuntime(),
     );
 
     expect(code).toBe(1);
-    expect(read().stderr).toContain(message);
+    expect(read().stderr).toContain("dimensions debe contener valores únicos");
   });
 
-  it("devuelve errores JSON parseables y mantiene exit code distinto de cero", async () => {
+  it("usa rutas de almacenamiento registradas", async () => {
     const temp = createTempIndexedDb();
-    try {
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "   ",
-        { strategy: "agentic", verbose: false, json: true },
-        streams,
-        createFakeRuntime(),
-        temp.project.id,
-      );
-      const output = read();
-      const result = JSON.parse(output.stdout) as RetrieveJsonResult;
-
-      expect(code).toBe(1);
-      expect(result).toEqual({
-        schemaVersion: 2,
-        ok: false,
-        error: {
-          stage: "intermediario",
-          message: "El prompt no puede estar vacío",
-        },
-      });
-      expect(output.stderr).toContain("Error en pipeline RAG (intermediario)");
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("falla en query grounding cuando se solicita un perfil ausente", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "servicio de pedidos",
-        { strategy: "agentic", verbose: false, json: true, grounding: true },
-        streams,
-        createFakeRuntime(),
-        temp.project.id,
-      );
-      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
-      expect(code).toBe(1);
-      expect(result).toMatchObject({
-        schemaVersion: 2,
-        ok: false,
-        error: { stage: "query grounding" },
-      });
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("inyecta candidatos del perfil y expone diagnósticos en JSON v2", async () => {
-    const temp = createTempIndexedDb();
-    try {
-      installSemanticProfile(temp.dbPath);
-      const { streams, read } = createCapturedStreams();
-      const code = await runRetrieve(
-        "explica el servicio de pedidos",
-        { strategy: "agentic", verbose: false, json: true, grounding: true },
-        streams,
-        createFakeRuntime(),
-        temp.project.id,
-      );
-      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
-      expect(code).toBe(0);
-      expect(result).toMatchObject({
-        schemaVersion: 2,
-        ok: true,
-        grounding: {
-          enabled: true,
-          usedTermIds: ["term-order-service"],
-          repairCount: 0,
-        },
-      });
-      expect(result.ok && result.grounding.candidates[0]?.canonicalTerm).toBe("OrderService");
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  it("usa el proyecto explícito para resolver rutas en context export", async () => {
-    const temp = createTempIndexedDb();
-    const output = path.join(temp.dir, "project-context.md");
-    const lanceDbPath = path.join(temp.dir, ".lacoco", "lancedb");
-    const capture: RuntimeCapture = { ollamaEndpoints: [] };
+    const capture: RuntimeCapture = {};
 
     try {
       const { streams } = createCapturedStreams();
-
-      const code = await runContextExport(
-        "OrderService",
-        {
-          verbose: false,
-          json: false,
-          output,
-        },
+      const code = await runRetrieve(
+        structuredInput(),
+        { verbose: false },
         streams,
         createFakeRuntime(capture),
         temp.project.id,
@@ -384,41 +155,62 @@ describe("lacoco retrieve CLI", () => {
 
       expect(code).toBe(0);
       expect(capture.dbPath).toBe(temp.dbPath);
-      expect(capture.lanceDbPath).toBe(lanceDbPath);
-      expect(readFileSync(output, "utf-8")).toContain("file1#OrderService");
+      expect(capture.lanceDbPath).toBe(path.join(temp.dir, ".lacoco", "lancedb"));
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  it("exporta contexto estructurado a Markdown", async () => {
+    const temp = createTempIndexedDb();
+    const output = path.join(temp.dir, "contexto.md");
+    try {
+      const { streams, read } = createCapturedStreams();
+      const options: ContextExportCliOptions = {
+        strategy: "agentic",
+        verbose: false,
+        json: false,
+        output,
+      };
+
+      const code = await runContextExport(structuredInput(), options, streams, createFakeRuntime(), temp.project.id);
+      const markdown = readFileSync(output, "utf-8");
+
+      expect(code).toBe(0);
+      expect(read().stdout).toContain(`Contexto exportado: ${output}`);
+      expect(existsSync(output)).toBe(true);
+      expect(markdown).toContain("lacoco_export_version: 2");
+      expect(markdown).toContain('question: "Modifica OrderService"');
+      expect(markdown).toContain("## Context Block");
+      expect(markdown).toContain("file1#OrderService");
     } finally {
       temp.cleanup();
     }
   });
 });
 
-async function runRetrieveWithFakes(query: string, dbPath: string): Promise<CliResult> {
+async function runRetrieveWithFakes(input: string, projectId: string): Promise<CliResult> {
   const { streams, read } = createCapturedStreams();
   const options: RetrieveCliOptions = {
     strategy: "agentic",
     verbose: false,
   };
 
-  const code = await runRetrieve(query, options, streams, createFakeRuntime());
+  const code = await runRetrieve(input, options, streams, createFakeRuntime(), projectId);
   return { code, ...read() };
 }
 
-async function runContextExportWithFakes(
-  query: string,
-  dbPath: string,
-  output: string,
-  projectId: string,
-): Promise<CliResult> {
-  const { streams, read } = createCapturedStreams();
-  const options: ContextExportCliOptions = {
-    strategy: "agentic",
-    verbose: false,
-    json: false,
-    output,
-  };
-
-  const code = await runContextExport(query, options, streams, createFakeRuntime(), projectId);
-  return { code, ...read() };
+function structuredInput(overrides: Partial<Record<string, unknown>> = {}): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    originalPrompt: "Modifica OrderService",
+    clean_query: '"OrderService"',
+    embedding_input: "Modificar OrderService",
+    intent: "refactor",
+    dimensions: ["CPG"],
+    confidence: 0.9,
+    ...overrides,
+  });
 }
 
 function createCapturedStreams(): {
@@ -449,11 +241,9 @@ function createCapturedStreams(): {
 }
 
 interface RuntimeCapture {
-  ollamaEndpoints: string[];
   dbPath?: string;
   lanceDbPath?: string;
   strategyName?: string;
-  strategyOllamaEndpoint?: string;
   strategyOptions?: { chunks?: number };
 }
 
@@ -463,62 +253,15 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
       if (capture) capture.dbPath = pathToDb;
       return new LaCoCoDatabase(pathToDb);
     },
-    createOllama: (endpoint) => {
-      capture?.ollamaEndpoints.push(endpoint);
-      return {
-        isAvailable: async () => false,
-        generate: async () => {
-          throw new Error("No debe generarse una respuesta final desde retrieve");
-        },
-        chat: async () => "",
-        abort: () => undefined,
-      };
-    },
-    createIntermediary: () => ({
-      sanitize: async (prompt) => {
-        const trimmed = prompt.trim();
-        if (trimmed.length === 0) throw new Error("El prompt no puede estar vacío");
-        const cleanQuery = trimmed.includes("OrderService") ? "OrderService" : trimmed;
-        return {
-          route: "RAG",
-          clean_query: cleanQuery,
-          embedding_input: trimmed,
-          dimensions: ["CPG"],
-          intent: "understand",
-          confidence: 0.9,
-        };
-      },
-      sanitizeDetailed: async (prompt, grounding) => {
-        const candidate = grounding?.candidates[0];
-        if (!candidate) throw new Error("Grounding sin candidatos");
-        return {
-          output: {
-            route: "RAG",
-            clean_query: candidate.canonicalTerm,
-            embedding_input: prompt.trim(),
-            dimensions: ["CPG"],
-            intent: "understand",
-            confidence: 0.9,
-          },
-          usedTermIds: [candidate.termId],
-          initialUnsupportedClauses: [],
-          repairCount: 0,
-        };
-      },
-    }),
     createStrategy: async (
       strategyName,
       db,
-      _lanceDbPath,
-      ollamaEndpoint,
-      _ollamaTimeoutMs,
-      _ollama,
+      lanceDbPath,
       strategyOptions,
     ) => {
       if (capture) {
         capture.strategyName = strategyName;
-        capture.lanceDbPath = _lanceDbPath;
-        capture.strategyOllamaEndpoint = ollamaEndpoint;
+        capture.lanceDbPath = lanceDbPath;
         capture.strategyOptions = strategyOptions;
       }
       const strategy = createBm25Strategy(db);
@@ -533,28 +276,6 @@ function createFakeRuntime(capture?: RuntimeCapture): RetrieveRuntime {
       };
     },
   };
-}
-
-function installSemanticProfile(dbPath: string): void {
-  const db = new LaCoCoDatabase(dbPath);
-  const store = new SemanticProfileStore(db.getRawDb());
-  const buildId = store.beginBuild("test-model", 1, "evidence-1");
-  store.completeBuild(buildId, [{
-    id: "term-order-service",
-    canonicalTerm: "OrderService",
-    normalizedTerm: "orderservice",
-    kind: "symbol",
-    nodeId: "file1#OrderService",
-    path: "src/order.service.ts",
-    dimensions: ["CPG"],
-    evidence: ["file1#OrderService"],
-    sourceHash: "hash-order-service",
-    aliases: [{ value: "servicio de pedidos", language: "es", confidence: 0.98 }],
-    domains: [{ name: "business-logic", score: 0.9 }],
-    description: "Servicio de dominio para pedidos.",
-    confidence: 0.95,
-  }]);
-  db.close();
 }
 
 function createBm25Strategy(db: LaCoCoDatabase): RecoveryStrategy {
@@ -632,10 +353,6 @@ function createTempIndexedDb(): {
       rmSync(dir, { recursive: true, force: true });
     },
   };
-}
-
-function countOccurrences(text: string, needle: string): number {
-  return text.split(needle).length - 1;
 }
 
 function restoreEnv(key: string, value: string | undefined): void {
