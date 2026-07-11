@@ -1,0 +1,80 @@
+diff --git a/changelog_unreleased/javascript/9850.md b/changelog_unreleased/javascript/9850.md
+new file mode 100644
+index 000000000000..313a6c192eaf
+--- /dev/null
++++ b/changelog_unreleased/javascript/9850.md
+@@ -0,0 +1,31 @@
++#### Fix extra semicolon added to ignored directives (#9850 by @fisker)
++
++<!-- prettier-ignore -->
++```js
++// Input
++// prettier-ignore
++'use strict';
++
++function foo() {
++// prettier-ignore
++"use strict";;
++}
++
++// Prettier stable
++// prettier-ignore
++'use strict';;
++
++function foo() {
++  // prettier-ignore
++  "use strict";;
++}
++
++// Prettier master
++// prettier-ignore
++'use strict';
++
++function foo() {
++  // prettier-ignore
++  "use strict";
++}
++```
+diff --git a/src/language-js/print/block.js b/src/language-js/print/block.js
+index aacffab1e35f..8ba45a4cede0 100644
+--- a/src/language-js/print/block.js
++++ b/src/language-js/print/block.js
+@@ -15,7 +15,6 @@ const { printStatementSequence } = require("./statement");
+ function printBlock(path, options, print) {
+   const n = path.getValue();
+   const parts = [];
+-  const semi = options.semi ? ";" : "";
+   const naked = path.call((bodyPath) => {
+     return printStatementSequence(bodyPath, options, print);
+   }, "body");
+@@ -56,7 +55,7 @@ function printBlock(path, options, print) {
+   // Babel 6
+   if (hasDirectives) {
+     path.each((childPath) => {
+-      parts.push(indent(concat([hardline, print(childPath), semi])));
++      parts.push(indent(concat([hardline, print(childPath)])));
+       if (isNextLineEmpty(options.originalText, childPath.getValue(), locEnd)) {
+         parts.push(hardline);
+       }
+diff --git a/src/language-js/printer-estree.js b/src/language-js/printer-estree.js
+index e02dd375eb92..db5abf1a2412 100644
+--- a/src/language-js/printer-estree.js
++++ b/src/language-js/printer-estree.js
+@@ -267,7 +267,7 @@ function printPathNoParens(path, options, print, args) {
+       if (n.directives) {
+         const directivesCount = n.directives.length;
+         path.each((childPath, index) => {
+-          parts.push(print(childPath), semi, hardline);
++          parts.push(print(childPath), hardline);
+           if (
+             (index < directivesCount - 1 || hasContents) &&
+             isNextLineEmpty(options.originalText, childPath.getValue(), locEnd)
+@@ -558,7 +558,7 @@ function printPathNoParens(path, options, print, args) {
+       }
+       return nodeStr(n, options);
+     case "Directive":
+-      return path.call(print, "value"); // Babel 6
++      return concat([path.call(print, "value"), semi]); // Babel 6
+     case "DirectiveLiteral":
+       return nodeStr(n, options);
+     case "UnaryExpression":

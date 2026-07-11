@@ -1,0 +1,40 @@
+diff --git a/docs/providers/aws/events/cloudwatch-log.md b/docs/providers/aws/events/cloudwatch-log.md
+index d5021973b7d..e6e385cc599 100644
+--- a/docs/providers/aws/events/cloudwatch-log.md
++++ b/docs/providers/aws/events/cloudwatch-log.md
+@@ -26,6 +26,8 @@ functions:
+       - cloudwatchLog: '/aws/lambda/hello'
+ ```
+ 
++**WARNING**: If you specify several CloudWatch Log events for one AWS Lambda function you'll only see the first subscription in the AWS Lambda Web console. This is a known AWS problem but it's only graphical, you should be able to view your CloudWatch Log Group subscriptions in the CloudWatch Web console.
++
+ ## Specifying a filter
+ 
+ Here's an example how you can specify a filter rule.
+diff --git a/lib/plugins/aws/package/compile/events/cloudWatchLog/index.js b/lib/plugins/aws/package/compile/events/cloudWatchLog/index.js
+index 58024492c8b..d5ca4210bcf 100644
+--- a/lib/plugins/aws/package/compile/events/cloudWatchLog/index.js
++++ b/lib/plugins/aws/package/compile/events/cloudWatchLog/index.js
+@@ -151,7 +151,7 @@ class AwsCompileCloudWatchLogEvents {
+ 
+   longestCommonSuffix(logGroupNames) {
+     const first = logGroupNames[0];
+-    const longestCommon = logGroupNames.reduce((last, current) => {
++    let longestCommon = logGroupNames.reduce((last, current) => {
+       for (let i = 0; i < last.length; i++) {
+         if (last[i] !== current[i]) {
+           return last.substring(0, i);
+@@ -159,7 +159,12 @@ class AwsCompileCloudWatchLogEvents {
+       }
+       return last;
+     }, first);
+-    return longestCommon + (longestCommon === first ? '' : '*');
++
++    if (logGroupNames.length > 1 && !longestCommon.endsWith('*')) {
++      longestCommon += '*';
++    }
++
++    return longestCommon;
+   }
+ }
+ 

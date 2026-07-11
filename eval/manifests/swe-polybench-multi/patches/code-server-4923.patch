@@ -1,0 +1,66 @@
+diff --git a/src/node/app.ts b/src/node/app.ts
+--- a/src/node/app.ts
++++ b/src/node/app.ts
+@@ -11,7 +11,7 @@ import { disposer } from "./http"
+ import { isNodeJSErrnoException } from "./util"
+ import { handleUpgrade } from "./wsRouter"
+ 
+-type ListenOptions = Pick<DefaultedArgs, "socket" | "port" | "host">
++type ListenOptions = Pick<DefaultedArgs, "socket-mode" | "socket" | "port" | "host">
+ 
+ export interface App extends Disposable {
+   /** Handles regular HTTP requests. */
+@@ -22,7 +22,7 @@ export interface App extends Disposable {
+   server: http.Server
+ }
+ 
+-const listen = (server: http.Server, { host, port, socket }: ListenOptions) => {
++const listen = (server: http.Server, { host, port, socket, "socket-mode": mode }: ListenOptions) => {
+   return new Promise<void>(async (resolve, reject) => {
+     server.on("error", reject)
+ 
+@@ -31,7 +31,16 @@ const listen = (server: http.Server, { host, port, socket }: ListenOptions) => {
+       server.off("error", reject)
+       server.on("error", (err) => util.logError(logger, "http server error", err))
+ 
+-      resolve()
++      if (socket && mode) {
++        fs.chmod(socket, mode)
++          .then(resolve)
++          .catch((err) => {
++            util.logError(logger, "socket chmod", err)
++            reject(err)
++          })
++      } else {
++        resolve()
++      }
+     }
+ 
+     if (socket) {
+diff --git a/src/node/cli.ts b/src/node/cli.ts
+--- a/src/node/cli.ts
++++ b/src/node/cli.ts
+@@ -56,6 +56,7 @@ export interface UserProvidedArgs {
+   open?: boolean
+   "bind-addr"?: string
+   socket?: string
++  "socket-mode"?: string
+   version?: boolean
+   "proxy-domain"?: string[]
+   "reuse-window"?: boolean
+@@ -175,6 +176,7 @@ const options: Options<Required<UserProvidedArgs>> = {
+   port: { type: "number", description: "" },
+ 
+   socket: { type: "string", path: true, description: "Path to a socket (bind-addr will be ignored)." },
++  "socket-mode": { type: "string", description: "File mode of the socket." },
+   version: { type: "boolean", short: "v", description: "Display version information." },
+   _: { type: "string[]" },
+ 
+@@ -513,6 +515,7 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
+     args.host = "localhost"
+     args.port = 0
+     args.socket = undefined
++    args["socket-mode"] = undefined
+     args.cert = undefined
+     args.auth = AuthType.None
+   }

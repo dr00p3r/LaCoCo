@@ -1,0 +1,96 @@
+diff --git a/src/vs/editor/contrib/inlineCompletions/test/inlineCompletionsProvider.test.ts b/src/vs/editor/contrib/inlineCompletions/test/inlineCompletionsProvider.test.ts
+--- a/src/vs/editor/contrib/inlineCompletions/test/inlineCompletionsProvider.test.ts
++++ b/src/vs/editor/contrib/inlineCompletions/test/inlineCompletionsProvider.test.ts
+@@ -483,6 +483,53 @@ suite('Inline Completions', () => {
+ 				]);
+ 			});
+ 	});
++
++	test('Do not reuse cache from previous session (#132516)', async function () {
++		const provider = new MockInlineCompletionsProvider();
++		await withAsyncTestCodeEditorAndInlineCompletionsModel('',
++			{ fakeClock: true, provider, inlineSuggest: { enabled: true } },
++			async ({ editor, editorViewModel, model, context }) => {
++				model.setActive(true);
++				context.keyboardType('hello\n');
++				context.cursorLeft();
++				provider.setReturnValue({ text: 'helloworld', range: new Range(1, 1, 1, 6) }, 1000);
++				await timeout(2000);
++
++				assert.deepStrictEqual(provider.getAndClearCallHistory(), [
++					{
++						position: '(1,6)',
++						text: 'hello\n',
++						triggerKind: 0,
++					}
++				]);
++
++				provider.setReturnValue({ text: 'helloworld', range: new Range(2, 1, 2, 6) }, 1000);
++
++				context.cursorDown();
++				context.keyboardType('hello');
++				await timeout(100);
++
++				context.cursorLeft(); // Cause the ghost text to update
++				context.cursorRight();
++
++				await timeout(2000);
++
++				assert.deepStrictEqual(provider.getAndClearCallHistory(), [
++					{
++						position: '(2,6)',
++						text: 'hello\nhello',
++						triggerKind: 0,
++					}
++				]);
++
++				assert.deepStrictEqual(context.getAndClearViewStates(), [
++					'',
++					'hello[world]\n',
++					'hello\n',
++					'hello\nhello[world]',
++				]);
++			});
++	});
+ });
+ 
+ async function withAsyncTestCodeEditorAndInlineCompletionsModel<T>(
+diff --git a/src/vs/editor/contrib/inlineCompletions/test/utils.ts b/src/vs/editor/contrib/inlineCompletions/test/utils.ts
+--- a/src/vs/editor/contrib/inlineCompletions/test/utils.ts
++++ b/src/vs/editor/contrib/inlineCompletions/test/utils.ts
+@@ -6,7 +6,7 @@
+ import { timeout } from 'vs/base/common/async';
+ import { CancellationToken } from 'vs/base/common/cancellation';
+ import { Disposable } from 'vs/base/common/lifecycle';
+-import { CoreEditingCommands } from 'vs/editor/browser/controller/coreCommands';
++import { CoreEditingCommands, CoreNavigationCommands } from 'vs/editor/browser/controller/coreCommands';
+ import { Position } from 'vs/editor/common/core/position';
+ import { ITextModel } from 'vs/editor/common/model';
+ import { InlineCompletionsProvider, InlineCompletion, InlineCompletionContext } from 'vs/editor/common/modes';
+@@ -112,6 +112,26 @@ export class GhostTextContext extends Disposable {
+ 		this.editor.trigger('keyboard', 'type', { text });
+ 	}
+ 
++	public cursorUp(): void {
++		CoreNavigationCommands.CursorUp.runEditorCommand(null, this.editor, null);
++	}
++
++	public cursorRight(): void {
++		CoreNavigationCommands.CursorRight.runEditorCommand(null, this.editor, null);
++	}
++
++	public cursorLeft(): void {
++		CoreNavigationCommands.CursorLeft.runEditorCommand(null, this.editor, null);
++	}
++
++	public cursorDown(): void {
++		CoreNavigationCommands.CursorDown.runEditorCommand(null, this.editor, null);
++	}
++
++	public cursorLineEnd(): void {
++		CoreNavigationCommands.CursorLineEnd.runEditorCommand(null, this.editor, null);
++	}
++
+ 	public leftDelete(): void {
+ 		CoreEditingCommands.DeleteLeft.runEditorCommand(null, this.editor, null);
+ 	}

@@ -1,0 +1,34 @@
+diff --git a/lib/plugins/aws/info/getResourceCount.js b/lib/plugins/aws/info/getResourceCount.js
+index abe00ac4c15..6dda2c8a7cf 100644
+--- a/lib/plugins/aws/info/getResourceCount.js
++++ b/lib/plugins/aws/info/getResourceCount.js
+@@ -4,16 +4,19 @@ const BbPromise = require('bluebird');
+ const _ = require('lodash');
+ 
+ module.exports = {
+-  getResourceCount() {
+-    const stackName = this.provider.naming.getStackName();
+-
+-    return this.provider
+-      .request('CloudFormation', 'listStackResources', { StackName: stackName })
+-      .then(result => {
+-        if (!_.isEmpty(result)) {
+-          this.gatheredData.info.resourceCount = result.StackResourceSummaries.length;
++  getResourceCount(nextToken, resourceCount = 0) {
++    const params = {
++      StackName: this.provider.naming.getStackName(),
++      NextToken: nextToken,
++    };
++    return this.provider.request('CloudFormation', 'listStackResources', params).then(result => {
++      if (!_.isEmpty(result)) {
++        this.gatheredData.info.resourceCount = resourceCount + result.StackResourceSummaries.length;
++        if (result.NextToken) {
++          return this.getResourceCount(result.NextToken, this.gatheredData.info.resourceCount);
+         }
+-        return BbPromise.resolve();
+-      });
++      }
++      return BbPromise.resolve();
++    });
+   },
+ };

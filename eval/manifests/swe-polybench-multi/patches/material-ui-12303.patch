@@ -1,0 +1,291 @@
+diff --git a/docs/src/pages/demos/selection-controls/CheckboxesGroup.js b/docs/src/pages/demos/selection-controls/CheckboxesGroup.js
+--- a/docs/src/pages/demos/selection-controls/CheckboxesGroup.js
++++ b/docs/src/pages/demos/selection-controls/CheckboxesGroup.js
+@@ -1,4 +1,6 @@
+ import React from 'react';
++import PropTypes from 'prop-types';
++import { withStyles } from '@material-ui/core/styles';
+ import FormLabel from '@material-ui/core/FormLabel';
+ import FormControl from '@material-ui/core/FormControl';
+ import FormGroup from '@material-ui/core/FormGroup';
+@@ -6,11 +8,20 @@ import FormControlLabel from '@material-ui/core/FormControlLabel';
+ import FormHelperText from '@material-ui/core/FormHelperText';
+ import Checkbox from '@material-ui/core/Checkbox';
+ 
++const styles = theme => ({
++  root: {
++    display: 'flex',
++  },
++  formControl: {
++    margin: theme.spacing.unit * 3,
++  },
++});
++
+ class CheckboxesGroup extends React.Component {
+   state = {
+     gilad: true,
+     jason: false,
+-    antoine: true,
++    antoine: false,
+   };
+ 
+   handleChange = name => event => {
+@@ -18,45 +29,75 @@ class CheckboxesGroup extends React.Component {
+   };
+ 
+   render() {
++    const { classes } = this.props;
++    const { gilad, jason, antoine } = this.state;
++    const error = Object.values(this.state).filter(v => v).length !== 2;
++
+     return (
+-      <FormControl component="fieldset">
+-        <FormLabel component="legend">Assign responsibility</FormLabel>
+-        <FormGroup>
+-          <FormControlLabel
+-            control={
+-              <Checkbox
+-                checked={this.state.gilad}
+-                onChange={this.handleChange('gilad')}
+-                value="gilad"
+-              />
+-            }
+-            label="Gilad Gray"
+-          />
+-          <FormControlLabel
+-            control={
+-              <Checkbox
+-                checked={this.state.jason}
+-                onChange={this.handleChange('jason')}
+-                value="jason"
+-              />
+-            }
+-            label="Jason Killian"
+-          />
+-          <FormControlLabel
+-            control={
+-              <Checkbox
+-                checked={this.state.antoine}
+-                onChange={this.handleChange('antoine')}
+-                value="antoine"
+-              />
+-            }
+-            label="Antoine Llorca"
+-          />
+-        </FormGroup>
+-        <FormHelperText>Be careful</FormHelperText>
+-      </FormControl>
++      <div className={classes.root}>
++        <FormControl component="fieldset" className={classes.formControl}>
++          <FormLabel component="legend">Assign responsibility</FormLabel>
++          <FormGroup>
++            <FormControlLabel
++              control={
++                <Checkbox checked={gilad} onChange={this.handleChange('gilad')} value="gilad" />
++              }
++              label="Gilad Gray"
++            />
++            <FormControlLabel
++              control={
++                <Checkbox checked={jason} onChange={this.handleChange('jason')} value="jason" />
++              }
++              label="Jason Killian"
++            />
++            <FormControlLabel
++              control={
++                <Checkbox
++                  checked={antoine}
++                  onChange={this.handleChange('antoine')}
++                  value="antoine"
++                />
++              }
++              label="Antoine Llorca"
++            />
++          </FormGroup>
++          <FormHelperText>Be careful</FormHelperText>
++        </FormControl>
++        <FormControl required error={error} component="fieldset" className={classes.formControl}>
++          <FormLabel component="legend">Pick two</FormLabel>
++          <FormGroup>
++            <FormControlLabel
++              control={
++                <Checkbox checked={gilad} onChange={this.handleChange('gilad')} value="gilad" />
++              }
++              label="Gilad Gray"
++            />
++            <FormControlLabel
++              control={
++                <Checkbox checked={jason} onChange={this.handleChange('jason')} value="jason" />
++              }
++              label="Jason Killian"
++            />
++            <FormControlLabel
++              control={
++                <Checkbox
++                  checked={antoine}
++                  onChange={this.handleChange('antoine')}
++                  value="antoine"
++                />
++              }
++              label="Antoine Llorca"
++            />
++          </FormGroup>
++          <FormHelperText>You can display an error</FormHelperText>
++        </FormControl>
++      </div>
+     );
+   }
+ }
+ 
+-export default CheckboxesGroup;
++CheckboxesGroup.propTypes = {
++  classes: PropTypes.object.isRequired,
++};
++
++export default withStyles(styles)(CheckboxesGroup);
+diff --git a/docs/src/pages/demos/selection-controls/RadioButtonsGroup.js b/docs/src/pages/demos/selection-controls/RadioButtonsGroup.js
+--- a/docs/src/pages/demos/selection-controls/RadioButtonsGroup.js
++++ b/docs/src/pages/demos/selection-controls/RadioButtonsGroup.js
+@@ -34,7 +34,7 @@ class RadioButtonsGroup extends React.Component {
+ 
+     return (
+       <div className={classes.root}>
+-        <FormControl component="fieldset" required className={classes.formControl}>
++        <FormControl component="fieldset" className={classes.formControl}>
+           <FormLabel component="legend">Gender</FormLabel>
+           <RadioGroup
+             aria-label="Gender"
+@@ -54,7 +54,7 @@ class RadioButtonsGroup extends React.Component {
+             />
+           </RadioGroup>
+         </FormControl>
+-        <FormControl component="fieldset" required error className={classes.formControl}>
++        <FormControl component="fieldset" className={classes.formControl}>
+           <FormLabel component="legend">Gender</FormLabel>
+           <RadioGroup
+             aria-label="gender"
+@@ -63,17 +63,33 @@ class RadioButtonsGroup extends React.Component {
+             value={this.state.value}
+             onChange={this.handleChange}
+           >
+-            <FormControlLabel value="female" control={<Radio color="primary" />} label="Female" />
+-            <FormControlLabel value="male" control={<Radio color="primary" />} label="Male" />
+-            <FormControlLabel value="other" control={<Radio color="primary" />} label="Other" />
++            <FormControlLabel
++              value="female"
++              control={<Radio color="primary" />}
++              label="Female"
++              labelPlacement="start"
++            />
++            <FormControlLabel
++              value="male"
++              control={<Radio color="primary" />}
++              label="Male"
++              labelPlacement="start"
++            />
++            <FormControlLabel
++              value="other"
++              control={<Radio color="primary" />}
++              label="Other"
++              labelPlacement="start"
++            />
+             <FormControlLabel
+               value="disabled"
+               disabled
+               control={<Radio />}
+               label="(Disabled option)"
++              labelPlacement="start"
+             />
+           </RadioGroup>
+-          <FormHelperText>You can display an error</FormHelperText>
++          <FormHelperText>labelPlacement start</FormHelperText>
+         </FormControl>
+       </div>
+     );
+diff --git a/packages/material-ui/src/FormControlLabel/FormControlLabel.d.ts b/packages/material-ui/src/FormControlLabel/FormControlLabel.d.ts
+--- a/packages/material-ui/src/FormControlLabel/FormControlLabel.d.ts
++++ b/packages/material-ui/src/FormControlLabel/FormControlLabel.d.ts
+@@ -14,10 +14,11 @@ export interface FormControlLabelProps
+   label: React.ReactNode;
+   name?: string;
+   onChange?: (event: React.ChangeEvent<{}>, checked: boolean) => void;
++  labelPlacement?: 'end' | 'start';
+   value?: string;
+ }
+ 
+-export type FormControlLabelClassKey = 'root' | 'disabled' | 'label';
++export type FormControlLabelClassKey = 'root' | 'start' | 'disabled' | 'label';
+ 
+ declare const FormControlLabel: React.ComponentType<FormControlLabelProps>;
+ 
+diff --git a/packages/material-ui/src/FormControlLabel/FormControlLabel.js b/packages/material-ui/src/FormControlLabel/FormControlLabel.js
+--- a/packages/material-ui/src/FormControlLabel/FormControlLabel.js
++++ b/packages/material-ui/src/FormControlLabel/FormControlLabel.js
+@@ -22,6 +22,10 @@ export const styles = theme => ({
+       cursor: 'default',
+     },
+   },
++  /* Styles applied to the root element if `position="start"`. */
++  start: {
++    flexDirection: 'row-reverse',
++  },
+   /* Styles applied to the root element if `disabled={true}`. */
+   disabled: {},
+   /* Styles applied to the label's Typography component. */
+@@ -45,6 +49,7 @@ function FormControlLabel(props, context) {
+     disabled: disabledProp,
+     inputRef,
+     label,
++    labelPlacement,
+     name,
+     onChange,
+     value,
+@@ -74,6 +79,7 @@ function FormControlLabel(props, context) {
+       className={classNames(
+         classes.root,
+         {
++          [classes.start]: labelPlacement === 'start',
+           [classes.disabled]: disabled,
+         },
+         classNameProp,
+@@ -121,6 +127,10 @@ FormControlLabel.propTypes = {
+    * The text to be used in an enclosing label element.
+    */
+   label: PropTypes.node,
++  /**
++   * The position of the label.
++   */
++  labelPlacement: PropTypes.oneOf(['end', 'start']),
+   /*
+    * @ignore
+    */
+@@ -139,6 +149,10 @@ FormControlLabel.propTypes = {
+   value: PropTypes.string,
+ };
+ 
++FormControlLabel.defaultProps = {
++  labelPlacement: 'end',
++};
++
+ FormControlLabel.contextTypes = {
+   muiFormControl: PropTypes.object,
+ };
+diff --git a/pages/api/form-control-label.md b/pages/api/form-control-label.md
+--- a/pages/api/form-control-label.md
++++ b/pages/api/form-control-label.md
+@@ -22,6 +22,7 @@ Use this component if you want to display an extra label.
+ | <span class="prop-name">disabled</span> | <span class="prop-type">bool |   | If `true`, the control will be disabled. |
+ | <span class="prop-name">inputRef</span> | <span class="prop-type">union:&nbsp;func&nbsp;&#124;<br>&nbsp;object<br> |   | Use that property to pass a ref callback to the native input component. |
+ | <span class="prop-name">label</span> | <span class="prop-type">node |   | The text to be used in an enclosing label element. |
++| <span class="prop-name">labelPlacement</span> | <span class="prop-type">enum:&nbsp;'end'&nbsp;&#124;<br>&nbsp;'start'<br> | <span class="prop-default">'end'</span> | The position of the label. |
+ | <span class="prop-name">name</span> | <span class="prop-type">string |   |  |
+ | <span class="prop-name">onChange</span> | <span class="prop-type">func |   | Callback fired when the state is changed.<br><br>**Signature:**<br>`function(event: object, checked: boolean) => void`<br>*event:* The event source of the callback. You can pull out the new value by accessing `event.target.checked`.<br>*checked:* The `checked` value of the switch |
+ | <span class="prop-name">value</span> | <span class="prop-type">string |   | The value of the component. |
+@@ -37,6 +38,7 @@ This property accepts the following keys:
+ | Name | Description |
+ |:-----|:------------|
+ | <span class="prop-name">root</span> | Styles applied to the root element.
++| <span class="prop-name">start</span> | Styles applied to the root element if `position="start"`.
+ | <span class="prop-name">disabled</span> | Styles applied to the root element if `disabled={true}`.
+ | <span class="prop-name">label</span> | Styles applied to the label's Typography component.
+ 

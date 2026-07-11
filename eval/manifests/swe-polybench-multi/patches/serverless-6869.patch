@@ -1,0 +1,93 @@
+diff --git a/docs/providers/aws/guide/variables.md b/docs/providers/aws/guide/variables.md
+index 6076cbeda8d..08078cf12ba 100644
+--- a/docs/providers/aws/guide/variables.md
++++ b/docs/providers/aws/guide/variables.md
+@@ -46,6 +46,9 @@ You can define your own variable syntax (regex) if it conflicts with CloudFormat
+ - [CloudFormation stack outputs](#reference-cloudformation-outputs)
+ - [Properties exported from Javascript files (sync or async)](#reference-variables-in-javascript-files)
+ - [Pseudo Parameters Reference](#pseudo-parameters-reference)
++- [Read String Variable Values as Boolean Values](#read-string-variable-values-as-boolean-values)
++
++## Casting string variables to boolean values
+ 
+ ## Recursively reference properties
+ 
+@@ -657,3 +660,27 @@ Resources:
+         - Ref: 'AWS::AccountId'
+         - 'log-group:/aws/lambda/*:*:*'
+ ```
++
++## Read String Variable Values as Boolean Values
++
++In some cases, a parameter expect a `true` or `false` boolean value. If you are using a variable to define the value, it may return as a string (e.g. when using SSM variables) and thus return a `"true"` or `"false"` string value.
++
++To ensure a boolean value is returned, read the string variable value as a boolean value. For example:
++
++```yml
++provider:
++  tracing:
++    apiGateway: ${strToBool(${ssm:API_GW_DEBUG_ENABLED})}
++```
++
++These are examples that explain how the conversion works:
++
++```plaintext
++${strToBool(true)} => true
++${strToBool(false)} => false
++${strToBool(0)} => false
++${strToBool(1)} => true
++${strToBool(2)} => Error
++${strToBool(null)} => Error
++${strToBool(anything)} => Error
++```
+diff --git a/lib/classes/Variables.js b/lib/classes/Variables.js
+index 6f248b408fa..469aa79bdf9 100644
+--- a/lib/classes/Variables.js
++++ b/lib/classes/Variables.js
+@@ -55,6 +55,7 @@ class Variables {
+     this.cfRefSyntax = RegExp(/^(?:\${)?cf(\.[a-zA-Z0-9-]+)?:/g);
+     this.s3RefSyntax = RegExp(/^(?:\${)?s3:(.+?)\/(.+)$/);
+     this.ssmRefSyntax = RegExp(/^(?:\${)?ssm:([a-zA-Z0-9_.\-/]+)[~]?(true|false|split)?/);
++    this.strToBoolRefSyntax = RegExp(/^(?:\${)?strToBool\(([a-zA-Z0-9_.\-/]+)\)/);
+ 
+     this.variableResolvers = [
+       { regex: this.slsRefSyntax, resolver: this.getValueFromSls.bind(this) },
+@@ -81,6 +82,10 @@ class Variables {
+         isDisabledAtPrepopulation: true,
+         serviceName: 'SSM',
+       },
++      {
++        regex: this.strToBoolRefSyntax,
++        resolver: this.getValueStrToBool.bind(this),
++      },
+       { regex: this.deepRefSyntax, resolver: this.getValueFromDeep.bind(this) },
+     ];
+   }
+@@ -822,6 +827,27 @@ class Variables {
+       });
+   }
+ 
++  getValueStrToBool(variableString) {
++    return BbPromise.try(() => {
++      if (_.isString(variableString)) {
++        const groups = variableString.match(this.strToBoolRefSyntax);
++        const param = groups[1].trim();
++        if (/^(true|false|0|1)$/.test(param)) {
++          if (param === 'false' || param === '0') {
++            return false;
++          }
++          // truthy or non-empty strings
++          return true;
++        }
++        throw new this.serverless.classes.Error(
++          'Unexpected strToBool input; expected either "true", "false", "0", or "1".'
++        );
++      }
++      // Cast non-string inputs
++      return Boolean(variableString);
++    });
++  }
++
+   getDeepIndex(variableString) {
+     const deepIndexReplace = RegExp(/^deep:|(\.[^}]+)*$/g);
+     return variableString.replace(deepIndexReplace, '');
