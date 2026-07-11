@@ -1,12 +1,15 @@
 import { execSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   applyBrokenPatch,
   parseTestRunnerOutput,
+  prepareGitRepository,
+  prepareMirror,
   resetRepoClean,
+  slugForUrl,
   verifyBrokenState,
 } from "./git.js";
 
@@ -151,6 +154,106 @@ describe("parseTestRunnerOutput", () => {
   it("flags unknown runners", () => {
     const parsed = parseTestRunnerOutput("no markers here", "");
     expect(parsed.unknownRunner).toBe(true);
+  });
+});
+
+describe("slugForUrl", () => {
+  it("derives a flat slug from an https url and strips .git", () => {
+    expect(slugForUrl("https://github.com/sveltejs/svelte.git")).toBe(
+      "github.com__sveltejs__svelte",
+    );
+  });
+
+  it("handles ssh urls", () => {
+    expect(slugForUrl("git@github.com:mui/material-ui.git")).toBe(
+      "github.com__mui__material-ui",
+    );
+  });
+
+  it("is stable for the same url regardless of trailing whitespace", () => {
+    expect(slugForUrl("  https://github.com/coder/code-server  ")).toBe(
+      "github.com__coder__code-server",
+    );
+  });
+});
+
+describe("prepareMirror + prepareGitRepository --reference", () => {
+  function makeBareLogs(): string {
+    const dir = mkdtempSync(join(tmpdir(), "lacoco-mirror-"));
+    temporaryDirectories.push(dir);
+    return dir;
+  }
+
+  it("shares objects via alternates and keeps .git a directory", async () => {
+    const source = makeRepo();
+    const sourceHead = execSync("git rev-parse HEAD", { cwd: source }).toString().trim();
+    const workRoot = makeBareLogs();
+    const mirrorPath = join(workRoot, "mirror.git");
+    const logsDirectory = join(workRoot, "logs");
+    mkdirSync(logsDirectory, { recursive: true });
+
+    await prepareMirror({
+      url: source,
+      mirrorPath,
+      logsDirectory,
+      timeoutMs: 30_000,
+      fetchTags: false,
+    });
+
+    // Mirror is a bare repository.
+    expect(existsSync(join(mirrorPath, "HEAD"))).toBe(true);
+    expect(
+      execSync("git rev-parse --is-bare-repository", { cwd: mirrorPath }).toString().trim(),
+    ).toBe("true");
+
+    // Idempotent: a second call updates instead of re-cloning (must not throw).
+    await prepareMirror({
+      url: source,
+      mirrorPath,
+      logsDirectory,
+      timeoutMs: 30_000,
+      fetchTags: false,
+    });
+
+    const repoPath = join(workRoot, "checkout");
+    const commit = await prepareGitRepository({
+      url: source,
+      ref: sourceHead,
+      repoPath,
+      logsDirectory,
+      timeoutMs: 30_000,
+      fetchTags: false,
+      mirrorPath,
+    });
+
+    expect(commit).toBe(sourceHead);
+    // `.git` must be a DIRECTORY (not a worktree file) so generation log paths work.
+    expect(statSync(join(repoPath, ".git")).isDirectory()).toBe(true);
+    // Objects are shared via the alternates pointer into the mirror.
+    const alternates = join(repoPath, ".git", "objects", "info", "alternates");
+    expect(existsSync(alternates)).toBe(true);
+    expect(readFileSync(alternates, "utf8")).toContain(mirrorPath);
+  });
+
+  it("clones without --reference when no mirror is given", async () => {
+    const source = makeRepo();
+    const sourceHead = execSync("git rev-parse HEAD", { cwd: source }).toString().trim();
+    const workRoot = makeBareLogs();
+    const logsDirectory = join(workRoot, "logs");
+    mkdirSync(logsDirectory, { recursive: true });
+    const repoPath = join(workRoot, "checkout");
+
+    const commit = await prepareGitRepository({
+      url: source,
+      ref: sourceHead,
+      repoPath,
+      logsDirectory,
+      timeoutMs: 30_000,
+      fetchTags: false,
+    });
+
+    expect(commit).toBe(sourceHead);
+    expect(existsSync(join(repoPath, ".git", "objects", "info", "alternates"))).toBe(false);
   });
 });
 

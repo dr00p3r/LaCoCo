@@ -4,7 +4,7 @@ import { parseEvalCliOptions, isEntrypoint } from "./lib/cli.js";
 import { asBoolean, asNumber, asRecord, asStringRecord, optionalString } from "./lib/config.js";
 import { CommandExecutionError, executeCommand } from "./lib/exec.js";
 import { applyBrokenPatch, resetRepoClean, verifyBrokenState } from "./lib/git.js";
-import { prepareGitRepository } from "./lib/git.js";
+import { prepareGitRepository, prepareMirror, slugForUrl } from "./lib/git.js";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import {
@@ -127,11 +127,13 @@ async function prepareRepository(
   dryRun: boolean,
   regressionTasks: TaskDefinition[],
   manifestsDirectory: string,
+  mirrorPath: string | undefined,
 ): Promise<LockedRepository | undefined> {
   console.log(`\nRepository ${repository.id}`);
   console.log(`  path: ${repoPath}`);
   console.log(`  ref: ${repository.ref}`);
-  const cloneCommand = `git clone '${repository.url}' '${repoPath}'`;
+  const referenceFlag = mirrorPath !== undefined ? `--reference '${mirrorPath}' ` : "";
+  const cloneCommand = `git clone ${referenceFlag}'${repository.url}' '${repoPath}'`;
   const fetchCommand = `git fetch${settings.fetchTags ? " --tags" : ""} --force origin`;
   describeCommand(
     repository.id,
@@ -186,6 +188,7 @@ async function prepareRepository(
     timeoutMs: settings.installTimeoutMs,
     fetchTags: settings.fetchTags,
     ...(settings.cleanCommand === undefined ? {} : { cleanCommand: settings.cleanCommand }),
+    ...(mirrorPath === undefined ? {} : { mirrorPath }),
   });
   const steps: LockedRepository["steps"] = {
     checkout: "passed",
@@ -356,9 +359,18 @@ export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> 
     return;
   }
 
+  // Object store compartido: un bare mirror por URL bajo `.mirrors/`, de modo que
+  // ~46 instancias de svelte (misma URL) descarguen los packs una sola vez en vez
+  // de una por instancia. `.mirrors/` no es un `repository.id`, y los loops iteran
+  // el manifest (no el FS), asi que nunca se trata como checkout.
+  const mirrorsRoot = join(layout.reposDirectory, ".mirrors");
+  const mirrorLogsRoot = join(layout.prepareLogsDirectory, "_mirrors");
+  const updatedMirrors = new Set<string>();
+
   if (!options.dryRun) {
     mkdirSync(layout.reposDirectory, { recursive: true });
     mkdirSync(layout.prepareLogsDirectory, { recursive: true });
+    mkdirSync(mirrorsRoot, { recursive: true });
   }
 
   const lock = existsSync(layout.lockFile)
@@ -380,7 +392,26 @@ export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> 
     const repoPath = join(layout.reposDirectory, repository.id);
     const logsDirectory = join(layout.prepareLogsDirectory, repository.id);
     const regressionTasks = tasksByRepo.get(repository.id) ?? [];
+    const slug = slugForUrl(repository.url);
+    const mirrorPath = join(mirrorsRoot, `${slug}.git`);
     try {
+      // El mirror solo sirve para clones nuevos (comparte objetos via --reference).
+      // Si el checkout ya existe (rama fetch), no hace falta el mirror → se evita
+      // crear un mirror blobless innecesario para repos ya presentes en disco.
+      const needsMirror = !existsSync(repoPath);
+      // Fetch/clone del mirror una sola vez por URL en este run.
+      if (needsMirror && !options.dryRun && !updatedMirrors.has(mirrorPath)) {
+        const mirrorLogs = join(mirrorLogsRoot, slug);
+        mkdirSync(mirrorLogs, { recursive: true });
+        await prepareMirror({
+          url: repository.url,
+          mirrorPath,
+          logsDirectory: mirrorLogs,
+          timeoutMs: settings.installTimeoutMs,
+          fetchTags: settings.fetchTags,
+        });
+        updatedMirrors.add(mirrorPath);
+      }
       const locked = await prepareRepository(
         repository,
         settings,
@@ -389,6 +420,7 @@ export async function prepareRepos(argv = process.argv.slice(2)): Promise<void> 
         options.dryRun,
         regressionTasks,
         manifestsDirectory,
+        needsMirror ? mirrorPath : undefined,
       );
       if (locked !== undefined) {
         upsertLockedRepository(lock, locked);

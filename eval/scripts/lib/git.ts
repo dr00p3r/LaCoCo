@@ -10,6 +10,69 @@ export interface GitRepositoryOptions {
   timeoutMs: number;
   fetchTags: boolean;
   cleanCommand?: string;
+  /**
+   * Object store compartido (bare mirror) para clonar con `--reference`. Si se
+   * provee, el clone nuevo comparte los packs del mirror via `alternates` en vez
+   * de descargar los objetos otra vez. `.git` sigue siendo un directorio (no un
+   * archivo, como en worktrees), asi que la ruta de generacion no se ve afectada.
+   */
+  mirrorPath?: string;
+}
+
+export interface MirrorOptions {
+  url: string;
+  mirrorPath: string;
+  logsDirectory: string;
+  timeoutMs: number;
+  fetchTags: boolean;
+}
+
+/**
+ * Deriva un nombre de directorio estable a partir de una URL de git. Quita el
+ * esquema y el sufijo `.git`, y reemplaza los separadores por `__` para obtener
+ * un slug plano usable como nombre de carpeta del mirror.
+ *   https://github.com/sveltejs/svelte.git -> github.com__sveltejs__svelte
+ */
+export function slugForUrl(url: string): string {
+  return url
+    .trim()
+    .replace(/^[a-z]+:\/\//i, "")
+    .replace(/^git@/i, "")
+    .replace(/\.git$/i, "")
+    .replace(/[/:]+/g, "__")
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+}
+
+/**
+ * Crea (o actualiza) un bare mirror de `url` en `mirrorPath`. El mirror es un
+ * unico object store compartido por todas las instancias que provienen de la
+ * misma URL, de modo que la red/los packs se pagan una sola vez por URL en vez
+ * de una vez por instancia. Idempotente: si el mirror ya existe, hace
+ * `git remote update --prune` en vez de re-clonar.
+ */
+export async function prepareMirror(options: MirrorOptions): Promise<void> {
+  const mirrorExists = existsSync(join(options.mirrorPath, "HEAD"));
+  if (!mirrorExists) {
+    // Mirror blobless: comparte commits/trees de todas las instancias de esta URL
+    // sin descargar los blobs históricos (una sola conexión, tamaño reducido). Los
+    // blobs de cada árbol se traen on-demand al hacer checkout del clone parcial.
+    await gitStep(
+      options,
+      "mirror-clone",
+      `git clone --mirror --filter=blob:none ${shellQuote(options.url)} ${shellQuote(options.mirrorPath)}`,
+      join(options.mirrorPath, ".."),
+    );
+    return;
+  }
+  // Un mirror (`--mirror`) configura fetch = +refs/*:refs/*, asi que `git remote
+  // update --prune` ya trae TODOS los refs (ramas Y tags). NO se pasa `--tags`:
+  // `git remote update` no acepta ese flag y saldria con codigo 129 (usage error).
+  await gitStep(
+    options,
+    "mirror-update",
+    "git remote update --prune",
+    options.mirrorPath,
+  );
 }
 
 export interface ResetRepoOptions {
@@ -19,7 +82,7 @@ export interface ResetRepoOptions {
 }
 
 async function gitStep(
-  options: GitRepositoryOptions,
+  options: Pick<GitRepositoryOptions, "timeoutMs" | "logsDirectory">,
   name: string,
   command: string,
   cwd: string,
@@ -33,11 +96,33 @@ async function gitStep(
 }
 
 export async function prepareGitRepository(options: GitRepositoryOptions): Promise<string> {
+  // Fast-path: si el checkout ya existe y HEAD coincide EXACTAMENTE con el ref
+  // objetivo (base_commit es un SHA-40), evita el `git fetch` completo + checkout +
+  // clean. Registrar en el lock un repo ya preparado (p. ej. de un run previo) no
+  // debe re-descargar la historia — decisivo para monorepos grandes (mui) donde el
+  // fetch tarda minutos. Solo aplica cuando ref es un SHA completo (no una rama).
+  if (
+    /^[0-9a-f]{40}$/i.test(options.ref) &&
+    existsSync(join(options.repoPath, ".git"))
+  ) {
+    const head = await gitStep(options, "resolve-commit", "git rev-parse HEAD", options.repoPath);
+    if (head.stdout.trim().toLowerCase() === options.ref.toLowerCase()) {
+      return head.stdout.trim();
+    }
+  }
   if (!existsSync(options.repoPath)) {
+    // Con mirror: clone parcial blobless con `--reference`. El árbol del commit se
+    // materializa en checkout (trae solo esos blobs on-demand desde origin); NO se
+    // descarga la historia binaria completa (clave para repos asset-heavy como
+    // three.js/vscode, donde un clone completo tarda >15min o se desconecta). Sin
+    // mirror: clone completo clásico (ruta legacy intacta, comportamiento previo).
+    const cloneFlags = options.mirrorPath !== undefined
+      ? `--reference ${shellQuote(options.mirrorPath)} --filter=blob:none --no-checkout `
+      : "";
     await gitStep(
       options,
       "clone",
-      `git clone ${shellQuote(options.url)} ${shellQuote(options.repoPath)}`,
+      `git clone ${cloneFlags}${shellQuote(options.url)} ${shellQuote(options.repoPath)}`,
       join(options.repoPath, ".."),
     );
   } else if (!existsSync(join(options.repoPath, ".git"))) {
