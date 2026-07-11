@@ -402,6 +402,36 @@ splits:
     agents:
       - opencode
 
+  gen_p1:
+    description: "gen13 particion 1/3 (paralelo por repo)."
+    strategies: [no_context, hybrid, connector, consensus]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: &p1 [svelte-510, svelte-728, prettier-14400, material-ui-11451]
+    task_ids: *p1
+    agents: [opencode]
+
+  gen_p2:
+    description: "gen13 particion 2/3 (paralelo por repo)."
+    strategies: [no_context, hybrid, connector, consensus]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: &p2 [svelte-906, svelte-907, prettier-5025, prettier-4667, material-ui-11858]
+    task_ids: *p2
+    agents: [opencode]
+
+  gen_p3:
+    description: "gen13 particion 3/3 (paralelo por repo)."
+    strategies: [no_context, hybrid, connector, consensus]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: &p3 [svelte-1116, prettier-12930, prettier-6604, material-ui-12406]
+    task_ids: *p3
+    agents: [opencode]
+
 resource_limits:
   max_parallel_repos: 1
   max_parallel_tasks: 1
