@@ -166,7 +166,7 @@ repositories:
     url: https://github.com/prettier/prettier.git
     ref: 3147244f55e6e0aafd2cc6fa5875f7c8cfa8e4e3
     package_manager: npm
-    install_command: npm install
+    install_command: npm install --legacy-peer-deps --registry=https://registry.npmjs.org
     test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
       scripts.lint="echo noop" && yarn test
       tests/format/typescript/enum/computed-members.ts
@@ -187,7 +187,7 @@ repositories:
     url: https://github.com/prettier/prettier.git
     ref: affa24ce764bd14ac087abeef0603012f5c635d6
     package_manager: npm
-    install_command: npm install
+    install_command: npm install --legacy-peer-deps --registry=https://registry.npmjs.org
     test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
       scripts.lint="echo noop" && yarn test
       tests/typescript_intersection/__snapshots__/jsfmt.spec.js.snap
@@ -309,7 +309,7 @@ repositories:
     url: https://github.com/mui/material-ui.git
     ref: cbc6828c93df70b897366f0c6d0b17da681d1b89
     package_manager: npm
-    install_command: npm install
+    install_command: npm install --legacy-peer-deps --registry=https://registry.npmjs.org
     test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
       NODE_ENV=test mocha packages/material-ui/src/Input/Textarea.test.js
       --reporter /testbed/custom-reporter.js --exit
@@ -338,7 +338,7 @@ repositories:
     url: https://github.com/mui/material-ui.git
     ref: ce642582728c63d1837e0a3e3fd455be4b260950
     package_manager: npm
-    install_command: npm install
+    install_command: npm install --legacy-peer-deps --registry=https://registry.npmjs.org
     test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
       NODE_ENV=test mocha packages/material-ui/src/Tooltip/Tooltip.test.js
       --reporter /testbed/custom-reporter.js --exit
@@ -367,7 +367,7 @@ repositories:
     url: https://github.com/mui/material-ui.git
     ref: 550e949bab55d3fe3f3aba04f76baa7e45d324cc
     package_manager: npm
-    install_command: npm install
+    install_command: npm install --legacy-peer-deps --registry=https://registry.npmjs.org
     test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
       NODE_ENV=test mocha packages/material-ui/src/Modal/Modal.test.js
       --reporter /testbed/custom-reporter.js --exit
