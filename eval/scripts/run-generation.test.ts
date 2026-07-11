@@ -100,6 +100,29 @@ describe("generation retrieval context preflight", () => {
       .toContain("# Contexto recuperado por LaCoCo\n\nretrieved evidence");
   });
 
+  it("inyecta la instrucción grounded solo con el flag ON y contexto (nunca en no_context)", () => {
+    const directory = temporaryDirectory();
+    const contextPath = join(directory, "context.json");
+    writeFileSync(contextPath, JSON.stringify({ ok: true, enrichedPrompt: "retrieved evidence" }));
+
+    const previous = process.env.LACOCO_EVAL_GROUNDED_PROMPT;
+    try {
+      process.env.LACOCO_EVAL_GROUNDED_PROMPT = "1";
+      expect(buildPrompt(task(), strategy("hybrid"), record(contextPath)))
+        .toContain("# Cómo usar el contexto (OBLIGATORIO)");
+      // no_context no tiene contexto → nunca lleva la instrucción, ni con el flag.
+      expect(buildPrompt(task(), strategy("no_context"), null))
+        .not.toContain("# Cómo usar el contexto");
+
+      delete process.env.LACOCO_EVAL_GROUNDED_PROMPT;
+      expect(buildPrompt(task(), strategy("hybrid"), record(contextPath)))
+        .not.toContain("# Cómo usar el contexto");
+    } finally {
+      if (previous === undefined) delete process.env.LACOCO_EVAL_GROUNDED_PROMPT;
+      else process.env.LACOCO_EVAL_GROUNDED_PROMPT = previous;
+    }
+  });
+
   it("renders the regression section when regressionInfo is provided", () => {
     const t = task();
     t.regression = {

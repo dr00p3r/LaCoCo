@@ -321,6 +321,31 @@ export function validateRetrievalContexts(
   return skip;
 }
 
+/**
+ * Instrucción GROUNDED: restringe al agente a CONFIAR en el contexto recuperado y
+ * NO re-explorar el repo con búsquedas amplias. Se inyecta solo en estrategias con
+ * contexto (no `no_context`) y solo con `LACOCO_EVAL_GROUNDED_PROMPT` activado, para
+ * poder aislar su efecto (grounded vs normal) sobre tiempo/tokens del agente.
+ */
+export const GROUNDED_CONTEXT_INSTRUCTION = [
+  "# Cómo usar el contexto (OBLIGATORIO)",
+  "",
+  "El contexto de arriba contiene el/los edit-site(s) más probable(s) de esta tarea, YA",
+  "localizados por LaCoCo. Procede así:",
+  "1. EMPIEZA por esos símbolos/archivos — son tu punto de partida, no una sugerencia.",
+  "2. Lee y aplica el fix ahí. NO re-explores el repositorio con búsquedas amplias salvo",
+  "   que el contexto sea claramente insuficiente.",
+  "3. Solo si el fix necesita un símbolo ausente del contexto, búscalo — minimizando la",
+  "   exploración redundante.",
+  "Ve directo al fix usando la ubicación provista.",
+].join("\n");
+
+/** Lee `LACOCO_EVAL_GROUNDED_PROMPT` como booleano (1/true/yes/on). Default off. */
+export function isGroundedPromptEnabled(): boolean {
+  const raw = (process.env.LACOCO_EVAL_GROUNDED_PROMPT ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 export function buildPrompt(
   task: TaskDefinition,
   strategy: StrategyDefinition,
@@ -357,6 +382,9 @@ export function buildPrompt(
       throw new Error(`missing retrieval record for ${task.id} x ${strategy.id}`);
     }
     sections.push(`# Contexto recuperado por LaCoCo\n\n${loadRequiredEnrichedPrompt(retrievalRecord)}`);
+    if (isGroundedPromptEnabled()) {
+      sections.push(GROUNDED_CONTEXT_INSTRUCTION);
+    }
   }
 
   if (regressionInfo !== undefined) {
