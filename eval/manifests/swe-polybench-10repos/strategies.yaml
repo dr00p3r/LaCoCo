@@ -1,0 +1,351 @@
+manifest_version: 1
+kind: retrieval_strategies
+updated_at: "2026-06-28"
+
+comparison_design:
+  purpose: >-
+    Comparar baselines sin contexto, recuperacion hibrida y estrategias
+    multirrelacionales de LaCoCo bajo las mismas consultas y ground truth.
+  deterministic_query_policy:
+    enabled: true
+    description: >-
+      En corridas oficiales, el pipeline debe usar los campos deterministic_input
+      de cada tarea para evitar que el clasificador SLM introduzca variabilidad
+      entre estrategias.
+  ranking_cutoffs:
+    primary_k: 5
+    auxiliary_k:
+      - 10
+      - 20
+      - 50
+  latency_repetitions: 100
+  warmup_repetitions: 5
+  random_seed: 42
+
+strategies:
+  - id: no_context
+    label: "No context baseline"
+    kind: "baseline"
+    enabled: true
+    lacoco_strategy: null
+    requires_lancedb: false
+    requires_ollama: false
+    retrieval_enabled: false
+    generation_enabled: true
+    description: >-
+      Baseline de generacion sin contexto recuperado por LaCoCo. Sirve para
+      estimar la mejora atribuible al contexto inyectado.
+    output_context_policy: "empty"
+    metrics:
+      retrieval:
+        include: false
+        reason: "No produce ranking de nodos."
+      generation:
+        include: true
+
+  - id: hybrid
+    label: "Hybrid BM25 + ANN + RRF"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "hybrid"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline fuerte de recuperacion hibrida. Combina busqueda textual y
+      vectorial, y ordena anclas mediante fusion de ranking.
+    parameters:
+      anchor_limit: 20
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: ictd
+    label: "Intent-Conditioned Tensor Diffusion"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "ictd"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia tensorial que expande anclas hibridas mediante difusion guiada
+      por intencion y dimensiones SYS, CPG y DTG.
+    parameters:
+      anchor_limit: 30
+      max_iterations: 10
+      restart_prob: 0.2
+      epsilon: 0.000001
+      chunk_limit: 50
+      bfs_max_nodes: 5000
+      max_hops: 2
+    hypothesis: >-
+      Debe mejorar Recall@5 y Multi-hop Dependency Recall frente a hybrid en
+      tareas con dependencias transversales.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: clcr
+    label: "Cross-Layer Context Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "clcr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia de expansion por etapas entre capas del grafo. Se evalua como
+      alternativa estructurada a la difusion tensorial.
+    parameters:
+      anchor_limit: 30
+      primary_hops: 2
+      cascade_hops: 1
+      chunk_limit: 50
+      bfs_max_nodes: 5000
+      lambda: 0.25
+      primary_decay: 0.5
+      cascade_decay: 0.7
+    hypothesis: >-
+      Debe recuperar contexto multicapas con menor ruido que una expansion BFS
+      no diferenciada.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: consensus
+    label: "Structural Consensus Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "consensus"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Expansion por consenso estructural: puntua nodos de grafo por cuantas anclas
+      independientes los senalan (aristas ENTRANTES priorizadas), desacoplado del
+      decay-de-ancla. Rescata el caller/clase-base/hermano/consumidor que el
+      anclaje semantico no ve, e interleava con las anclas.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      neighborhood_limit: 5000
+      incoming_weight: 1.0
+      outgoing_weight: 0.4
+      consensus_weight: 1.0
+      multi_anchor_bonus: 0.5
+      hub_dampening: 0.5
+      interleave_min_anchors: 2
+      top_anchors_protected: 1
+    hypothesis: >-
+      Debe rescatar nodos multi-hop (gold fuera del pool de anclas) que hybrid
+      pierde, batiendolo en EditSiteHit/MRR sobre casos multi-hop.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: repograph
+    label: "RepoGraph flat ego-graph (baseline)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "repograph"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline de ego-graph plano: expande el vecindario K-hop de las anclas y puntua
+      por pura proximidad estructural, sin direccion, dimension ni intencion. Aisla si
+      el consenso gana por "tener grafo" o por su ponderacion.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      max_hops: 2
+      bfs_max_nodes: 5000
+      decay: 0.5
+    hypothesis: >-
+      Baseline piso: el consenso debe batirlo, demostrando que la ponderacion por
+      dimension-de-intencion aporta sobre el grafo sin ponderar.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: ppr
+    label: "Personalized PageRank (Aider baseline)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "ppr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Baseline fuerte estilo Aider: PageRank personalizado hacia las anclas sobre el
+      subgrafo inducido, ponderado por centralidad pero AGNOSTICO a la intencion. Si el
+      consenso lo bate, el delta atribuible es la ponderacion por intencion.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      subgraph_max_hops: 3
+      bfs_max_nodes: 5000
+      damping: 0.85
+      iterations: 40
+      tolerance: 0.000001
+    hypothesis: >-
+      Ranker de grafo ponderado pero sin intencion. El consenso debe batirlo en
+      multi-hop para sostener la tesis de la ponderacion por dimension-de-intencion.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: connector
+    label: "Structural Connector Retrieval (SCR)"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "connector"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Mecanismo nuevo: puntua por CONECTIVIDAD tipada entre anclas (Dijkstra entre
+      pares con costo por dimension-de-intencion), acreditando los nodos internos que
+      conectan los sintomas ('el fix en la confluencia'). Inyeccion guardada: las anclas conservan su score, los conectores se inyectan capados bajo la ancla top-protegida.
+      Determinista, costo-cero. Frente al SOTA: RepoGraph/Aider type-blind, LocAgent/CoSIL
+      LLM-in-loop.
+    parameters:
+      anchor_limit: 30
+      chunk_limit: 50
+      subgraph_max_hops: 3
+      bfs_max_nodes: 5000
+      max_path_anchors: 15
+      path_decay: 0.6
+      hub_dampening: 0.5
+      top_anchors_protected: 3
+    hypothesis: >-
+      Debe sostener el gold-ancla (464) Y el conector multi-hop (1231) a la vez via inyeccion guardada,
+      rompiendo el techo 0.750 que consensus/repograph no superan.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: rpr
+    label: "Relational Path Retrieval"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "rpr"
+    requires_lancedb: true
+    requires_ollama: false
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia basada en enumeracion y puntuacion de caminos relacionales.
+      Es especialmente util para inspeccionar rutas entre nodos, aunque puede
+      ser mas costosa en repositorios grandes.
+    parameters:
+      anchor_limit: 30
+      subgraph_max_hops: 2
+      bfs_max_nodes: 5000
+      max_depth: 3
+      max_candidates: 5000
+      chunk_limit: 50
+      decay_per_hop: 0.5
+    hypothesis: >-
+      Debe mejorar explicabilidad y recuperacion multi-hop, con posible coste
+      adicional de latencia.
+    metrics:
+      retrieval:
+        include: true
+      generation:
+        include: true
+
+  - id: agentic
+    label: "Agentic local planning"
+    kind: "lacoco"
+    enabled: true
+    lacoco_strategy: "agentic"
+    requires_lancedb: false
+    requires_ollama: true
+    retrieval_enabled: true
+    generation_enabled: true
+    description: >-
+      Estrategia que usa planificacion local mediante LlmClient/Ollama. Se deja
+      desactivada por defecto en la comparacion principal porque introduce otra
+      fuente de variabilidad.
+    parameters:
+      max_iterations: 3
+      seed_limit: 5
+      chunk_limit: 50
+      neighborhood_limit: 100
+      symbol_limit: 10
+      dependency_limit: 10
+      planner_attempts: 2
+    metrics:
+      retrieval:
+        include: true
+        separate_analysis: true
+      generation:
+        include: false
+        reason: "No mezclar con agentes externos en la corrida base."
+
+execution_matrix:
+  official_retrieval:
+    include_strategy_ids:
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+    exclude_strategy_ids:
+      - no_context
+      - agentic
+  official_generation:
+    include_strategy_ids:
+      - no_context
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+    exclude_strategy_ids:
+      - agentic
+  exploratory:
+    include_strategy_ids:
+      - agentic
+
+output_contract:
+  retrieval_record_fields:
+    - run_id
+    - task_id
+    - repo_id
+    - strategy_id
+    - sanitized_input
+    - ranked_nodes
+    - timings_ms
+    - errors
+  ranked_node_fields:
+    - rank
+    - chunk_id
+    - node_id
+    - score
+    - source
+    - filepath
+    - kind
+    - text
+    - hop_distance_from_anchor

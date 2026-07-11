@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Project } from "ts-morph";
 import {
+  deriveEditedSymbolsFromCheckout,
   enrichPatchEvidenceWithDefinitions,
   extractPatchEvidenceTier1,
   parseUnifiedDiff,
@@ -35,6 +36,9 @@ describe("parseUnifiedDiff", () => {
     expect(changes[0]!.path).toBe("src/math/box.ts");
     // hunk empieza en +10; contexto (expand) = 10, add = 11, add = 12, contexto = 13.
     expect(changes[0]!.addedLines).toEqual([11, 12]);
+    // lado viejo: la única línea `-` es `return this.min;` (old 11); el contexto se
+    // descarta porque el hunk sí tiene líneas eliminadas.
+    expect(changes[0]!.oldSideLines).toEqual([11]);
   });
 
   it("sourceChangesFromPatch drops files that belong to the test patch", () => {
@@ -112,7 +116,7 @@ describe("enrichPatchEvidenceWithDefinitions (Tier 2)", () => {
     const enriched = enrichPatchEvidenceWithDefinitions(base, {
       project,
       repoDir: "/repo",
-      changes: [{ path: "src/main.ts", addedLines: [3] }], // línea de `helper();`
+      changes: [{ path: "src/main.ts", addedLines: [3], oldSideLines: [] }], // línea de `helper();`
       resolveSourcePath: (rel) => `/repo/${rel}`,
     });
 
@@ -135,12 +139,81 @@ describe("enrichPatchEvidenceWithDefinitions (Tier 2)", () => {
     const enriched = enrichPatchEvidenceWithDefinitions(base, {
       project,
       repoDir: "/repo",
-      changes: [{ path: "src/main.ts", addedLines: [2] }],
+      changes: [{ path: "src/main.ts", addedLines: [2], oldSideLines: [] }],
       resolveSourcePath: (rel) => `/repo/${rel}`,
     });
     // `missingGlobal` no tiene definición interna → unresolved.
     expect(enriched.resolution.unresolved_refs).toContain("missingGlobal");
     expect(enriched.resolved_definitions).toEqual([]);
+  });
+});
+
+describe("deriveEditedSymbolsFromCheckout", () => {
+  // Árbol BASE (pre-fix): el pipeline indexa este estado, así que el gold-símbolo
+  // se resuelve mapeando las líneas del lado VIEJO del diff contra este árbol.
+  const BASE_MAIN = `export function alpha(): number {
+  return 1;
+}
+
+export class Widget {
+  render(): string {
+    return "old";
+  }
+}
+`;
+
+  // Modifica alpha (línea vieja 2) y Widget.render (línea vieja 7), y AÑADE un
+  // archivo nuevo entero (pura adición → sin símbolo base → file-level).
+  const FIX_PATCH = `diff --git a/src/main.ts b/src/main.ts
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,3 +1,3 @@
+ export function alpha(): number {
+-  return 1;
++  return 2;
+ }
+@@ -5,5 +5,5 @@ export class Widget {
+ export class Widget {
+   render(): string {
+-    return "old";
++    return "new";
+   }
+ }
+diff --git a/src/added.ts b/src/added.ts
+--- /dev/null
++++ b/src/added.ts
+@@ -0,0 +1,1 @@
++export function brandNew(): void {}
+`;
+
+  it("maps old-side lines to the enclosing symbol in the base tree", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    project.createSourceFile("/repo/src/main.ts", BASE_MAIN);
+
+    const changes = sourceChangesFromPatch(FIX_PATCH);
+    const symbols = deriveEditedSymbolsFromCheckout(changes, project, "/repo", (rel) => `/repo/${rel}`);
+
+    expect(symbols).toContainEqual({ file: "src/main.ts", symbol: "alpha", kind: "function" });
+    expect(symbols).toContainEqual({ file: "src/main.ts", symbol: "Widget.render", kind: "method" });
+    // La adición pura (archivo nuevo) no aporta símbolo: cae a file-level.
+    expect(symbols.map((s) => s.symbol).sort()).toEqual(["Widget.render", "alpha"]);
+  });
+
+  it("returns no symbols for a pure-addition patch (file-level fallback)", () => {
+    const project = new Project({ useInMemoryFileSystem: true });
+    project.createSourceFile("/repo/src/main.ts", BASE_MAIN);
+
+    const pureAdd = `diff --git a/src/main.ts b/src/main.ts
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -10,0 +11,3 @@
++export function tacked(): void {
++  return;
++}
+`;
+    const changes = sourceChangesFromPatch(pureAdd);
+    const symbols = deriveEditedSymbolsFromCheckout(changes, project, "/repo", (rel) => `/repo/${rel}`);
+    expect(symbols).toEqual([]);
   });
 });
 

@@ -65,13 +65,13 @@ interface LoaderOptions {
 }
 
 const DATA_FILE = join(EVAL_ROOT, "data", "swe-polybench", "instances.tsjs.full.jsonl");
-const UPDATED_AT = "2026-07-07";
+export const UPDATED_AT = "2026-07-07";
 /** Estrategias del smoke (subconjunto de phases.retrieval.include_strategies). */
 // Escalera reformada (2026-07-09): hybrid (baseline) + clcr (comparación) + consensus
 // (grafo por consenso de aristas entrantes). ictd/rpr/agentic podadas (no rinden).
 const SMOKE_STRATEGIES = ["hybrid", "clcr", "consensus"];
 /** Manifests compartidos que se copian verbatim del canónico al dir del smoke. */
-const SHARED_MANIFESTS = ["strategies.yaml", "agents.yaml", "metrics.yaml"] as const;
+export const SHARED_MANIFESTS = ["strategies.yaml", "agents.yaml", "metrics.yaml"] as const;
 
 function parseArgs(argv: string[]): LoaderOptions {
   const options: LoaderOptions = {
@@ -159,12 +159,12 @@ export function loadEasyInstances(repo: string, limit: number, includeMixed = fa
 }
 
 /** `sveltejs__svelte-510` → `svelte-510` (id único e instance-centric). */
-function shortId(instanceId: string): string {
+export function shortId(instanceId: string): string {
   return instanceId.split("__").pop() ?? instanceId;
 }
 
 /** Dirs únicos (POSIX) de los archivos tocados; sirven como `expected_areas`. */
-function areasFromFiles(files: string[]): string[] {
+export function areasFromFiles(files: string[]): string[] {
   return [...new Set(files.map((f) => posix.dirname(f)).filter((d) => d !== "" && d !== "."))];
 }
 
@@ -210,7 +210,7 @@ function f2pTitles(rawF2p: string): string[] {
  * links markdown a su texto, borra URLs sueltas (REPL/gists) y compacta líneas en
  * blanco. NO toca fences de código ni diffs: ahí están las palabras que sirven.
  */
-function cleanIssueText(text: string): string {
+export function cleanIssueText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
@@ -220,7 +220,7 @@ function cleanIssueText(text: string): string {
     .trim();
 }
 
-interface PatchSidecar {
+export interface PatchSidecar {
   id: string;
   patch: string;
   testPatch: string | null;
@@ -408,7 +408,7 @@ function build(instances: SwePolyBenchInstance[], ctx: BuildContext): BuildResul
 }
 
 /** Escribe los sidecars de patch (fix + tests) bajo `<outDir>/patches/`. */
-function writePatchSidecars(outDir: string, patches: PatchSidecar[]): void {
+export function writePatchSidecars(outDir: string, patches: PatchSidecar[]): void {
   if (patches.length === 0) return;
   const patchesDir = join(outDir, "patches");
   mkdirSync(patchesDir, { recursive: true });
@@ -421,7 +421,7 @@ function writePatchSidecars(outDir: string, patches: PatchSidecar[]): void {
 }
 
 /** Escribe `repos.yaml` reusando header+`defaults` del canónico (preserva comentarios). */
-function writeReposManifest(outDir: string, repositories: Record<string, unknown>[]): void {
+export function writeReposManifest(outDir: string, repositories: Record<string, unknown>[]): void {
   const canonical = readFileSync(join(MANIFESTS_DIR, "repos.yaml"), "utf8");
   const doc = parseDocument(canonical);
   doc.set("updated_at", UPDATED_AT);
@@ -450,7 +450,7 @@ function writeRunManifest(outDir: string): void {
 }
 
 /** Lee la lista (`tasks`/`repositories`) de un manifest YAML existente, o [] si no existe. */
-function readExistingList(path: string, key: "tasks" | "repositories"): Record<string, unknown>[] {
+export function readExistingList(path: string, key: "tasks" | "repositories"): Record<string, unknown>[] {
   if (!existsSync(path)) return [];
   const doc = parse(readFileSync(path, "utf8")) as Record<string, unknown> | null;
   const list = doc?.[key];
@@ -458,14 +458,14 @@ function readExistingList(path: string, key: "tasks" | "repositories"): Record<s
 }
 
 /** Mergea dos listas de objetos por `id` (los `next` ganan sobre `prev`). */
-function mergeById<T extends { id?: unknown }>(prev: T[], next: T[]): T[] {
+export function mergeById<T extends { id?: unknown }>(prev: T[], next: T[]): T[] {
   const byId = new Map<string, T>();
   for (const item of prev) byId.set(String(item.id), item);
   for (const item of next) byId.set(String(item.id), item);
   return [...byId.values()];
 }
 
-function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
+export function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
   const manifest = {
     manifest_version: 1,
     kind: "tasks",

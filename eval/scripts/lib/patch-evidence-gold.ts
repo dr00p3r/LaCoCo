@@ -34,44 +34,74 @@ export interface DiffFileChange {
   readonly path: string;
   /** Números de línea (1-based, lado nuevo) de las líneas `+` añadidas. */
   readonly addedLines: number[];
+  /**
+   * Números de línea (1-based, lado VIEJO/base) que el fix toca, para mapear el
+   * diff al símbolo que lo contiene en el árbol BASE (pre-fix, que es lo que
+   * indexa el pipeline). Por hunk: las líneas `-` eliminadas; si el hunk es de
+   * pura inserción (sin `-`), sus líneas de contexto, que en el base caen dentro
+   * del símbolo donde se inserta. Ver `deriveEditedSymbolsFromCheckout`.
+   */
+  readonly oldSideLines: number[];
 }
 
 const DIFF_GIT_RE = /^diff --git a\/(.+?) b\/(.+)$/;
 const PLUS_FILE_RE = /^\+\+\+ b\/(.+)$/;
-const HUNK_RE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 /**
- * Parsea un unified diff en cambios por archivo. Extrae, por archivo, los
- * números de línea del lado NUEVO donde hay líneas añadidas (`+`), para que el
- * Tier 2 sepa qué identificadores introdujo el patch. Nunca lanza: un diff
- * malformado produce menos entradas, no un error.
+ * Parsea un unified diff en cambios por archivo. Por archivo extrae los números
+ * de línea del lado NUEVO donde hay líneas añadidas (`+`, para que el Tier 2 sepa
+ * qué introdujo el patch) y los del lado VIEJO que el fix toca (`oldSideLines`,
+ * para mapear al símbolo del árbol base). Nunca lanza: un diff malformado produce
+ * menos entradas, no un error.
  */
 export function parseUnifiedDiff(diff: string): DiffFileChange[] {
   const files: DiffFileChange[] = [];
-  let current: { path: string; addedLines: number[] } | null = null;
-  let cursor = 0;
+  let current: { path: string; addedLines: number[]; oldSideLines: number[] } | null = null;
+  let cursor = 0; // lado nuevo
+  let oldCursor = 0; // lado viejo
+  let hunkRemoved: number[] = [];
+  let hunkContext: number[] = [];
+
+  // Al cerrar un hunk: si tuvo líneas eliminadas, esas son las que mapean al
+  // símbolo modificado (preciso); si fue pura inserción, el contexto es el único
+  // ancla al símbolo base donde se insertó.
+  const commitHunk = (): void => {
+    if (current !== null) {
+      const src = hunkRemoved.length > 0 ? hunkRemoved : hunkContext;
+      for (const line of src) current.oldSideLines.push(line);
+    }
+    hunkRemoved = [];
+    hunkContext = [];
+  };
 
   const flush = (): void => {
-    if (current !== null) files.push({ path: current.path, addedLines: current.addedLines });
+    commitHunk();
+    if (current !== null) {
+      files.push({ path: current.path, addedLines: current.addedLines, oldSideLines: current.oldSideLines });
+    }
   };
 
   for (const rawLine of diff.split("\n")) {
     const gitMatch = DIFF_GIT_RE.exec(rawLine);
     if (gitMatch) {
       flush();
-      current = { path: gitMatch[2]!, addedLines: [] };
+      current = { path: gitMatch[2]!, addedLines: [], oldSideLines: [] };
       cursor = 0;
+      oldCursor = 0;
       continue;
     }
     const plusFile = PLUS_FILE_RE.exec(rawLine);
     if (plusFile && current !== null) {
       // El header `+++ b/path` confirma/corrige la ruta del lado nuevo.
-      current = { path: plusFile[1]!, addedLines: current.addedLines };
+      current = { path: plusFile[1]!, addedLines: current.addedLines, oldSideLines: current.oldSideLines };
       continue;
     }
     const hunk = HUNK_RE.exec(rawLine);
     if (hunk) {
-      cursor = Number(hunk[1]);
+      commitHunk();
+      oldCursor = Number(hunk[1]);
+      cursor = Number(hunk[2]);
       continue;
     }
     if (current === null || cursor === 0) continue;
@@ -80,10 +110,14 @@ export function parseUnifiedDiff(diff: string): DiffFileChange[] {
       current.addedLines.push(cursor);
       cursor += 1;
     } else if (rawLine.startsWith("-")) {
-      // línea eliminada: solo avanza el lado viejo (no el cursor nuevo).
+      // línea eliminada: mapea al símbolo base; avanza solo el lado viejo.
+      hunkRemoved.push(oldCursor);
+      oldCursor += 1;
     } else {
-      // contexto (espacio) o línea vacía dentro del hunk.
+      // contexto (espacio) o línea vacía dentro del hunk: existe en ambos lados.
+      hunkContext.push(oldCursor);
       cursor += 1;
+      oldCursor += 1;
     }
   }
   flush();
@@ -91,7 +125,7 @@ export function parseUnifiedDiff(diff: string): DiffFileChange[] {
 }
 
 /** Rutas (lado nuevo) de todos los archivos tocados por un diff. */
-function filesInDiff(diff: string): string[] {
+export function filesInDiff(diff: string): string[] {
   return [...new Set(parseUnifiedDiff(diff).map((f) => f.path))];
 }
 
@@ -120,7 +154,7 @@ export interface PatchEvidenceTier1Input {
   readonly f2p?: string | readonly string[] | null;
 }
 
-function dedupeSymbols(refs: SymbolRef[]): SymbolRef[] {
+export function dedupeSymbols(refs: SymbolRef[]): SymbolRef[] {
   const seen = new Map<string, SymbolRef>();
   for (const ref of refs) seen.set(`${ref.file}#${ref.symbol}`, ref);
   return [...seen.values()];
@@ -199,7 +233,7 @@ export function extractPatchEvidenceTier1(input: PatchEvidenceTier1Input): Patch
 }
 
 /** Nombre del símbolo direccionable que contiene a `node` (o null). */
-function enclosingSymbol(node: Node): { symbol: string; kind: SymbolKind } | null {
+export function enclosingSymbol(node: Node): { symbol: string; kind: SymbolKind } | null {
   let current: Node | undefined = node;
   let method: string | null = null;
   while (current !== undefined) {
@@ -230,6 +264,52 @@ function enclosingSymbol(node: Node): { symbol: string; kind: SymbolKind } | nul
     current = current.getParent();
   }
   return null;
+}
+
+/**
+ * Deriva el gold a nivel SÍMBOLO desde un diff, resolviéndolo contra el árbol
+ * BASE (pre-fix) checked-out. Para cada archivo, mapea las líneas del lado VIEJO
+ * (`change.oldSideLines`) al símbolo direccionable que las contiene en el base
+ * (vía `enclosingSymbol`). Es la contraparte "sin `modified_nodes`" de lo que
+ * SWE-PolyBench trae nativo: convierte un patch estilo SWE-bench en `edited_symbols`.
+ *
+ * Sutileza base-vs-patched: el pipeline indexa el repo en `base_commit`, así que
+ * el `project` debe ser un árbol ts-morph sobre ese checkout y se mapean las
+ * líneas viejas (no las añadidas). Un hunk que solo añade código nuevo que no
+ * existe en el base no aporta símbolo → queda cubierto a nivel archivo por
+ * `edited_files`.
+ *
+ * INDEPENDENCIA: usa ts-morph directo; NO importa de `src/graph`.
+ */
+export function deriveEditedSymbolsFromCheckout(
+  changes: DiffFileChange[],
+  project: Project,
+  repoDir: string,
+  resolveSourcePath?: (repoRelPath: string) => string,
+): SymbolRef[] {
+  const resolvePath = resolveSourcePath ?? ((rel: string) => `${repoDir.replace(/\/$/, "")}/${rel}`);
+  const symbols: SymbolRef[] = [];
+
+  for (const change of changes) {
+    if (change.oldSideLines.length === 0) continue;
+    const abs = resolvePath(change.path);
+    const sourceFile: SourceFile | undefined = project.getSourceFile(abs);
+    if (sourceFile === undefined) continue;
+    const oldLineSet = new Set(change.oldSideLines);
+
+    const visit = (node: Node): void => {
+      if (oldLineSet.has(node.getStartLineNumber())) {
+        const enclosing = enclosingSymbol(node);
+        if (enclosing !== null) {
+          symbols.push({ file: change.path, symbol: enclosing.symbol, kind: enclosing.kind });
+        }
+      }
+      node.forEachChild(visit);
+    };
+    sourceFile.forEachChild(visit);
+  }
+
+  return dedupeSymbols(symbols);
 }
 
 /** Opciones del enriquecimiento Tier 2. */
