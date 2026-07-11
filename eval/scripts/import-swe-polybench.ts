@@ -61,6 +61,7 @@ interface LoaderOptions {
   onlyMixed?: boolean;
   manifestsDir?: string;
   append?: boolean;
+  dataFile?: string;
 }
 
 const DATA_FILE = join(EVAL_ROOT, "data", "swe-polybench", "instances.tsjs.full.jsonl");
@@ -104,6 +105,13 @@ function parseArgs(argv: string[]): LoaderOptions {
       if (value === undefined) throw new Error("--manifests-dir requires a value");
       options.manifestsDir = value;
       i += 1;
+    } else if (arg === "--data-file") {
+      // Fuente de instancias distinta al DATA_FILE por defecto. Permite apuntar al
+      // dataset SWE-PolyBench COMPLETO (21 repos) descargado con fetch_metadata.py
+      // --dataset AmazonScience/SWE-PolyBench --full, en vez del subset _Verified local.
+      if (value === undefined) throw new Error("--data-file requires a value");
+      options.dataFile = value;
+      i += 1;
     } else if (arg === "--enable-multihop") {
       // Flag sin valor. Requiere --run-id para resolver dbPath por tarea.
       options.enableMultihop = true;
@@ -128,8 +136,8 @@ function parseArgs(argv: string[]): LoaderOptions {
 }
 
 /** Lee el JSONL y devuelve las instancias que pasan el filtro de "fácil". */
-function loadEasyInstances(repo: string, limit: number, includeMixed = false, onlyMixed = false): SwePolyBenchInstance[] {
-  const raw = readFileSync(DATA_FILE, "utf8");
+export function loadEasyInstances(repo: string, limit: number, includeMixed = false, onlyMixed = false, dataFile: string = DATA_FILE): SwePolyBenchInstance[] {
+  const raw = readFileSync(dataFile, "utf8");
   const selected: SwePolyBenchInstance[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
@@ -469,7 +477,7 @@ function writeTasksManifest(outDir: string, tasks: TaskDefinition[]): void {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const instances = loadEasyInstances(options.repo, options.limit, options.includeMixed === true, options.onlyMixed === true);
+  const instances = loadEasyInstances(options.repo, options.limit, options.includeMixed === true, options.onlyMixed === true, options.dataFile ?? DATA_FILE);
   if (instances.length === 0) {
     throw new Error(
       `no instances matched repo=${options.repo} (is_func_only + num_nodes=1`
@@ -517,16 +525,27 @@ async function main(): Promise<void> {
 
   writeTasksManifest(options.outDir, outTasks as unknown as TaskDefinition[]);
   writeReposManifest(options.outDir, outRepos);
-  writeRunManifest(options.outDir);
   writePatchSidecars(options.outDir, patches);
+  // En --append NO se re-clonan run.yaml ni los SHARED_MANIFESTS desde la RAÍZ si ya
+  // existen en el bundle: eso borraría splits editados a mano y una strategies.yaml
+  // con más estrategias (repograph/ppr/connector). Solo se escriben la primera vez.
+  const preserveManifests = options.append === true;
+  const runManifestPath = join(options.outDir, "run.yaml");
+  if (!(preserveManifests && existsSync(runManifestPath))) {
+    writeRunManifest(options.outDir);
+  }
   for (const name of SHARED_MANIFESTS) {
-    copyFileSync(join(MANIFESTS_DIR, name), join(options.outDir, name));
+    const dest = join(options.outDir, name);
+    if (preserveManifests && existsSync(dest)) continue;
+    copyFileSync(join(MANIFESTS_DIR, name), dest);
   }
 
   console.log(`Instancias: ${instances.length} (${options.repo})${options.append ? " [append]" : ""}`);
   console.log(`Manifests escritos en: ${options.outDir}`);
-  console.log(`  tasks.yaml (${outTasks.length}), repos.yaml (${outRepos.length}), run.yaml (+split swe-polybench)`);
-  console.log(`  copiados verbatim: ${SHARED_MANIFESTS.join(", ")}`);
+  const runNote = preserveManifests && existsSync(runManifestPath) ? "run.yaml preservado (append)" : "run.yaml (+split swe-polybench)";
+  const sharedNote = preserveManifests ? "SHARED_MANIFESTS preservados si existían (append)" : `copiados verbatim: ${SHARED_MANIFESTS.join(", ")}`;
+  console.log(`  tasks.yaml (${outTasks.length}), repos.yaml (${outRepos.length}), ${runNote}`);
+  console.log(`  ${sharedNote}`);
   console.log(`patch-evidence: ${patches.length} sidecar(s) en patches/ · ${fellBackToFileLevel} tarea(s) file-level (patch sin nodo mapeable)`);
   console.log(`relevant_nodes (diagnóstico) totales: ${totalNodes} · sin mapear: ${totalUnmapped}`);
   if (withUnmapped.length > 0) {

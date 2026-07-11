@@ -1,5 +1,30 @@
-import { describe, it, expect } from "vitest";
-import { repoNameFromSlug, deriveSourceRoots } from "./import-swe-polybench.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it, expect } from "vitest";
+import { repoNameFromSlug, deriveSourceRoots, loadEasyInstances } from "./import-swe-polybench.js";
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+
+function writeDataFile(rows: Record<string, unknown>[]): string {
+  const dir = mkdtempSync(join(tmpdir(), "lacoco-datafile-"));
+  tempDirs.push(dir);
+  const path = join(dir, "instances.jsonl");
+  writeFileSync(path, rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  return path;
+}
+
+function row(id: string, repo: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    instance_id: id, repo, base_commit: "a".repeat(40), problem_statement: "issue",
+    modified_nodes: "[]", changed_files: ["src/x.ts"], is_func_only: true, num_nodes: 1,
+    is_no_nodes: false, F2P: "[]", test_command: "npm test", patch: "diff", test_patch: "",
+    ...extra,
+  };
+}
 
 describe("repoNameFromSlug", () => {
   it("toma el nombre corto del slug owner/name", () => {
@@ -36,5 +61,31 @@ describe("deriveSourceRoots", () => {
     expect(deriveSourceRoots(null)).toEqual(["src"]);
     expect(deriveSourceRoots([])).toEqual(["src"]);
     expect(deriveSourceRoots(["README.md"])).toEqual(["src"]); // archivo raíz sin dir
+  });
+});
+
+describe("loadEasyInstances --data-file", () => {
+  it("lee las instancias del data-file dado (no del DATA_FILE por defecto)", () => {
+    const dataFile = writeDataFile([
+      row("owner__repo-1", "owner/repo"),
+      row("owner__repo-2", "owner/repo"),
+      row("other__x-1", "other/x"),
+    ]);
+    const got = loadEasyInstances("owner/repo", 10, false, false, dataFile);
+    expect(got.map((i) => i.instance_id)).toEqual(["owner__repo-1", "owner__repo-2"]);
+  });
+
+  it("respeta el filtro single-hop (is_func_only && num_nodes==1) y el limit", () => {
+    const dataFile = writeDataFile([
+      row("r-1", "owner/repo"),
+      row("r-2", "owner/repo", { num_nodes: 3, is_func_only: false, is_mixed: true }), // multi-hop
+      row("r-3", "owner/repo"),
+    ]);
+    // single-hop por defecto: excluye la multi-hop; limit=1 corta al primero
+    expect(loadEasyInstances("owner/repo", 1, false, false, dataFile).map((i) => i.instance_id))
+      .toEqual(["r-1"]);
+    // --only-mixed: solo la multi-hop (num_nodes 2-4)
+    expect(loadEasyInstances("owner/repo", 10, true, true, dataFile).map((i) => i.instance_id))
+      .toEqual(["r-2"]);
   });
 });
