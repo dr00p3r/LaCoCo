@@ -70,6 +70,11 @@ export class LaCoCoLanceDb {
     validateMaintenancePolicy(this.maintenancePolicy);
   }
 
+  /** Directorio LanceDB subyacente (para abrir tablas hermanas, p. ej. node_propositions). */
+  getDbPath(): string {
+    return this.dbPath;
+  }
+
   async connect(): Promise<void> {
     const { db, table } = await this.connectionDao.connect(this.dbPath);
     this.db = db;

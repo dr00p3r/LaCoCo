@@ -3,6 +3,7 @@ import type { LaCoCoLanceDb } from "../../persistence/lacoco-vectors-manager/lac
 import type { ContextChunk, RecoveryStrategy } from "../models/strategies/types.js";
 import type { SanitizerOutput } from "../models/utilities/types.js";
 import { HybridAnchorService, type HybridAnchor } from "../utilities/search/hybrid-anchor-service.js";
+import { LaCoCoPropositionsDb } from "../../persistence/lacoco-propositions-manager/lacoco-propositions-db.js";
 
 export abstract class AbstractAnchoredStrategy implements RecoveryStrategy {
   private readonly anchors: HybridAnchorService;
@@ -11,7 +12,13 @@ export abstract class AbstractAnchoredStrategy implements RecoveryStrategy {
     protected readonly db: LaCoCoDatabase,
     lanceDb: LaCoCoLanceDb,
   ) {
-    this.anchors = new HybridAnchorService(db, lanceDb);
+    // El canal de proposiciones (C2) vive en la misma carpeta LanceDB, tabla
+    // aparte. Se construye (sin conectar) solo si el path está disponible; solo
+    // se consulta cuando `retrieval.propositions` está activo → cero costo con el
+    // flag off. `getDbPath?.()` tolera dobles de test sin ese método.
+    const dbPath = lanceDb.getDbPath?.();
+    const propositions = dbPath ? new LaCoCoPropositionsDb(dbPath) : undefined;
+    this.anchors = new HybridAnchorService(db, lanceDb, propositions);
   }
 
   /**

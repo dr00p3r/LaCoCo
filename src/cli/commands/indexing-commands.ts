@@ -1,12 +1,15 @@
 import type { Command } from "commander";
 import { GraphIndexer } from "../../indexer/graph-indexer.js";
 import { VectorsIndexer } from "../../indexer/vectors-indexer.js";
+import { PropositionsIndexer } from "../../indexer/propositions-indexer.js";
+import { OllamaService } from "../../slms/ollama-service.js";
 import {
   configureProjectStorage,
   markProjectIndexStatus,
   registerCurrentProject,
 } from "../state/project-registry.js";
 import { projectPathFromTsconfig, resolveDbPath, resolveLanceDbPath } from "../storage-paths.js";
+import { resolveNumberConfig, resolveStringConfig } from "../config.js";
 
 export function registerIndexingCommands(program: Command): void {
   program
@@ -52,6 +55,34 @@ export function registerIndexingCommands(program: Command): void {
       } catch (error) {
         markProjectIndexStatus(projectPath, "error");
         throw error;
+      }
+    });
+
+  program
+    .command("index_propositions <ruta-tsconfig>")
+    .description("Canal doc-side C2: genera proposiciones (SLM) por nodo y las embebe en la tabla LanceDB node_propositions (opt-in; no toca node_embeddings).")
+    .option("--lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
+    .option("--ollama <url>", "Endpoint de Ollama; por defecto agent.endpoint")
+    .action(async (rutaTsconfig: string, options: { lancedb?: string; ollama?: string }) => {
+      console.log("\n[CLI] Indexando proposiciones (C2)...\n");
+      console.log(`  tsconfig : ${rutaTsconfig}`);
+      const projectPath = projectPathFromTsconfig(rutaTsconfig);
+      const lanceDbPath = resolveLanceDbPath(projectPath, options.lancedb);
+      console.log(`  lancedb  : ${lanceDbPath}\n`);
+      registerCurrentProject(projectPath);
+      configureProjectStorage(projectPath, { lanceDbPath });
+
+      const endpoint = options.ollama ?? resolveStringConfig("agent.endpoint");
+      const model = resolveStringConfig("agent.model");
+      const concurrency = resolveNumberConfig("profile.enrichConcurrency");
+      const timeoutMs = concurrency > 1
+        ? Math.max(resolveNumberConfig("timeout.ms"), 120_000)
+        : resolveNumberConfig("timeout.ms");
+      const ollama = new OllamaService(endpoint, model, timeoutMs);
+      try {
+        await new PropositionsIndexer(lanceDbPath, rutaTsconfig, ollama, concurrency).index();
+      } finally {
+        ollama.abort();
       }
     });
 }

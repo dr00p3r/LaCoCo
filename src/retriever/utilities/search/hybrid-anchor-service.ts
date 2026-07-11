@@ -5,7 +5,8 @@ import { EmbeddingGenerator } from "../../../embeddings/embedding-generator.js";
 import { Bm25Service } from "./bm25-service.js";
 import { getIntentWeights } from "../../strategies/helpers/intent-weights.js";
 import { DIMENSIONS, type Dimension } from "../../../domain/dimensions.js";
-import { resolveNumberConfig, resolveStringConfig } from "../../../cli/config.js";
+import { resolveBooleanConfig, resolveNumberConfig, resolveStringConfig } from "../../../cli/config.js";
+import type { PropositionsSearcher } from "../../../persistence/lacoco-propositions-manager/lacoco-propositions-db.js";
 
 const RRF_K = 60;
 
@@ -33,6 +34,12 @@ export class HybridAnchorService {
   constructor(
     private readonly db: LaCoCoDatabase,
     private readonly lanceDb: LaCoCoLanceDb,
+    /**
+     * Canal doc-side C2 (opcional). Solo se consulta cuando
+     * `retrieval.propositions` está activo; si es `undefined` o el flag está
+     * off, el anclaje es idéntico al BM25+ANN+RRF previo (cero regresión).
+     */
+    private readonly propositions?: PropositionsSearcher,
   ) {
     this.bm25 = new Bm25Service(db);
   }
@@ -76,13 +83,20 @@ export class HybridAnchorService {
       if (!annRanks.has(result.node_id)) annRanks.set(result.node_id, index + 1);
     }
 
-    const nodeIds = new Set([...bm25Ranks.keys(), ...annRanks.keys()]);
+    // Canal doc-side C2: las proposiciones (colapsadas a su nodo de código real)
+    // entran como una TERCERA lista al RRF, junto a BM25 y ANN. Best-effort: un
+    // fallo del store nunca rompe el anclaje.
+    const propRanks = await this.propositionRanks(embedding, rankingLimit);
+
+    const nodeIds = new Set([...bm25Ranks.keys(), ...annRanks.keys(), ...propRanks.keys()]);
     const ranked = Array.from(nodeIds, (nodeId) => {
       const bm25Rank = bm25Ranks.get(nodeId);
       const annRank = annRanks.get(nodeId);
+      const propRank = propRanks.get(nodeId);
       const score =
         (bm25Rank === undefined ? 0 : 1 / (RRF_K + bm25Rank))
-        + (annRank === undefined ? 0 : 1 / (RRF_K + annRank));
+        + (annRank === undefined ? 0 : 1 / (RRF_K + annRank))
+        + (propRank === undefined ? 0 : 1 / (RRF_K + propRank));
       return { nodeId, score };
     }).sort((left, right) =>
       right.score - left.score || left.nodeId.localeCompare(right.nodeId)
@@ -94,6 +108,32 @@ export class HybridAnchorService {
       score,
       text: signatures.get(nodeId) ?? nodeId,
     }));
+  }
+
+  /**
+   * Rank (1-based, mejor primero) de los nodos de código rescatados por el canal
+   * de proposiciones, keyed por `nodeId` real. Mapa vacío si el flag está off, no
+   * hay searcher, o la tabla no existe / falla — nunca lanza.
+   */
+  private async propositionRanks(
+    embedding: Float32Array,
+    rankingLimit: number,
+  ): Promise<Map<string, number>> {
+    const ranks = new Map<string, number>();
+    if (!this.propositions || !resolveBooleanConfig("retrieval.propositions")) return ranks;
+    try {
+      const hits = await this.propositions.search(embedding, rankingLimit);
+      for (let index = 0; index < hits.length; index++) {
+        const hit = hits[index]!;
+        if (!ranks.has(hit.realNodeId)) ranks.set(hit.realNodeId, index + 1);
+      }
+    } catch (err) {
+      console.warn(
+        "[HybridAnchorService] El canal de proposiciones falló; se ignora:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return ranks;
   }
 
   /**

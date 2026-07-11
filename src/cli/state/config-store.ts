@@ -95,6 +95,15 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "retrieval.annDimSource debe ser 'kind' (proxy por KIND del vector) o 'edge' (derivada de aristas, node_metadata)",
   },
+  "retrieval.propositions": {
+    type: "boolean",
+    defaultValue: false,
+    env: "LACOCO_PROPOSITIONS",
+    validate: (value) =>
+      typeof value === "boolean"
+        ? null
+        : "retrieval.propositions debe ser boolean (canal doc-side C2 sobre la tabla node_propositions)",
+  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,
