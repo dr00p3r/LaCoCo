@@ -107,6 +107,9 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      - "repograph"
+      - "ppr"
+      - "connector"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true
@@ -365,6 +368,39 @@ splits:
     require_gold_status: ready
     repo_ids: *a1
     task_ids: *a1
+
+  gen13:
+    description: >-
+      Generacion GROUNDED + deepseek-v4-pro sobre las 13 instancias gradeables
+      (5 svelte + 5 prettier + 3 mui; mui-13690/13778 excluidas: flatmap-stream
+      despublicado de npm, install irrecuperable). Eje eficiencia: dE2E+dCost+greps
+      condicionado a mismo-resultado, agente restringido al contexto.
+    strategies:
+      - no_context
+      - hybrid
+      - connector
+      - consensus
+    sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
+    require_gold_status: ready
+    repo_ids: &gen13ids
+      - svelte-510
+      - svelte-728
+      - svelte-906
+      - svelte-907
+      - svelte-1116
+      - prettier-14400
+      - prettier-12930
+      - prettier-6604
+      - prettier-5025
+      - prettier-4667
+      - material-ui-11451
+      - material-ui-11858
+      - material-ui-12406
+    task_ids: *gen13ids
+    agents:
+      - opencode
 
 resource_limits:
   max_parallel_repos: 1
