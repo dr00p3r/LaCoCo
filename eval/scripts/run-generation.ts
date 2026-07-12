@@ -27,9 +27,11 @@ import {
 import { loadManifests } from "./lib/load-manifests.js";
 import { filesInDiff } from "./lib/patch-evidence-gold.js";
 import {
+  detectBespokeRunner,
   parseTestCommand,
   resolveConcreteRunner,
   synthesizeF2pTestRun,
+  synthesizeFileScopedTestRun,
 } from "./lib/swe-polybench-test-command.js";
 import {
   type AgentDefinition,
@@ -1329,10 +1331,25 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           const parsedTestCmd = parseTestCommand(rawTestCommand);
           const scriptBody = resolveDelegatedScriptBody(locked.repoPath, parsedTestCmd.scriptName);
           const concreteRunner = resolveConcreteRunner(parsedTestCmd, scriptBody);
-          const synth = synthesizeF2pTestRun(parsedTestCmd, task.target_tests, {
-            concreteRunner,
-            mochaOpts: resolveMochaOptsPath(locked.repoPath),
-          });
+          // Multi-SWE-bench NO trae títulos F2P → se corre el test file entero que
+          // toca el test_patch (grade = exit code, liveness = ran>0). Runners
+          // bespoke (axios grunt/karma; insomnia jest --projects) → inválido, NUNCA
+          // pase falso. SWE-PolyBench sigue el régimen F2P por título/spec.
+          const isMswe = task.tags?.includes("multi-swe-bench") === true;
+          const bespokeReason = isMswe ? detectBespokeRunner(scriptBody) : null;
+          const synth = bespokeReason !== null
+            ? { testInvocation: null, grepPattern: null, expectedFixtures: [], reason: bespokeReason }
+            : isMswe
+              ? synthesizeFileScopedTestRun(concreteRunner, task.target_tests, {
+                  mochaOpts: resolveMochaOptsPath(locked.repoPath),
+                })
+              : synthesizeF2pTestRun(parsedTestCmd, task.target_tests, {
+                  concreteRunner,
+                  mochaOpts: resolveMochaOptsPath(locked.repoPath),
+                });
+          // MSWE: liveness (1), no el conteo de files — la guarda ran<expected
+          // mataría un file con varios tests.
+          const expectedTestCount = isMswe ? 1 : task.target_tests.length;
           if (synth.testInvocation === null) {
             swePolyInvalid = synth.reason ?? "unsynthesizable";
             writeFileSync(paths.test_log, `(SWE-PolyBench: test no sintetizable: ${swePolyInvalid})\n`, "utf8");
@@ -1341,7 +1358,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
               locked.repoPath,
               testPatchPath,
               synth.testInvocation,
-              task.target_tests.length,
+              expectedTestCount,
               settings.testTimeoutMs,
               paths.test_log,
             );

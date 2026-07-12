@@ -198,7 +198,10 @@ function build(instances: MultiSweBenchInstance[]): BuildResult {
         dimensions: ["CPG", "DTG"],
       },
       expected_areas: areasFromFiles(sources),
-      target_tests: [],
+      // Los test files que toca el test_patch: activan el gate shouldRunTests y
+      // dan al caller la lista de targets para el run file-scoped (sin títulos F2P
+      // upstream, se corre el file entero; exit code = grade).
+      target_tests: inst.test_patch != null && inst.test_patch !== "" ? filesInDiff(inst.test_patch) : [],
       gold: {
         status: "ready",
         patch_evidence: patchEvidence,
@@ -235,9 +238,12 @@ function build(instances: MultiSweBenchInstance[]): BuildResult {
       ref: inst.base_commit,
       package_manager: "npm",
       install_command: "npm install",
-      // Benchmark solo-retrieval: los tests no se corren (run.yaml apaga baseline
-      // tests). `repos.yaml` exige un string no vacío, así que ponemos un no-op.
-      test_command: inst.test_command != null && inst.test_command !== "" ? inst.test_command : "true",
+      // Default `npm test`: parseTestCommand lo lee como npm-script y
+      // resolveConcreteRunner resuelve el runner real (jest/mocha) desde
+      // `scripts.test` del checkout. El grading corre el test file completo que
+      // toca el test_patch (synthesizeFileScopedTestRun). Un `true` no-op haría
+      // "pasar" todo falsamente. Instancias con test_command upstream lo respetan.
+      test_command: inst.test_command != null && inst.test_command !== "" ? inst.test_command : "npm test",
       source_roots: deriveSourceRoots(sources),
       tsconfig_candidates: [],
       language_scope: ["javascript", "typescript"],

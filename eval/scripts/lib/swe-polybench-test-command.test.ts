@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectBespokeRunner,
   parseF2pTestId,
   parseTestCommand,
   resolveConcreteRunner,
   synthesizeF2pTestRun,
+  synthesizeFileScopedTestRun,
   toLocalTestCommand,
 } from "./swe-polybench-test-command.js";
 
@@ -218,5 +220,81 @@ describe("synthesizeF2pTestRun", () => {
     });
     expect(synth.testInvocation).toBeNull();
     expect(synth.reason).toBe("no F2P titles");
+  });
+});
+
+describe("parseTestCommand — default npm test (Multi-SWE-bench)", () => {
+  it("'npm test' → npm-script con scriptName 'test' (delega al runner del repo)", () => {
+    const p = parseTestCommand("npm test");
+    expect(p.runner).toBe("npm-script");
+    expect(p.scriptName).toBe("test");
+    expect(p.bespoke).toBe(false);
+  });
+});
+
+describe("synthesizeFileScopedTestRun (Multi-SWE-bench, sin títulos F2P)", () => {
+  it("jest: corre el spec file ENTERO, sin -t/--grep, con --ci --runInBand", () => {
+    const synth = synthesizeFileScopedTestRun("jest", ["test/plugin/utc.test.js"]);
+    expect(synth.testInvocation).toBe(
+      "./node_modules/.bin/jest 'test/plugin/utc.test.js' --ci --runInBand --colors=false",
+    );
+    expect(synth.grepPattern).toBeNull();
+  });
+
+  it("jest: filtra el .snap hermano a su spec (no corre snapshots como test)", () => {
+    const synth = synthesizeFileScopedTestRun("jest", [
+      "test/foo.test.js",
+      "test/__snapshots__/foo.test.js.snap",
+    ]);
+    expect(synth.testInvocation).toBe(
+      "./node_modules/.bin/jest 'test/foo.test.js' --ci --runInBand --colors=false",
+    );
+  });
+
+  it("mocha: corre el file entero con --opts y --reporter dot, sin --grep", () => {
+    const synth = synthesizeFileScopedTestRun("mocha", ["test/parse.test.js"], {
+      mochaOpts: "test/mocha.opts",
+    });
+    expect(synth.testInvocation).toBe(
+      "./node_modules/.bin/mocha --opts test/mocha.opts 'test/parse.test.js' --reporter dot",
+    );
+    expect(synth.testInvocation).not.toContain("--grep");
+  });
+
+  it("mocha sin fichero de opts (null) → omite --opts", () => {
+    const synth = synthesizeFileScopedTestRun("mocha", ["test/a.test.js"], { mochaOpts: null });
+    expect(synth.testInvocation).toBe("./node_modules/.bin/mocha 'test/a.test.js' --reporter dot");
+  });
+
+  it("sin test files → null (medición inválida, no pase falso)", () => {
+    expect(synthesizeFileScopedTestRun("jest", []).testInvocation).toBeNull();
+  });
+
+  it("runner no soportado (vitest/null) → null con motivo", () => {
+    expect(synthesizeFileScopedTestRun("vitest", ["a.test.js"]).testInvocation).toBeNull();
+    expect(synthesizeFileScopedTestRun(null, ["a.test.js"]).testInvocation).toBeNull();
+  });
+});
+
+describe("detectBespokeRunner", () => {
+  it("axios (grunt) → bespoke", () => {
+    expect(detectBespokeRunner("grunt test")).toBe("bespoke_runner:grunt/karma");
+  });
+
+  it("karma → bespoke", () => {
+    expect(detectBespokeRunner("karma start karma.conf.js --single-run")).toBe("bespoke_runner:grunt/karma");
+  });
+
+  it("insomnia (jest --projects, monorepo) → bespoke", () => {
+    expect(detectBespokeRunner("jest --projects packages/*/jest.config.js")).toBe("bespoke_runner:jest-projects");
+  });
+
+  it("jest/mocha directo → tratable (null)", () => {
+    expect(detectBespokeRunner("jest")).toBeNull();
+    expect(detectBespokeRunner("mocha test/")).toBeNull();
+  });
+
+  it("scriptBody null (scripts.test no hallado) → null (no bespoke; cae a runner desconocido aguas abajo)", () => {
+    expect(detectBespokeRunner(null)).toBeNull();
   });
 });

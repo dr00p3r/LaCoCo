@@ -205,6 +205,8 @@ export interface TaskDefinition {
   gold: TaskGold;
   translation_gold: TranslationGold;
   regression?: TaskRegression;
+  /** Etiquetas de procedencia/runner (p.ej. "multi-swe-bench", nombre del repo). */
+  tags?: string[];
   [key: string]: unknown;
 }
 

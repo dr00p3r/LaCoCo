@@ -475,3 +475,89 @@ export function synthesizeF2pTestRun(
     reason: `runner ${runner ?? parsed.runner} not supported yet (mocha/jest only)`,
   };
 }
+
+/** Quoteo shell (comillas simples) de un path para la invocación del runner. */
+function singleQuote(path: string): string {
+  return `'${path.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Detecta runners "bespoke" que el grading file-scoped NO puede correr de forma
+ * fiable: grunt/karma (axios — orquestación tipo-Docker) y `jest --projects`
+ * (insomnia — monorepo multi-proyecto). Devuelve el motivo (para `invalid_reason`)
+ * o `null` si el runner es tratable (jest/mocha directo). Se aplica solo a MSWE,
+ * caller-side, sobre el cuerpo resuelto de `scripts.test`. Clasificar como bespoke
+ * (medición inválida) es preferible a un pase falso.
+ */
+export function detectBespokeRunner(scriptBody: string | null): string | null {
+  if (scriptBody === null) return null;
+  if (/\b(grunt|karma)\b/.test(scriptBody)) return "bespoke_runner:grunt/karma";
+  if (/--projects\b/.test(scriptBody)) return "bespoke_runner:jest-projects";
+  return null;
+}
+
+/** Opciones de {@link synthesizeFileScopedTestRun}. */
+export interface FileScopedOptions {
+  /** Ruta al binario de mocha (def. `./node_modules/.bin/mocha`). */
+  readonly mochaBin?: string;
+  /** Fichero de opts de mocha; `undefined` → `"mocha.opts"`, `null` → sin `--opts`. */
+  readonly mochaOpts?: string | null;
+  /** Ruta al binario de jest (def. `./node_modules/.bin/jest`). */
+  readonly jestBin?: string;
+}
+
+/**
+ * Sintetiza una invocación que corre el/los **test file completos** que toca el
+ * test_patch, SIN aislar por título/fixture (no hay `-t`/`--grep`). Es el régimen
+ * de grading para Multi-SWE-bench, que NO trae títulos F2P upstream: el exit code
+ * agregado del file es la señal de pass/fail y la guarda anti-cero-match
+ * (`ran>0`) actúa como liveness — mismo modelo que ya usa jest en SWE-PolyBench,
+ * pero acotado al file en vez de a un patrón F2P.
+ *
+ * jest → `<jestBin> '<file>'… --ci --runInBand --colors=false` (los `.snap` del
+ * test_patch se filtran a su spec/dir vía {@link jestScopeTargets}; `--ci` impide
+ * reescribir snapshots → un fix roto FALLA). mocha → `<mochaBin> [--opts <opts>]
+ * '<file>'… --reporter dot`. vitest/bespoke/null → `null` con motivo.
+ *
+ * El caller DEBE, aparte: (1) aplicar el test_patch antes, (2) construir el repo si
+ * el fix va en `src/`, (3) llamar con `expectedF2pCount = 1` (liveness, NO
+ * `testFiles.length`, que mataría files con varios tests).
+ */
+export function synthesizeFileScopedTestRun(
+  runner: ConcreteRunner | null,
+  testFiles: string[],
+  opts: FileScopedOptions = {},
+): SynthesizedF2pRun {
+  const mochaBin = opts.mochaBin ?? "./node_modules/.bin/mocha";
+  const mochaOpts = opts.mochaOpts === undefined ? "mocha.opts" : opts.mochaOpts;
+  const jestBin = opts.jestBin ?? "./node_modules/.bin/jest";
+
+  const files = [...new Set(testFiles.filter((f) => f !== ""))];
+  if (files.length === 0) {
+    return { testInvocation: null, grepPattern: null, expectedFixtures: [], reason: "no test files" };
+  }
+
+  if (runner === "mocha") {
+    const parts = [mochaBin];
+    if (mochaOpts !== null) parts.push("--opts", mochaOpts);
+    for (const f of files) parts.push(singleQuote(f));
+    parts.push("--reporter", "dot");
+    return { testInvocation: parts.join(" "), grepPattern: null, expectedFixtures: files };
+  }
+
+  if (runner === "jest") {
+    // Filtra fixtures (.snap) a su spec/dir: jest rechaza correr un .snap como test.
+    const specTargets = jestScopeTargets(files);
+    const scoped = specTargets.length > 0 ? specTargets : files;
+    const quoted = scoped.map(singleQuote).join(" ");
+    const testInvocation = `${jestBin} ${quoted} --ci --runInBand --colors=false`;
+    return { testInvocation, grepPattern: null, expectedFixtures: scoped };
+  }
+
+  return {
+    testInvocation: null,
+    grepPattern: null,
+    expectedFixtures: files,
+    reason: `runner ${runner ?? "desconocido"} not supported for file-scoped run (mocha/jest only)`,
+  };
+}
