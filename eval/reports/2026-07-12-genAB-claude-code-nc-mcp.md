@@ -1,8 +1,9 @@
-# Generación con Claude Code: no_context vs MCP suave vs MCP fuerte (sonnet)
+# Generación con Claude Code: no_context vs MCP suave vs MCP fuerte (sonnet Y haiku)
 
 **Fecha:** 2026-07-12
-**Runs:** `cc-nc` (no_context) · `cc-mcp-soft` (MCP hint suave) · `cc-mcp-hard` (MCP hint fuerte)
-**Agente:** Claude Code (headless, `--print`) · modelo **sonnet** (no-1m) · vía wrapper `eval/scripts/run-claude-cell.sh`
+**Runs:** sonnet `cc-{nc,mcp-soft,mcp-hard}` · haiku `cc-haiku-{nc,mcp-soft,mcp-hard}` (no_context / MCP hint suave / MCP hint fuerte)
+**Agente:** Claude Code (headless, `--print`) · modelos **sonnet** y **haiku** (ambos no-1m) · vía wrapper `eval/scripts/run-claude-cell.sh`
+**TL;DR:** el valor del MCP y la fuerza óptima del hint escalan **inverso a la capacidad del modelo**. sonnet (fuerte): MCP no mueve acierto, solo eficiencia. haiku (débil): MCP **suave** sube acierto (rescata timeouts) pero el hint **fuerte** lo empeora (sobre-restringe → gira a timeout).
 **Corpus:** gen13 (5 svelte + 5 prettier + 3 mui); **12 tareas** efectivas (prettier-5025 auto-excluida: install irrecuperable).
 **Por qué Claude Code:** opencode-go se quedó sin tokens; se cambió de agente y se re-corrieron las **tres** condiciones a igual agente/modelo para que la tabla sea comparable. Snippets por construcción (la tool `lacoco_retrieve` devuelve cuerpos+líneas; el hint solo cambia cuánto insiste en usarla).
 
@@ -46,9 +47,43 @@ Los 4 no-pases son idénticos entre condiciones. `prettier-12930` es `test_patch
 - **Matiz nuevo y defendible:** con Claude el MCP compra **eficiencia** (−35% bash, −52% read, −38% tiempo-mediana, −12% costo) a **igual calidad**. Es un aporte honesto como "misma tasa de acierto con menos esfuerzo de localización", no como "más fixes". Esto **diferencia** a Claude de opencode, donde el hint fuerte subía el uso pero NO bajaba la exploración.
 - **Firmas descartadas** (el A/B previo ya mostró snippet > firmas); todo aquí es snippets.
 
+## Eje 2 — haiku (modelo débil): el MCP SÍ mueve el acierto, y el hint fuerte BACKFIRE
+
+Se re-corrieron las 3 condiciones en **haiku** (opencode-go seguía sin tokens; mismo wrapper/infra, `LACOCO_EVAL_CLAUDE_MODEL=haiku`, GEN_JOBS=4, en paralelo a una indexación pesada del usuario).
+
+| modelo | condición | Pass@1 | timeouts | tiempo/celda | `lacoco` | bash | costo/celda |
+|---|---|---:|---:|---:|---:|---:|---:|
+| sonnet | no_context | 8/12 | 1 | 241s | 0 | 350 | $0.95 |
+| sonnet | MCP suave | 8/12 | 0 | 207s | 3 | 250 | $0.86 |
+| sonnet | MCP fuerte | 8/12 | 0 | 176s | 8 | 229 | $0.84 |
+| **haiku** | no_context | **5/12** | 4 | 425s | 0 | 479 | $0.39 |
+| **haiku** | **MCP suave** | **7/12** | **2** | 370s | 3 | 431 | $0.43 |
+| **haiku** | MCP fuerte | **6/12** | 4 | 402s | 15 | 380 | $0.37 |
+
+### Vista pareada haiku (qué tareas flipó)
+```
+prettier-14400   timeout → PASS    → PASS      MCP RESCATÓ (dirección → no gira a 600s)
+svelte-906       timeout → PASS    → PASS      MCP RESCATÓ
+svelte-907       PASS    → PASS    → timeout   el hint FUERTE ROMPIÓ un pase
+prettier-6604    fail    → fail    → timeout   el hint FUERTE empeoró
+svelte-1116/728  timeout → timeout → timeout   duras: la tool no alcanza
+```
+
+### Lectura
+- **haiku sin contexto es débil:** 5/12, **4 timeouts** (gira sin cerrar). Aquí SÍ hay techo para el contexto (a diferencia de sonnet, saturado en 8/12).
+- **MCP suave rescata 2 timeouts** (prettier-14400, svelte-906): la tool le da un punto de partida al modelo débil → 5/12→**7/12**, timeouts 4→2, con solo 3 llamadas.
+- **MCP fuerte BACKFIRE:** mismos 2 rescates, pero el protocolo rígido ("llama la tool PRIMERO, no edites hasta localizar") lo hace sobre-invertir (15 llamadas vs 3) y **girar a timeout en tareas que antes pasaba** (svelte-907 PASS→timeout, prettier-6604 fail→timeout). Neto **6/12 < 7/12 suave**.
+
+### Veredicto combinado (el hallazgo central)
+El **valor del MCP** y la **fuerza óptima del hint** escalan **inverso a la capacidad del modelo**:
+- **Modelo fuerte (sonnet):** localiza solo → MCP = solo **eficiencia** (−27% tiempo, −35% bash, −12% costo), acierto plano; el hint fuerte da igual.
+- **Modelo débil (haiku):** MCP **suave** = **más acierto** (rescata timeouts, +2 pases); pero el hint **fuerte lo sobre-restringe** y lo empeora. El punto dulce es un **empujón, no un mandato**.
+
+haiku es ~2.4× más barato ($0.39 vs $0.95/celda). Los costos son API-equivalentes (suscripción, no facturado por token).
+
 ## Notas de validez
 
-- n=12; conjunto medible ~10-11 (sesgado: las duras caen fuera → subestima el margen del contexto en tareas difíciles).
+- n=12; conjunto medible ~6-11 (sesgado: las duras caen fuera → subestima el margen del contexto en tareas difíciles). Alta varianza en haiku (muchos timeouts); el backfire del hint fuerte (svelte-907 PASS→timeout) es consistente con "sobre-forzar la tool" pero con n pequeño conviene replicar.
 - Costo en tabla = `total_cost_usd` del stream-json (API-equivalente). Claude Code va por **suscripción**, no facturado por token; el arnés no consume el costo (agente `bash` != `opencode`), por eso NO se pasó `--max-budget-usd` (evita la salvaguarda de costo-ausente).
 - **Bug encontrado y arreglado antes de las 24 celdas MCP:** el servidor MCP exigía el Project Semantic Profile (grounding), obsoleto para estos repos → `lacoco_retrieve` fallaba con "profile rebuild". Causa: el flag `--grounding` de commander es **negable** (`options.grounding` es `true` por default y pisa env/config); fix = pasar **`--no-grounding`** (retrieve determinista, igual criterio que el retrieval del eval). Verificado end-to-end (20 chunks, 0 errores) antes de correr.
 - Paralelismo GEN_JOBS=4 (seguro con Claude: sesiones `-p` independientes, sin la contención SQLite que trababa opencode; y sin cap de presupuesto no hay salvaguarda que aborte).

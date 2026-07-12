@@ -29,9 +29,11 @@ export LACOCO_EMBEDDING_MAX_CHARS="${LACOCO_EMBEDDING_MAX_CHARS:-2000}"
 
 GEN_JOBS="${GEN_JOBS:-1}"
 
-RID_NC="cc-nc"            # no_context (agente claude-code)
-RID_SOFT="cc-mcp-soft"   # MCP hint suave (agente claude-code-mcp)
-RID_HARD="cc-mcp-hard"   # MCP hint fuerte (agente claude-code-mcp)
+# Prefijo de run-id (para no pisar corridas de otros modelos). Ej: RID_PREFIX=cc-haiku.
+RID_PREFIX="${RID_PREFIX:-cc}"
+RID_NC="${RID_PREFIX}-nc"            # no_context (agente claude-code)
+RID_SOFT="${RID_PREFIX}-mcp-soft"   # MCP hint suave (agente claude-code-mcp)
+RID_HARD="${RID_PREFIX}-mcp-hard"   # MCP hint fuerte (agente claude-code-mcp)
 
 GEN13_REPOS=(svelte-510 svelte-728 svelte-906 svelte-907 svelte-1116 \
   prettier-14400 prettier-12930 prettier-6604 prettier-5025 prettier-4667 \
