@@ -361,14 +361,28 @@ export function buildPrompt(
 
   if (options?.mcpHint === true) {
     // Modo tool: el agente tiene la tool `lacoco_retrieve` disponible. Hint fijo
-    // y mínimo para medir su UTILIDAD, no su descubribilidad.
+    // (mismo para todas las celdas) para medir su UTILIDAD, no su descubribilidad.
+    // Endurecido a PROTOCOLO obligatorio: la corrida previa mostró que un hint
+    // suave ("úsala primero") daba solo 0.7 llamadas/celda porque el agente seguía
+    // grepeando. Aquí la tool es el localizador PRIMARIO y grep/read son fallback.
     sections.push(
       [
-        "# Herramienta de contexto disponible",
+        "# Localización de código: usa `lacoco_retrieve` PRIMERO (obligatorio)",
         "",
-        "Tienes la tool `lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`.",
-        "Úsala PRIMERO para localizar los símbolos relevantes antes de grep/read: devuelve rutas,",
-        "rangos de línea y el cuerpo de cada símbolo tal como está en el repositorio.",
+        "Este repositorio está indexado. Tienes la tool",
+        "`lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`,",
+        "que devuelve los símbolos relevantes con su ruta, rango de líneas y CUERPO",
+        "tal como están en el repo — la localización que normalmente harías con grep/read.",
+        "",
+        "Protocolo de trabajo (síguelo):",
+        "1. ANTES de cualquier grep, glob o read exploratorio, llama a `lacoco_retrieve`",
+        "   con la descripción del problema para localizar dónde está el código a tocar.",
+        "2. Si la primera respuesta no basta, vuelve a llamarla refinando la query o el",
+        "   `intent`/`dimensions` — es más barata y precisa que rastrear el repo a mano.",
+        "3. Usa grep/read SOLO como fallback puntual para confirmar o ampliar lo que la",
+        "   tool ya te señaló, no para descubrir la ubicación desde cero.",
+        "",
+        "No edites ningún archivo hasta haber localizado el sitio con `lacoco_retrieve`.",
       ].join("\n"),
     );
   }

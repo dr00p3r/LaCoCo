@@ -94,7 +94,7 @@ describe("generation retrieval context preflight", () => {
   it("inyecta el hint de la tool solo cuando mcpHint está activo", () => {
     const withHint = buildPrompt(task(), strategy("no_context"), null, undefined, { mcpHint: true });
     expect(withHint).toContain("lacoco_retrieve");
-    expect(withHint).toContain("Herramienta de contexto disponible");
+    expect(withHint).toContain("PRIMERO");
 
     const withoutHint = buildPrompt(task(), strategy("no_context"), null);
     expect(withoutHint).not.toContain("lacoco_retrieve");
