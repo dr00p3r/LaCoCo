@@ -124,6 +124,31 @@ echo "########## 6) RETRIEVAL + METRICS (un run-id por régimen) ##########"
 retrieval_phase "$RUN_MH" bench10_mh
 retrieval_phase "$RUN_SH" bench10_sh
 
+echo "########## 7) GENERACIÓN Pass@1 (opt-in BENCH10_GEN=1; cuesta \$) ##########"
+# Default OFF: el build de retrieval (gratis) queda intacto. Actívalo con:
+#   BENCH10_GEN=1 GEN_BUDGET=8 bash eval/scripts/run-bench10.sh
+# Corre con el MISMO run-id que el retrieval MH (RUN_MH) para que findRetrievalRecord
+# halle el contexto pre-inyectado (connector/hybrid). Prioriza multi-hop.
+if [ "${BENCH10_GEN:-0}" = "1" ]; then
+  # El servidor MCP (opencode_mcp → lacoco_retrieve) corre desde dist/: build primero.
+  echo "  build dist/ (servidor MCP lacoco) ..."
+  if npm run build >/dev/null 2>&1; then
+    echo "  build OK"
+    GEN_BUDGET=${GEN_BUDGET:-8}
+    GEN_PARALLEL=${GEN_PARALLEL:-1}
+    echo "===== [bench10_mh_gen] GENERATION (run=$RUN_MH, budget=\$$GEN_BUDGET, parallel=$GEN_PARALLEL) $(date +%H:%M:%S) ====="
+    npm run eval:generation -- --manifests-dir "$MD" --run-id "$RUN_MH" --split bench10_mh_gen \
+      --max-budget-usd "$GEN_BUDGET" --max-parallel-repos "$GEN_PARALLEL" --resume 2>&1 | tail -10
+    echo "===== [bench10_mh_gen] METRICS $(date +%H:%M:%S) ====="
+    npm run eval:metrics:generation -- --manifests-dir "$MD" --run-id "$RUN_MH" 2>&1 | tail -6
+    echo "  -> generación en eval/runs/$RUN_MH/"
+  else
+    echo "  build FALLÓ → generación ABORTADA (el servidor MCP necesita dist/)."
+  fi
+else
+  echo "  BENCH10_GEN!=1 → generación OMITIDA (solo retrieval)."
+fi
+
 echo "===== DONE $(date +%H:%M:%S) ====="
 echo "multi-hop : eval/runs/$RUN_MH/summary.md"
 echo "single-hop: eval/runs/$RUN_SH/summary.md"

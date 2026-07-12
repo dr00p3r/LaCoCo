@@ -111,6 +111,10 @@ phases:
       - "rpr"
       - "agentic"
       - "consensus"
+      # connector (SCR): inyecta contexto con conectividad tipada entre anclas para
+      # los gen splits (bench10_mh_gen). Amplía el universo de estrategias; inocuo
+      # por la intersección include_strategies ∩ split.strategies.
+      - "connector"
     timeout_ms: 600000
     apply_patch_mode: "agent_modifies_worktree"
     reset_repo_before_each_task: true

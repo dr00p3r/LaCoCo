@@ -22,6 +22,10 @@ import { isEntrypoint } from "./lib/cli.js";
 import type { TaskDefinition } from "./lib/types.js";
 
 const STRATEGIES_8 = ["hybrid", "ictd", "clcr", "rpr", "consensus", "repograph", "ppr", "connector"];
+// Estrategias de GENERACIÓN (Pass@1): no_context (agente pide contexto on-demand
+// vía lacoco_retrieve/MCP) + connector (SCR pre-inyectado) + hybrid (baseline
+// pre-inyectado). Intersección con run.generation.include_strategies.
+const GEN_STRATEGIES = ["no_context", "connector", "hybrid"];
 
 interface Options {
   manifestsDir?: string;
@@ -51,6 +55,24 @@ function splitBody(description: string, ids: string[]): Record<string, unknown> 
     repo_ids: ids,
     task_ids: ids,
     strategies: STRATEGIES_8,
+  };
+}
+
+/**
+ * Split de GENERACIÓN (opt-in, BENCH10_GEN=1): mismos ids pero con estrategias de
+ * generación, agente opencode_mcp (contexto bajo demanda) y sanitizer baseline
+ * (régimen del agente cloud, no el determinista del retrieval).
+ */
+function genSplitBody(description: string, ids: string[]): Record<string, unknown> {
+  return {
+    description,
+    require_gold_status: "ready",
+    sanitizer_variant: "baseline",
+    sanitizer_variants: ["baseline"],
+    repo_ids: ids,
+    task_ids: ids,
+    strategies: GEN_STRATEGIES,
+    agents: ["opencode_mcp"],
   };
 }
 
@@ -103,6 +125,17 @@ function main(): void {
   runDoc.setIn(
     ["splits", "bench10_sh"],
     splitBody("10 repos, SINGLE-HOP (fix toca 1 símbolo): control, los baselines empatan.", sh),
+  );
+  runDoc.setIn(
+    ["splits", "bench10_mh_gen"],
+    genSplitBody(
+      "10 repos, MULTI-HOP para GENERACIÓN (Pass@1). Agente opencode_mcp (contexto on-demand vía lacoco_retrieve) + connector/hybrid pre-inyectado. Corre opt-in con BENCH10_GEN=1, mismo run-id que el retrieval.",
+      mh,
+    ),
+  );
+  runDoc.setIn(
+    ["splits", "bench10_sh_gen"],
+    genSplitBody("10 repos, SINGLE-HOP para GENERACIÓN (control de Pass@1). Mismo agente/estrategias que bench10_mh_gen.", sh),
   );
   writeFileSync(runPath, runDoc.toString(), "utf8");
 
