@@ -595,7 +595,11 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
   if (tasks.length === 0) {
     throw new Error(`no tasks matched the combined filters for split ${settings.splitName}`);
   }
-  if (strategies.length === 0) {
+  // `no_context` no recupera nada (lacoco_strategy: null), así que el filtro de
+  // estrategias recuperables lo excluye. Un split solo-no_context (p. ej. la
+  // variante MCP, que toma el contexto del tool en vivo) es válido: se escribe un
+  // retrieval.jsonl vacío para que la generación pueda cargarlo, sin abortar.
+  if (strategies.length === 0 && !settings.strategyIds.has("no_context")) {
     throw new Error(`no strategies matched the combined filters for split ${settings.splitName}`);
   }
   if (sanitizerVariants.length === 0) {

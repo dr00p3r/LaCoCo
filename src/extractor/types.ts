@@ -10,6 +10,13 @@ export interface NodeRow {
   filepath: string;
   signature: string;
   isDeprecated: 0 | 1;
+  /**
+   * Línea 1-indexada donde empieza/termina el símbolo declarante en su archivo.
+   * Se puebla en extracción con ts-morph. `null`/ausente = sin span propio
+   * (EXTERNAL_LIB) → el resolver de cuerpo cae de vuelta a la firma.
+   */
+  startLine?: number | null;
+  endLine?: number | null;
 }
 
 /** Representa una arista relacional entre nodos. */

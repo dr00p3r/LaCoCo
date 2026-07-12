@@ -81,6 +81,56 @@ agents:
       stderr_log: "agent.stderr.log"
       patch_file: "patch.diff"
 
+  # Variante MCP: mismo OpenCode + mismo modelo, pero con el servidor MCP de
+  # LaCoCo registrado vía OPENCODE_CONFIG. Se corre siempre con strategy
+  # no_context (sin contexto pre-inyectado): el agente pide contexto BAJO DEMANDA
+  # con la tool lacoco_retrieve. El harness escribe el opencode.mcp.json por celda.
+  - id: opencode_mcp
+    label: "OpenCode CLI + LaCoCo MCP"
+    enabled: true
+    adapter_kind: "cli"
+    command: "opencode"
+    availability_check:
+      command: "opencode --version"
+    invocation:
+      mode: "non_interactive_run"
+      working_directory: "{repo_path}"
+      env:
+        OPENCODE_CONFIG: "{mcp_config_file}"
+      args:
+        - "run"
+        - "Implementa la tarea descrita en el archivo adjunto. Deja el repositorio listo para ejecutar las pruebas indicadas."
+        - "--dir"
+        - "{repo_path}"
+        - "--model"
+        - "{model}"
+        - "--agent"
+        - "{agent_profile}"
+        - "--format"
+        - "json"
+        - "--file"
+        - "{prompt_file}"
+    model:
+      default: "opencode-go/qwen3.7-plus"
+      env: "LACOCO_EVAL_OPENCODE_MODEL"
+    agent_profile:
+      default: "build"
+      env: "LACOCO_EVAL_OPENCODE_AGENT"
+    credentials:
+      required: true
+      notes:
+        - "Requiere el proyecto indexado (lacoco index_graph + index_vectors) y pnpm build."
+    safety:
+      allow_network: false
+      allow_shell: true
+      allow_edit: true
+      dangerous_skip_permissions_default: false
+    outputs:
+      session_json: "agent.session.jsonl"
+      stdout_log: "agent.stdout.log"
+      stderr_log: "agent.stderr.log"
+      patch_file: "patch.diff"
+
   - id: codex-cli
     label: "Codex CLI"
     enabled: false

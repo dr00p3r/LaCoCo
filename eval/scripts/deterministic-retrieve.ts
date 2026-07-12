@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { LaCoCoDatabase } from "../../src/persistence/lacoco-graph-manager/lacoco-sqlite-service.js";
 import { LaCoCoLanceDb } from "../../src/persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import type { SanitizerOutput } from "../../src/retriever/models/utilities/types.js";
+import { assertRagSanitizer } from "../../src/retriever/utilities/structured-query.js";
 import {
   getStrategyEntry,
   type StrategyRuntimeOptions,
@@ -11,9 +12,6 @@ import { runRetrieve, type RetrieveRuntime } from "../../src/cli/pipeline.js";
 import { resolveNumberConfig, resolveStringConfig } from "../../src/cli/config.js";
 import { OllamaService } from "../../src/slms/ollama-service.js";
 import { isEntrypoint } from "./lib/cli.js";
-
-const INTENTS = new Set(["understand", "refactor", "create", "debug", "integrate", "unknown"]);
-const DIMENSIONS = new Set(["SYS", "CPG", "DTG"]);
 
 class DisabledLlmClient implements LlmClient {
   abort(): void {}
@@ -27,26 +25,8 @@ function parseSanitizer(encoded: string): SanitizerOutput {
   if (typeof value !== "object" || value === null) {
     throw new Error("deterministic sanitizer payload must be an object");
   }
-  const record = value as Record<string, unknown>;
-  if (record.route !== "RAG") throw new Error("deterministic sanitizer route must be RAG");
-  if (typeof record.clean_query !== "string" || record.clean_query.trim().length === 0) {
-    throw new Error("deterministic sanitizer clean_query must be a non-empty string");
-  }
-  if (typeof record.embedding_input !== "string" || record.embedding_input.trim().length === 0) {
-    throw new Error("deterministic sanitizer embedding_input must be a non-empty string");
-  }
-  if (typeof record.intent !== "string" || !INTENTS.has(record.intent)) {
-    throw new Error(`unsupported deterministic sanitizer intent: ${String(record.intent)}`);
-  }
-  if (!Array.isArray(record.dimensions) || record.dimensions.some(
-    (dimension) => typeof dimension !== "string" || !DIMENSIONS.has(dimension),
-  )) {
-    throw new Error("deterministic sanitizer dimensions must contain only SYS, CPG, or DTG");
-  }
-  if (typeof record.confidence !== "number" || !Number.isFinite(record.confidence)) {
-    throw new Error("deterministic sanitizer confidence must be a finite number");
-  }
-  return value as SanitizerOutput;
+  // Misma validación que el modo tool (MCP): route RAG + campos completos.
+  return assertRagSanitizer(value as Record<string, unknown>);
 }
 
 function createRuntime(sanitized: SanitizerOutput): RetrieveRuntime {

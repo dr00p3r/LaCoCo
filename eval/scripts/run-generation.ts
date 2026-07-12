@@ -38,6 +38,7 @@ import {
 import { resolveEvalLayout } from "./lib/layout.js";
 import { readRepositoriesLock } from "./lib/repo-lock.js";
 import { PROJECT_ROOT, resolveManifestsDir } from "./lib/paths.js";
+import { applyEmbeddingEnv, embeddingEnv, resolveEmbeddingProfile } from "./lib/embedding-profile.js";
 import {
   GENERATION_RECORD_SCHEMA_VERSION,
   makeEmptyArtifactPaths,
@@ -352,10 +353,25 @@ export function buildPrompt(
   strategy: StrategyDefinition,
   retrievalRecord: RetrievalJsonlRecord | null,
   regressionInfo?: { id: string; baseline_failing_tests: string[]; base_commit: string },
+  options?: { mcpHint?: boolean },
 ): string {
   const sections: string[] = [];
   sections.push(`# Tarea\n\n${task.prompt}`);
   sections.push(`# Repositorio\n\nid: ${task.repo_id}\ntype: ${task.type}\ndifficulty: ${task.difficulty}`);
+
+  if (options?.mcpHint === true) {
+    // Modo tool: el agente tiene la tool `lacoco_retrieve` disponible. Hint fijo
+    // y mínimo para medir su UTILIDAD, no su descubribilidad.
+    sections.push(
+      [
+        "# Herramienta de contexto disponible",
+        "",
+        "Tienes la tool `lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`.",
+        "Úsala PRIMERO para localizar los símbolos relevantes antes de grep/read: devuelve rutas,",
+        "rangos de línea y el cuerpo de cada símbolo tal como está en el repositorio.",
+      ].join("\n"),
+    );
+  }
 
   sections.push(
     [
@@ -448,19 +464,75 @@ function buildAgentCommand(
   promptFile: string,
   model: string,
   agentProfile: string,
-): string {
-  const args = getAgentArgs(agent).map((arg) => {
-    let out = arg;
-    out = out.replaceAll("{repo_path}", repoPath);
-    out = out.replaceAll("{prompt_file}", promptFile);
-    out = out.replaceAll("{model}", model);
-    out = out.replaceAll("{agent_profile}", agentProfile);
-    return out;
-  });
+  mcpConfigFile?: string,
+): { command: string; env: Record<string, string> } {
+  const expand = (value: string): string => value
+    .replaceAll("{repo_path}", repoPath)
+    .replaceAll("{prompt_file}", promptFile)
+    .replaceAll("{model}", model)
+    .replaceAll("{agent_profile}", agentProfile)
+    .replaceAll("{mcp_config_file}", mcpConfigFile ?? "");
+
+  const args = getAgentArgs(agent).map(expand);
   if (agent.command === null) {
     throw new Error(`agent ${agent.id}.command is null; cannot build invocation`);
   }
-  return [agent.command, ...args].map(shellQuote).join(" ");
+  const command = [agent.command, ...args].map(shellQuote).join(" ");
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(getAgentEnv(agent))) {
+    env[key] = expand(value);
+  }
+  return { command, env };
+}
+
+/** Variables de entorno declaradas en `invocation.env` del agente (opcional). */
+function getAgentEnv(agent: AgentDefinition): Record<string, string> {
+  const env = (agent.invocation as { env?: unknown }).env;
+  if (env === undefined || env === null) return {};
+  if (typeof env !== "object" || Array.isArray(env)) {
+    throw new Error(`agent ${agent.id}.invocation.env must be an object`);
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
+    if (typeof value !== "string") {
+      throw new Error(`agent ${agent.id}.invocation.env.${key} must be a string`);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+/** True si algún valor de env referencia el placeholder `{mcp_config_file}`. */
+function agentNeedsMcpConfig(agent: AgentDefinition): boolean {
+  return Object.values(getAgentEnv(agent)).some((value) => value.includes("{mcp_config_file}"));
+}
+
+/**
+ * Escribe el archivo de config MCP de opencode para una celda, apuntando al
+ * servidor `lacoco mcp <repo>` desde `dist/`. Vive en los artefactos de la celda
+ * (NO en el repo: `resetRepoClean`/git clean lo borraría). Devuelve su ruta.
+ */
+function writeMcpConfigForCell(
+  cellDir: string,
+  repoPath: string,
+  serverEnv: Record<string, string>,
+): string {
+  const configPath = join(cellDir, "opencode.mcp.json");
+  const config = {
+    $schema: "https://opencode.ai/config.json",
+    mcp: {
+      lacoco: {
+        type: "local",
+        enabled: true,
+        command: ["node", join(PROJECT_ROOT, "dist/cli/index.js"), "mcp", repoPath],
+        // El servidor MCP debe embeber la query con el MISMO modelo del índice.
+        environment: serverEnv,
+      },
+    },
+  };
+  mkdirSync(cellDir, { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return configPath;
 }
 
 interface ParsedTestResult {
@@ -640,6 +712,7 @@ interface RunOptions {
   agentId?: string | undefined;
   maxBudgetUsd?: number | undefined;
   timeoutMs?: number | undefined;
+  maxParallelRepos?: number | undefined;
   resume: boolean;
   dryRun: boolean;
   manifestsDir?: string | undefined;
@@ -656,6 +729,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     "--split",
     "--max-budget-usd",
     "--timeout-ms",
+    "--max-parallel-repos",
     "--manifests-dir",
     "--resume",
   ]);
@@ -668,6 +742,7 @@ function parseRunOptions(argv: string[]): RunOptions {
     agentId: options.agentId,
     maxBudgetUsd: options.maxBudgetUsd,
     timeoutMs: options.timeoutMs,
+    maxParallelRepos: options.maxParallelRepos,
     resume: options.resume === true,
     dryRun: options.dryRun,
     manifestsDir: options.manifestsDir,
@@ -793,6 +868,11 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
   const options = parseRunOptions(argv);
   const manifestsDir = resolveManifestsDir(options.manifestsDir);
   const manifests = loadManifests(manifestsDir);
+  // Perfil de embeddings del run (Jina 768 en el árbol canónico). Se aplica al
+  // proceso para que el servidor MCP lacoco (variante opencode_mcp), spawneado
+  // aguas abajo, embeba las queries con el MISMO modelo que construyó el índice.
+  const embeddingProfile = resolveEmbeddingProfile(manifests.run);
+  applyEmbeddingEnv(embeddingProfile);
   // Comando de test crudo (formato Docker SWE-PolyBench) por repo: el lock no lo
   // persiste, así que lo tomamos del manifiesto de repositorios.
   const repoTestCommandById = new Map(
@@ -883,13 +963,29 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
     console.log(`Resume: ${completedCells.size} completed cells, reported spend $${spentUsd.toFixed(6)}`);
   }
 
+  // Agrupar por repo: las celdas del MISMO repo comparten working tree (git reset
+  // entre celdas) y DEBEN ir en serie; repos distintos corren en paralelo (pool
+  // acotado por --max-parallel-repos, default 1 = comportamiento secuencial previo).
+  // El estado compartido (spentUsd, stop, failures, completedCells, appendFileSync)
+  // se muta de forma SÍNCRONA entre awaits → atómico en el hilo único de JS.
+  const repoGroups = new Map<string, TaskDefinition[]>();
   for (const task of tasks) {
-    if (stop) break;
+    const group = repoGroups.get(task.repo_id) ?? [];
+    group.push(task);
+    repoGroups.set(task.repo_id, group);
+  }
+  const groups = [...repoGroups.values()];
+  const maxParallelRepos = Math.max(1, Math.min(options.maxParallelRepos ?? 1, groups.length));
+  if (maxParallelRepos > 1) console.log(`Parallel repos: ${maxParallelRepos}`);
+
+  const runRepoGroup = async (groupTasks: TaskDefinition[]): Promise<void> => {
+  for (const task of groupTasks) {
+    if (stop) return;
     const locked = lockedById.get(task.repo_id);
     if (locked === undefined) {
       failures.push(`${task.id}: repository ${task.repo_id} is missing from ${layout.lockFile}`);
       console.error(failures.at(-1));
-      if (!settings.continueOnTaskFailure) break;
+      if (!settings.continueOnTaskFailure) { stop = true; return; }
       continue;
     }
 
@@ -993,8 +1089,9 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           }
         }
 
+        const needsMcp = agentNeedsMcpConfig(agent);
         const retrievalRecord = findRetrievalRecord(retrievalRecords, task.id, recStrategyId);
-        const prompt = buildPrompt(task, strategy, retrievalRecord, regressionInfo);
+        const prompt = buildPrompt(task, strategy, retrievalRecord, regressionInfo, { mcpHint: needsMcp });
         mkdirSync(cellDir, { recursive: true });
         writeFileSync(paths.prompt, prompt, "utf8");
 
@@ -1005,7 +1102,12 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           paths.context_json = relative(PROJECT_ROOT, dst);
         }
 
-        const command = buildAgentCommand(agent, locked.repoPath, paths.prompt, model, agentProfile);
+        const mcpConfigFile = needsMcp
+          ? writeMcpConfigForCell(cellDir, locked.repoPath, embeddingEnv(embeddingProfile))
+          : undefined;
+        const { command, env: agentEnv } = buildAgentCommand(
+          agent, locked.repoPath, paths.prompt, model, agentProfile, mcpConfigFile,
+        );
         console.log(`\n${task.id} x ${strategy.id} x ${agent.id}`);
         console.log(`  command: ${command.slice(0, 200)}${command.length > 200 ? "..." : ""}`);
 
@@ -1027,7 +1129,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
             cwd: PROJECT_ROOT,
             timeoutMs: settings.agentTimeoutMs,
             logPath: paths.stdout,
-            env: { npm_config_loglevel: "silent", npm_config_update_notifier: "false" },
+            env: { npm_config_loglevel: "silent", npm_config_update_notifier: "false", ...agentEnv },
           });
           agentExitCode = result.exitCode;
           agentStdout = result.stdout;
@@ -1045,7 +1147,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           }
         }
         const agentDurationMs = Math.round(performance.now() - agentStartedAt);
-        const telemetry: OpenCodeTelemetry = agent.id === "opencode"
+        const telemetry: OpenCodeTelemetry = agent.command === "opencode"
           ? parseOpenCodeTelemetry(agentStdout)
           : { cost_usd: null, tokens: null, tool_calls: null };
         const costUsd = telemetry.cost_usd;
@@ -1209,6 +1311,19 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
       }
     }
   }
+  };
+
+  // Pool acotado: N workers consumen grupos-de-repo de una cola compartida.
+  let nextGroup = 0;
+  const worker = async (): Promise<void> => {
+    while (!stop) {
+      const index = nextGroup;
+      nextGroup += 1;
+      if (index >= groups.length) return;
+      await runRepoGroup(groups[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: maxParallelRepos }, () => worker()));
 
   if (options.dryRun) {
     console.log("\nDry run: no agent invocations, no diffs, no test runs.");

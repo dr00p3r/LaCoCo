@@ -104,6 +104,26 @@ const CONFIG_DEFINITIONS = {
         ? null
         : "retrieval.propositions debe ser boolean (canal doc-side C2 sobre la tabla node_propositions)",
   },
+  "context.template": {
+    // v1 = firmas (default histórico, protege el baseline). v2 = firmas + cuerpo
+    // del símbolo cortado del working tree por el ChunkBodyResolver.
+    type: "string",
+    defaultValue: "v1",
+    env: "LACOCO_CONTEXT_TEMPLATE",
+    validate: (value) =>
+      value === "v1" || value === "v2"
+        ? null
+        : "context.template debe ser 'v1' (firmas) o 'v2' (firmas + cuerpo)",
+  },
+  "context.maxTokens": {
+    type: "number",
+    defaultValue: 4000,
+    env: "LACOCO_CONTEXT_MAX_TOKENS",
+    validate: (value) =>
+      typeof value === "number" && Number.isInteger(value) && value > 0
+        ? null
+        : "context.maxTokens debe ser un entero positivo",
+  },
   "timeout.ms": {
     type: "number",
     defaultValue: 30_000,

@@ -11,6 +11,7 @@ import {
   resolveTypeToId,
   isDeprecated,
   getMethodSignature,
+  lineSpan,
 } from "./utilities.js";
 import { analyzeCallable } from "./callable-analysis.js";
 
@@ -95,6 +96,7 @@ export function extractClassProperties(
       filepath: filePath,
       signature: prop.getText(),
       isDeprecated: isDeprecated(prop.getSymbol()),
+      ...lineSpan(prop),
     });
     cb.insertEdge(classId, propId, "DECLARES");
   }
@@ -126,6 +128,7 @@ export function extractClassAccessors(
       filepath: filePath,
       signature: accessor.getText().split("{")[0]?.trimEnd() ?? "",
       isDeprecated: isDeprecated(accessor.getSymbol()),
+      ...lineSpan(accessor),
     });
     cb.insertEdge(classId, accessorId, "DECLARES");
   }
@@ -158,6 +161,7 @@ export function extractClassMethods(
       filepath: filePath,
       signature,
       isDeprecated: isDeprecated(method.getSymbol()),
+      ...lineSpan(method),
     });
     cb.insertEdge(classId, methodId, "DECLARES");
 

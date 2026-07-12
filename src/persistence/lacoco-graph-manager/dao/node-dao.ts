@@ -1,12 +1,27 @@
 import Database from "better-sqlite3";
 import { DIMENSIONS, type Dimension } from "../../../domain/dimensions.js";
 import {
+  optionalNumber,
   parseGraphNode,
   requireRecord,
   requireString,
   type GraphNode,
   type GraphNodeWithMetadata,
 } from "../model/types.js";
+
+/**
+ * Localización de un símbolo para servir su cuerpo desde el working tree.
+ * `signature` es el fallback (`COALESCE(signature, name)`) cuando las líneas
+ * son `null` o el archivo se desfasó respecto al índice.
+ */
+export interface NodeSpan {
+  nodeId: string;
+  name: string;
+  filepath: string;
+  signature: string;
+  startLine: number | null;
+  endLine: number | null;
+}
 
 export class NodeDao {
   private stmtInsertNode: Database.Statement;
@@ -17,15 +32,17 @@ export class NodeDao {
   constructor(private readonly db: Database.Database) {
     this.stmtInsertNode = db.prepare(
       `INSERT INTO nodes
-         (id, kind, name, filepath, signature, isDeprecated)
+         (id, kind, name, filepath, signature, isDeprecated, startLine, endLine)
        VALUES
-         (@id, @kind, @name, @filepath, @signature, @isDeprecated)
+         (@id, @kind, @name, @filepath, @signature, @isDeprecated, @startLine, @endLine)
        ON CONFLICT(id) DO UPDATE SET
          kind = excluded.kind,
          name = excluded.name,
          filepath = excluded.filepath,
          signature = excluded.signature,
-         isDeprecated = excluded.isDeprecated`
+         isDeprecated = excluded.isDeprecated,
+         startLine = excluded.startLine,
+         endLine = excluded.endLine`
     );
 
     this.stmtDeleteEdgesByTarget = db.prepare(
@@ -42,7 +59,18 @@ export class NodeDao {
   }
 
   insertNode(node: GraphNode): void {
-    this.stmtInsertNode.run(node);
+    // better-sqlite3 exige que TODOS los parámetros con nombre estén presentes;
+    // las columnas de línea pueden faltar en nodos sin span (→ null).
+    this.stmtInsertNode.run({
+      id: node.id,
+      kind: node.kind,
+      name: node.name,
+      filepath: node.filepath,
+      signature: node.signature,
+      isDeprecated: node.isDeprecated,
+      startLine: node.startLine ?? null,
+      endLine: node.endLine ?? null,
+    });
   }
 
   clearAll(): void {
@@ -109,6 +137,35 @@ export class NodeDao {
         requireString(row.id, "NodeSignatureRow.id"),
         requireString(row.text, "NodeSignatureRow.text"),
       );
+    }
+    return map;
+  }
+
+  /**
+   * Localización + firma de los nodos dados, para que el resolver de cuerpo
+   * corte el código del working tree. Nodos ausentes se omiten del mapa.
+   */
+  getNodeSpans(ids: string[]): Map<string, NodeSpan> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT id, name, filepath, COALESCE(signature, name) AS signature, startLine, endLine
+         FROM nodes WHERE id IN (${placeholders})`,
+      )
+      .all(...ids);
+    const map = new Map<string, NodeSpan>();
+    for (const value of rows) {
+      const row = requireRecord(value, "NodeSpanRow");
+      const nodeId = requireString(row.id, "NodeSpanRow.id");
+      map.set(nodeId, {
+        nodeId,
+        name: requireString(row.name, "NodeSpanRow.name"),
+        filepath: requireString(row.filepath, "NodeSpanRow.filepath"),
+        signature: requireString(row.signature, "NodeSpanRow.signature"),
+        startLine: optionalNumber(row.startLine, "NodeSpanRow.startLine"),
+        endLine: optionalNumber(row.endLine, "NodeSpanRow.endLine"),
+      });
     }
     return map;
   }

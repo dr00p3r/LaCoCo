@@ -51,4 +51,35 @@ describe("PromptInjector", () => {
       expect(() => injector.inject("prompt", [], "v999")).toThrow("desconocido");
     });
   });
+
+  describe("template v2", () => {
+    it("renderiza el cuerpo en un fence ts con el rango de líneas", () => {
+      const withBody: ContextChunk = {
+        ...chunk("dom.ts#set_attribute", 0.9, "function set_attribute() {\n  node.setAttribute();\n}"),
+        location: { filepath: "/repo/dom.ts", startLine: 142, endLine: 168, truncated: false },
+      };
+
+      const result = injector.inject("arregla set_attribute", [withBody], "v2");
+      expect(result).toContain("(L142–L168)");
+      expect(result).toContain("```ts");
+      expect(result).toContain("node.setAttribute();");
+    });
+
+    it("marca los chunks recortados", () => {
+      const truncated: ContextChunk = {
+        ...chunk("big.ts#huge", 0.9, "// … [50 líneas omitidas] …"),
+        location: { filepath: "/repo/big.ts", startLine: 1, endLine: 200, truncated: true },
+      };
+
+      const result = injector.inject("q", [truncated], "v2");
+      expect(result).toContain("(L1–L200, recortado)");
+    });
+
+    it("omite el rango de líneas cuando el chunk no tiene location (fallback firma)", () => {
+      const signatureOnly = chunk("iface.ts#Foo", 0.9, "interface Foo");
+      const result = injector.inject("q", [signatureOnly], "v2");
+      expect(result).toContain("interface Foo");
+      expect(result).not.toMatch(/\(L\d+–L\d+/);
+    });
+  });
 });

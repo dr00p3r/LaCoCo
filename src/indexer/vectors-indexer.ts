@@ -3,6 +3,7 @@ import { CodeExtractor } from "../extractor/code-extractor.js";
 import { VectorCallbacks } from "../extractor/vector-callbacks.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
+import { EMBEDDING_BATCH_SIZE } from "../embeddings/embedding-config.js";
 
 type VectorStore = Pick<LaCoCoLanceDb, "buildIndex" | "clear" | "close" | "connect" | "replaceBatch">;
 
@@ -34,6 +35,8 @@ export class VectorsIndexer {
       const callbacks = new VectorCallbacks(
         this.lanceDb,
         generateEmbedding,
+        undefined,             // inferDimension: default (por KIND)
+        EMBEDDING_BATCH_SIZE,  // acota el pico de memoria por batch (LACOCO_EMBEDDING_BATCH_SIZE)
       );
       const codeExtractor = new CodeExtractor(callbacks);
 

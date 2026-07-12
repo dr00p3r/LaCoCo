@@ -18,7 +18,29 @@ const TEMPLATES: Record<string, (chunks: ContextChunk[]) => string> = {
     return `### Contexto del Proyecto (recuperado automáticamente)
 Los siguientes fragmentos de código fueron recuperados del repositorio actual
 como contexto para tu consulta. Úsalos como referencia absoluta de firmas,
-tipos y dependencias locales, y sobre todo, como ubicación de archivos. 
+tipos y dependencias locales, y sobre todo, como ubicación de archivos.
+No inventes símbolos que no aparezcan aquí.
+
+${blocks}
+
+### Fin del Contexto
+`;
+  },
+  v2: (chunks) => {
+    const blocks = chunks
+      .map((c, i) => {
+        const loc = c.location
+          ? ` (L${c.location.startLine}–L${c.location.endLine}${c.location.truncated ? ", recortado" : ""})`
+          : "";
+        return `[${i + 1}] ${c.source} | ${c.nodeId}${loc}\n\`\`\`ts\n${c.text}\n\`\`\``;
+      })
+      .join("\n\n---\n\n");
+
+    return `### Contexto del Proyecto (recuperado automáticamente)
+Los siguientes fragmentos de código fueron recuperados del repositorio actual
+como contexto para tu consulta. Cada bloque incluye la ubicación (archivo y
+rango de líneas) y el cuerpo del símbolo tal como está en el árbol de trabajo.
+Úsalos como referencia absoluta de implementación, firmas y dependencias.
 No inventes símbolos que no aparezcan aquí.
 
 ${blocks}

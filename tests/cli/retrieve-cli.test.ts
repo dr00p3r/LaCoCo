@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -361,6 +361,62 @@ describe("lacoco retrieve CLI", () => {
     }
   });
 
+  it("con template v2 inyecta el cuerpo del símbolo y su rango de líneas", async () => {
+    const temp = createTempIndexedDbWithSource();
+    const previousTemplate = process.env.LACOCO_CONTEXT_TEMPLATE;
+    try {
+      process.env.LACOCO_CONTEXT_TEMPLATE = "v2";
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        { strategy: "agentic", verbose: false, json: true },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(0);
+      expect(result.ok && result.retrieval.templateVersion).toBe("v2");
+      if (result.ok) {
+        const chunk = result.retrieval.chunks.find((c) => c.nodeId === "file1#OrderService");
+        expect(chunk?.location).toMatchObject({ startLine: 1, endLine: 3, truncated: false });
+        expect(chunk?.text).toContain("class OrderService");
+        expect(result.enrichedPrompt).toMatch(/\(L1–L3\)/u);
+      }
+    } finally {
+      restoreEnv("LACOCO_CONTEXT_TEMPLATE", previousTemplate);
+      temp.cleanup();
+    }
+  });
+
+  it("con template v2 y archivos ausentes degrada a firmas sin error", async () => {
+    const temp = createTempIndexedDb();
+    const previousTemplate = process.env.LACOCO_CONTEXT_TEMPLATE;
+    try {
+      process.env.LACOCO_CONTEXT_TEMPLATE = "v2";
+      const { streams, read } = createCapturedStreams();
+      const code = await runRetrieve(
+        "OrderService",
+        { strategy: "agentic", verbose: false, json: true },
+        streams,
+        createFakeRuntime(),
+        temp.project.id,
+      );
+      const result = JSON.parse(read().stdout) as RetrieveJsonResult;
+
+      expect(code).toBe(0);
+      if (result.ok) {
+        const chunk = result.retrieval.chunks.find((c) => c.nodeId === "file1#OrderService");
+        expect(chunk?.location).toBeUndefined();
+        expect(chunk?.text).toContain("class OrderService extends BaseService");
+      }
+    } finally {
+      restoreEnv("LACOCO_CONTEXT_TEMPLATE", previousTemplate);
+      temp.cleanup();
+    }
+  });
+
   it("usa el proyecto explícito para resolver rutas en context export", async () => {
     const temp = createTempIndexedDb();
     const output = path.join(temp.dir, "project-context.md");
@@ -618,6 +674,56 @@ function createTempIndexedDb(): {
     sourceId: "file1#OrderService.createOrder",
     targetId: "file1#CreateOrderDto",
     relation: "CONSUMES_DATA",
+  });
+  db.populateMetadata();
+  db.close();
+
+  return {
+    dir,
+    dbPath,
+    project,
+    cleanup: () => {
+      process.chdir(previousCwd);
+      restoreEnv("XDG_STATE_HOME", previousStateHome);
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+function createTempIndexedDbWithSource(): {
+  dir: string;
+  dbPath: string;
+  project: ProjectRecord;
+  cleanup: () => void;
+} {
+  const previousCwd = process.cwd();
+  const previousStateHome = process.env.XDG_STATE_HOME;
+  const dir = mkdtempSync(path.join(tmpdir(), "lacoco-cli-src-"));
+  const dbPath = path.join(dir, "tensor.sqlite");
+  mkdirSync(path.join(dir, ".git"));
+  process.env.XDG_STATE_HOME = path.join(dir, "state-home");
+  process.chdir(dir);
+
+  const srcPath = path.join(dir, "order.service.ts");
+  // 3 líneas exactas: la clase abarca L1–L3 y su nombre aparece en L1.
+  writeFileSync(
+    srcPath,
+    ["export class OrderService extends BaseService {", "  createOrder(): void {}", "}"].join("\n"),
+  );
+
+  const lanceDbPath = path.join(dir, ".lacoco", "lancedb");
+  const project = configureProjectStorage(dir, { dbPath, lanceDbPath });
+
+  const db = new LaCoCoDatabase(dbPath);
+  db.insertNode({
+    id: "file1#OrderService",
+    kind: "CLASS",
+    name: "OrderService",
+    filepath: srcPath,
+    signature: "class OrderService extends BaseService",
+    isDeprecated: 0,
+    startLine: 1,
+    endLine: 3,
   });
   db.populateMetadata();
   db.close();

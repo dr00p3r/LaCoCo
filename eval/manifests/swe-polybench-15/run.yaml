@@ -86,6 +86,10 @@ phases:
     sanitizer_variants:
       - "deterministic"
     include_strategies:
+      # no_context no recupera nada (lacoco_strategy: null); se lista para que un
+      # split solo-no_context (variante MCP) resuelva y escriba un retrieval.jsonl
+      # vacío en vez de abortar. Nunca ejecuta retrieval real.
+      - "no_context"
       - "hybrid"
       - "ictd"
       - "clcr"
@@ -436,6 +440,68 @@ splits:
     repo_ids: &p3 [svelte-1116, prettier-12930, prettier-6604, material-ui-12406]
     task_ids: *p3
     agents: [opencode]
+
+  # A/B snippets (variantes 1-3): un solo split con no_context (baseline) + hybrid
+  # (contexto). El TEMPLATE (v1 firmas / v2 cuerpos) se fija por ENV en retrieval,
+  # con run-id distinto por variante. Variante 3 (v2) filtra a hybrid con
+  # --strategy-id hybrid (no_context no usa template).
+  genAB:
+    description: >-
+      A/B de snippets: no_context + hybrid sobre las 13 tareas gradeables,
+      agente opencode. v1 (firmas) vs v2 (cuerpos+líneas) por run-id + ENV.
+    strategies: [no_context, hybrid]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: *gen13ids
+    task_ids: *gen13ids
+    agents: [opencode]
+
+  # Variante 4 del A/B: MCP bajo demanda. strategy no_context (sin contexto
+  # pre-inyectado) + agente opencode_mcp con la tool lacoco_retrieve disponible.
+  # Correr en secuencia (Ollama compartido si se paraleliza).
+  gen13_mcp:
+    description: >-
+      gen13 con OpenCode + LaCoCo MCP bajo demanda (sin contexto en el prompt;
+      el agente pide contexto con lacoco_retrieve). Contraste con no_context /
+      hook-firmas / hook-snippets. Requiere repos indexados + pnpm build.
+    strategies: [no_context]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: *gen13ids
+    task_ids: *gen13ids
+    agents: [opencode_mcp]
+
+  gen_mcp_p1:
+    description: "gen13_mcp particion 1/3 (secuencial: Ollama compartido)."
+    strategies: [no_context]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: *p1
+    task_ids: *p1
+    agents: [opencode_mcp]
+
+  gen_mcp_p2:
+    description: "gen13_mcp particion 2/3 (secuencial: Ollama compartido)."
+    strategies: [no_context]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: *p2
+    task_ids: *p2
+    agents: [opencode_mcp]
+
+  gen_mcp_p3:
+    description: "gen13_mcp particion 3/3 (secuencial: Ollama compartido)."
+    strategies: [no_context]
+    sanitizer_variant: baseline
+    sanitizer_variants: [baseline]
+    require_gold_status: ready
+    repo_ids: *p3
+    task_ids: *p3
+    agents: [opencode_mcp]
 
 resource_limits:
   max_parallel_repos: 1

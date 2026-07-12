@@ -12,6 +12,7 @@ import {
   buildClassSignature,
   getFunctionSignature,
   isDeprecated,
+  lineSpan,
   resolveSymbolToId,
   resolveTypeToId,
   safeGetText,
@@ -65,6 +66,7 @@ function extractInterfaces(
       filepath: filePath,
       signature,
       isDeprecated: isDeprecated(iface.getSymbol()),
+      ...lineSpan(iface),
     });
 
     for (const base of iface.getExtends()) {
@@ -94,6 +96,7 @@ function extractTypeAliases(
       filepath: filePath,
       signature: typeAlias.getText(),
       isDeprecated: isDeprecated(typeAlias.getSymbol()),
+      ...lineSpan(typeAlias),
     });
     const typeNode = typeAlias.getTypeNode();
     if (typeNode) extractNodeReferences(typeNode, nodeId, cb);
@@ -120,6 +123,7 @@ function extractEnums(
       filepath: filePath,
       signature: `enum ${enumName}`,
       isDeprecated: isDeprecated(enumDecl.getSymbol()),
+      ...lineSpan(enumDecl),
     });
 
     for (const member of enumDecl.getMembers()) {
@@ -132,6 +136,7 @@ function extractEnums(
         filepath: filePath,
         signature: member.getText(),
         isDeprecated: 0,
+        ...lineSpan(member),
       });
       cb.insertEdge(enumId, memberId, "DECLARES");
     }
@@ -161,6 +166,7 @@ function extractFunctions(
       filepath: filePath,
       signature,
       isDeprecated: isDeprecated(func.getSymbol()),
+      ...lineSpan(func),
     });
 
     analyzeCallable(func, nodeId, cb);
@@ -190,6 +196,7 @@ function extractClasses(
       filepath: filePath,
       signature,
       isDeprecated: isDeprecated(classDecl.getSymbol()),
+      ...lineSpan(classDecl),
     });
 
     extractSysRelations(classDecl, classId, cb);
@@ -233,6 +240,7 @@ function extractDefaultExportExpressions(
       filepath: filePath,
       signature: safeGetText(expression),
       isDeprecated: 0,
+      ...lineSpan(assignment),
     });
 
     if (wrapper.innerFunction) {

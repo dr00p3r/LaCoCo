@@ -91,6 +91,15 @@ describe("generation retrieval context preflight", () => {
     expect(prompt).not.toContain("context.json no encontrado");
   });
 
+  it("inyecta el hint de la tool solo cuando mcpHint está activo", () => {
+    const withHint = buildPrompt(task(), strategy("no_context"), null, undefined, { mcpHint: true });
+    expect(withHint).toContain("lacoco_retrieve");
+    expect(withHint).toContain("Herramienta de contexto disponible");
+
+    const withoutHint = buildPrompt(task(), strategy("no_context"), null);
+    expect(withoutHint).not.toContain("lacoco_retrieve");
+  });
+
   it("loads a successful enriched prompt", () => {
     const directory = temporaryDirectory();
     const contextPath = join(directory, "context.json");

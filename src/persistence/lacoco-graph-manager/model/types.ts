@@ -5,6 +5,9 @@ export interface GraphNode {
   filepath: string;
   signature: string;
   isDeprecated: number;
+  /** Rango de línea 1-indexado del símbolo (null si el nodo no lo tiene). */
+  startLine?: number | null;
+  endLine?: number | null;
 }
 
 export interface GraphEdge {
@@ -29,7 +32,15 @@ export function parseGraphNode(value: unknown): GraphNode {
       ? ""
       : requireString(row.signature, "GraphNode.signature"),
     isDeprecated: requireNumber(row.isDeprecated, "GraphNode.isDeprecated"),
+    startLine: optionalNumber(row.startLine, "GraphNode.startLine"),
+    endLine: optionalNumber(row.endLine, "GraphNode.endLine"),
   };
+}
+
+/** Número finito o `null` (columnas nuevas ausentes en filas antiguas). */
+export function optionalNumber(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  return requireNumber(value, label);
 }
 
 export function parseGraphEdge(value: unknown): GraphEdge {

@@ -16,6 +16,7 @@ export interface EvalCliOptions {
   useSlm?: boolean | undefined;
   maxBudgetUsd?: number | undefined;
   timeoutMs?: number | undefined;
+  maxParallelRepos?: number | undefined;
   resume?: boolean | undefined;
   strict?: boolean | undefined;
 }
@@ -36,7 +37,8 @@ export type EvalCliFlag =
   | "--resume"
   | "--strict"
   | "--max-budget-usd"
-  | "--timeout-ms";
+  | "--timeout-ms"
+  | "--max-parallel-repos";
 
 const VALUE_FLAGS = {
   "--run-id": "runId",
@@ -50,6 +52,7 @@ const VALUE_FLAGS = {
   "--manifests-dir": "manifestsDir",
   "--max-budget-usd": "maxBudgetUsd",
   "--timeout-ms": "timeoutMs",
+  "--max-parallel-repos": "maxParallelRepos",
 } as const;
 
 export function parseEvalCliOptions(
@@ -114,6 +117,17 @@ export function parseEvalCliOptions(
     delete values.timeoutMs;
   }
 
+  // Convert max-parallel-repos to a positive integer (paralelismo por repo en generación).
+  let maxParallelRepos: number | undefined;
+  if (values.maxParallelRepos !== undefined) {
+    const parsed = Number(values.maxParallelRepos);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new Error(`--max-parallel-repos requires a positive integer`);
+    }
+    maxParallelRepos = parsed;
+    delete values.maxParallelRepos;
+  }
+
   // Drop undefined-valued string flags so they don't bleed into EvalCliOptions
   const cleaned: Record<string, string> = {};
   for (const [k, v] of Object.entries(values)) {
@@ -128,6 +142,7 @@ export function parseEvalCliOptions(
     ...(strict ? { strict: true } : {}),
     ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxParallelRepos !== undefined ? { maxParallelRepos } : {}),
     ...cleaned,
   } as EvalCliOptions;
 }

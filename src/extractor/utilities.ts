@@ -252,6 +252,20 @@ export function safeGetText(node: MorphNode): string {
   }
 }
 
+/**
+ * Rango de línea 1-indexado del nodo declarante, para poblar `startLine`/`endLine`.
+ * Excluye comentarios JSDoc (`getStartLineNumber(false)`) para que el corte de
+ * cuerpo empiece en la declaración real. Devuelve `null`s si el nodo no expone
+ * posición (p.ej. sintéticos en `.d.ts`), degradando con gracia a la firma.
+ */
+export function lineSpan(node: MorphNode): { startLine: number | null; endLine: number | null } {
+  try {
+    return { startLine: node.getStartLineNumber(false), endLine: node.getEndLineNumber() };
+  } catch {
+    return { startLine: null, endLine: null };
+  }
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // §10 — Utilidades de resolución de rutas
 // ───────────────────────────────────────────────────────────────────────────────

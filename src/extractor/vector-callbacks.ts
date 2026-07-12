@@ -2,6 +2,7 @@ import type { ExtractionCallbacks, NodeRow, EdgeRelation } from "./types.js";
 import type { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import type { NodeEmbeddingRecord } from "../persistence/lacoco-vectors-manager/model/types.js";
 import { KIND_TO_DIM, type Dimension } from "../domain/dimensions.js";
+import { EMBEDDING_MAX_CHARS } from "../embeddings/embedding-config.js";
 
 type VectorEmbeddingWriter = Pick<LaCoCoLanceDb, "replaceBatch">;
 
@@ -80,7 +81,10 @@ export class VectorCallbacks implements ExtractionCallbacks {
     // `string[]` y devuelve las embeddings en el mismo orden → zip directo
     // con los nodos. Evita N round-trips al modelo y amortiza el cost fijo
     // de carga del grafo de inferencia.
-    const texts = batch.map((node) => `${node.name} ${node.signature}`);
+    // Cap del texto: un solo nodo con firma gigante pad-ea todo el batch y dispara
+    // OOM (ver EMBEDDING_MAX_CHARS). La cabeza conserva name + inicio de la firma.
+    const texts = batch.map((node) =>
+      `${node.name} ${node.signature}`.slice(0, EMBEDDING_MAX_CHARS));
     const embeddings = await this.generateEmbedding(texts);
 
     const records: NodeEmbeddingRecord[] = [];

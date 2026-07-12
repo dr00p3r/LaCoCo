@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import type { GraphNode, GraphEdge } from "./model/types.js";
-import { NodeDao } from "./dao/node-dao.js";
+import { NodeDao, type NodeSpan } from "./dao/node-dao.js";
 import { EdgeDao } from "./dao/edge-dao.js";
 import { SearchDao } from "./dao/search-dao.js";
 import { MigrationDao } from "./dao/migration-dao.js";
@@ -13,6 +13,7 @@ import { SemanticProfileStore } from "../../semantic-profile/semantic-profile-st
 import type { SemanticProfileState } from "../../semantic-profile/types.js";
 
 export type { GraphNode, GraphEdge };
+export type { NodeSpan };
 
 export class LaCoCoDatabase {
   readonly nodeDao: NodeDao;
@@ -68,6 +69,10 @@ export class LaCoCoDatabase {
 
   getNodeSignatures(ids: string[]): Map<string, string> {
     return this.nodeDao.getNodeSignatures(ids);
+  }
+
+  getNodeSpans(ids: string[]): Map<string, NodeSpan> {
+    return this.nodeDao.getNodeSpans(ids);
   }
 
   getNodeDimensions(ids: string[]): Map<string, Dimension> {

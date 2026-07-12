@@ -4,11 +4,9 @@ import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlit
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { AgentIntermediary1 } from "../retriever/utilities/mini-agents/agent-intermediary/index.js";
 import { SlmClassifier } from "../retriever/utilities/mini-agents/agent-intermediary/classifier.js";
-import {
-  ContextAggregator,
-  DEFAULT_CONTEXT_MAX_TOKENS,
-} from "../retriever/utilities/filters/context-aggregator.js";
+import { ContextAggregator } from "../retriever/utilities/filters/context-aggregator.js";
 import { PromptInjector } from "../retriever/utilities/filters/prompt-injector.js";
+import { ChunkBodyResolver } from "../retriever/utilities/filters/chunk-body-resolver.js";
 import {
   getEffectiveStrategyParameters,
   getStrategyEntry,
@@ -56,6 +54,7 @@ type ResolvedRetrieveCliOptions = RetrieveCliOptions & {
   ollama: string;
   maxTokens: number;
   grounding: boolean;
+  template: string;
 };
 
 export interface CliStreams {
@@ -83,7 +82,7 @@ export interface RetrieveRuntime {
   ): Promise<{ strategy: RecoveryStrategy; connectedLanceDb?: LaCoCoLanceDb }>;
 }
 
-interface RetrievedContext {
+export interface RetrievedContext {
   id: string;
   generatedAt: string;
   originalQuery: string;
@@ -94,6 +93,7 @@ interface RetrievedContext {
     ollama: string;
     strategyParameters: StrategyParameters;
     maxTokens: number;
+    templateVersion: string;
   };
   sanitized: SanitizerOutput;
   grounding: GroundingDiagnostics;
@@ -122,6 +122,7 @@ export interface RetrieveJsonSuccess {
     chunks: RetrievedContext["chunks"];
     strategyParameters: StrategyParameters;
     maxTokens: number;
+    templateVersion: string;
   };
   storage: {
     sqlite: string;
@@ -222,6 +223,7 @@ function createRetrieveJsonSuccess(
       chunks: context.chunks,
       strategyParameters: context.options.strategyParameters,
       maxTokens: context.options.maxTokens,
+      templateVersion: context.options.templateVersion,
     },
     storage: {
       sqlite: context.options.db,
@@ -285,7 +287,7 @@ function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): 
   const entry = getStrategyEntry(options.strategy ?? resolveStringConfig("strategy.default"));
   const strategyOptions = options.chunks === undefined ? {} : { chunks: options.chunks };
   getEffectiveStrategyParameters(entry.name, strategyOptions);
-  const maxTokens = options.maxTokens ?? DEFAULT_CONTEXT_MAX_TOKENS;
+  const maxTokens = options.maxTokens ?? resolveNumberConfig("context.maxTokens");
   if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
     throw new Error("maxTokens debe ser un entero positivo");
   }
@@ -297,6 +299,7 @@ function resolveRetrieveOptions(options: RetrieveCliOptions, project?: string): 
     ollama: options.ollama ?? resolveStringConfig("agent.endpoint"),
     maxTokens,
     grounding: options.grounding ?? resolveBooleanConfig("profile.groundingEnabled"),
+    template: resolveStringConfig("context.template"),
   };
 }
 
@@ -332,141 +335,226 @@ async function retrieveContext(
   streams: CliStreams,
   runtime: RetrieveRuntime,
 ): Promise<RetrievedContext> {
-  let stage = "inicialización";
-  let db: LaCoCoDatabase | undefined;
-  let lanceDb: LaCoCoLanceDb | undefined;
-  let ollama: LlmClient | undefined;
-
   const writeStderr = (message: string): void => {
     streams.stderr.write(message.endsWith("\n") ? message : `${message}\n`);
   };
-  const verbose = (message: string): void => {
-    if (options.verbose) writeStderr(message);
-  };
-
+  const session = RetrievalSession.open({
+    db: options.db,
+    lancedb: options.lancedb,
+    ollamaEndpoint: options.ollama,
+    runtime,
+    ...(options.verbose ? { log: writeStderr } : {}),
+  });
   try {
-    verbose(`[CLI] retrieve: strategy=${options.strategy} db=${options.db}`);
-
-    stage = "SQLite";
-    db = runtime.createDatabase(options.db);
-    ollama = runtime.createOllama(options.ollama);
-
-    let grounding: QueryGrounding | undefined;
-    if (options.grounding) {
-      stage = "query grounding";
-      grounding = new QueryGrounder(new SemanticProfileStore(db.getRawDb())).ground(query);
-    }
-
-    stage = "intermediario";
-    const intermediary = runtime.createIntermediary(ollama, options.ollama, resolveNumberConfig("timeout.ms"));
-    let detailed: DetailedClassification | undefined;
-    let sanitized: SanitizerOutput;
-    if (grounding) {
-      if (!intermediary.sanitizeDetailed) {
-        throw new Error("El intermediario configurado no soporta grounding detallado");
-      }
-      detailed = await intermediary.sanitizeDetailed(query, grounding);
-      sanitized = detailed.output;
-    } else {
-      sanitized = await intermediary.sanitize(query);
-    }
-    const groundingDiagnostics = createGroundingDiagnostics(grounding, detailed);
-
-    verbose(
-      `[CLI] intermediario: route=${sanitized.route} intent=${sanitized.intent} ` +
-        `confidence=${sanitized.confidence.toFixed(2)} clean_query=${JSON.stringify(sanitized.clean_query)}`,
-    );
-
-    if (sanitized.route === "LLM_DIRECT") {
-      return createRetrievedContext(
-        query,
-        options,
-        sanitized,
-        groundingDiagnostics,
-        [],
-        sanitized.embedding_input || query,
-      );
-    }
-
-    stage = "selección de estrategia";
-    const created = await runtime.createStrategy(
-      options.strategy,
-      db,
-      options.lancedb,
-      options.ollama,
-      resolveNumberConfig("timeout.ms"),
-      ollama,
-      options.chunks === undefined ? {} : { chunks: options.chunks },
-    );
-    lanceDb = created.connectedLanceDb;
-
-    stage = `retrieval:${options.strategy}`;
-    const chunks = await created.strategy.retrieve(sanitized);
-
-    stage = "agregación";
-    const aggregator = new ContextAggregator();
-    const aggregated = aggregator.aggregate(chunks, options.maxTokens);
-    verbose(`[CLI] chunks recuperados: ${aggregated.length}`);
-
-    const injector = new PromptInjector();
-    const enrichedPrompt = injector.inject(query, aggregated);
-    return createRetrievedContext(
-      query,
-      options,
-      sanitized,
-      groundingDiagnostics,
-      aggregated,
-      enrichedPrompt,
-    );
-  } catch (err) {
-    throw new PipelineStageError(stage, err);
+    return await session.retrieve(query, {
+      strategy: options.strategy,
+      maxTokens: options.maxTokens,
+      grounding: options.grounding,
+      template: options.template,
+      ...(options.chunks === undefined ? {} : { chunks: options.chunks }),
+    });
   } finally {
-    ollama?.abort();
-    if (lanceDb) {
-      try {
-        await lanceDb.close();
-      } catch (err) {
-        writeStderr(`[CLI] Error cerrando LanceDB: ${formatError(err)}`);
-      }
-    }
-    if (db) {
-      try {
-        db.close();
-      } catch (err) {
-        writeStderr(`[CLI] Error cerrando SQLite: ${formatError(err)}`);
-      }
-    }
+    await session.close(writeStderr);
   }
 }
 
-function createRetrievedContext(
-  originalQuery: string,
-  options: ResolvedRetrieveCliOptions,
-  sanitized: SanitizerOutput,
-  grounding: GroundingDiagnostics,
-  chunks: RetrievedContext["chunks"],
-  enrichedPrompt: string,
-): RetrievedContext {
-  return {
-    id: createContextId(originalQuery),
-    generatedAt: new Date().toISOString(),
-    originalQuery,
-    options: {
-      strategy: options.strategy,
-      db: options.db,
-      lancedb: options.lancedb,
-      ollama: options.ollama,
-      strategyParameters: getEffectiveStrategyParameters(
-        options.strategy as (typeof STRATEGY_NAMES)[number],
-        options.chunks === undefined ? {} : { chunks: options.chunks },
-      ),
-      maxTokens: options.maxTokens,
-    },
-    sanitized,
-    grounding,
-    chunks,
-    enrichedPrompt,
-  };
+/** Configuración de apertura de una sesión de retrieval con estado caliente. */
+export interface RetrievalSessionConfig {
+  db: string;
+  lancedb: string;
+  ollamaEndpoint: string;
+  runtime?: RetrieveRuntime;
+  /** Logger de diagnóstico (stderr en CLI/MCP). Ausente = silencioso. */
+  log?: (message: string) => void;
+}
+
+/** Parámetros por llamada de `RetrievalSession.retrieve`. */
+export interface SessionRetrieveParams {
+  strategy: string;
+  maxTokens: number;
+  grounding: boolean;
+  template: string;
+  chunks?: number;
+  /**
+   * Clasificación pre-validada (sanitizer congelado). Cuando se provee, se
+   * SALTA el clasificador SLM y el grounding — mismo mecanismo determinista que
+   * `eval/scripts/deterministic-retrieve.ts`. La usa el modo tool (MCP) cuando el
+   * LLM del agente aporta la clasificación. Ausente = clasifica el SLM (doctrina).
+   */
+  presetSanitized?: SanitizerOutput;
+}
+
+/**
+ * Sesión de retrieval con estado ABIERTO reutilizable entre llamadas: mantiene
+ * calientes SQLite, el cliente Ollama (clasificador) y las estrategias creadas
+ * (cachear la estrategia ES cachear su modelo de embeddings, lazy por instancia).
+ * El modo hook del CLI la usa como `open → retrieve → close` (una llamada); el
+ * servidor MCP la mantiene viva a lo largo de todo el proceso.
+ */
+export class RetrievalSession {
+  private readonly strategyCache = new Map<
+    string,
+    { strategy: RecoveryStrategy; lanceDb?: LaCoCoLanceDb }
+  >();
+
+  private constructor(
+    private readonly db: LaCoCoDatabase,
+    private readonly ollama: LlmClient,
+    private readonly intermediary: RetrieveIntermediary,
+    private readonly config: RetrievalSessionConfig,
+    private readonly runtime: RetrieveRuntime,
+    private readonly timeoutMs: number,
+  ) {}
+
+  static open(config: RetrievalSessionConfig): RetrievalSession {
+    const runtime = config.runtime ?? defaultRetrieveRuntime;
+    const timeoutMs = resolveNumberConfig("timeout.ms");
+    const db = runtime.createDatabase(config.db);
+    const ollama = runtime.createOllama(config.ollamaEndpoint);
+    const intermediary = runtime.createIntermediary(ollama, config.ollamaEndpoint, timeoutMs);
+    return new RetrievalSession(db, ollama, intermediary, config, runtime, timeoutMs);
+  }
+
+  async retrieve(query: string, params: SessionRetrieveParams): Promise<RetrievedContext> {
+    let stage = "inicialización";
+    const verbose = (message: string): void => this.config.log?.(message);
+    try {
+      verbose(`[CLI] retrieve: strategy=${params.strategy} db=${this.config.db}`);
+
+      let sanitized: SanitizerOutput;
+      let groundingDiagnostics: GroundingDiagnostics;
+
+      if (params.presetSanitized) {
+        // Clasificación congelada del agente: sin SLM, sin grounding.
+        sanitized = params.presetSanitized;
+        groundingDiagnostics = createGroundingDiagnostics(undefined, undefined);
+      } else {
+        let grounding: QueryGrounding | undefined;
+        if (params.grounding) {
+          stage = "query grounding";
+          grounding = new QueryGrounder(new SemanticProfileStore(this.db.getRawDb())).ground(query);
+        }
+
+        stage = "intermediario";
+        let detailed: DetailedClassification | undefined;
+        if (grounding) {
+          if (!this.intermediary.sanitizeDetailed) {
+            throw new Error("El intermediario configurado no soporta grounding detallado");
+          }
+          detailed = await this.intermediary.sanitizeDetailed(query, grounding);
+          sanitized = detailed.output;
+        } else {
+          sanitized = await this.intermediary.sanitize(query);
+        }
+        groundingDiagnostics = createGroundingDiagnostics(grounding, detailed);
+      }
+
+      verbose(
+        `[CLI] intermediario: route=${sanitized.route} intent=${sanitized.intent} ` +
+          `confidence=${sanitized.confidence.toFixed(2)} clean_query=${JSON.stringify(sanitized.clean_query)}`,
+      );
+
+      if (sanitized.route === "LLM_DIRECT") {
+        return this.#build(query, params, sanitized, groundingDiagnostics, [], sanitized.embedding_input || query);
+      }
+
+      stage = "selección de estrategia";
+      const { strategy } = await this.#getStrategy(params.strategy, params.chunks);
+
+      stage = `retrieval:${params.strategy}`;
+      const rawChunks = await strategy.retrieve(sanitized);
+
+      // Template v2: reemplaza la firma de cada chunk por el cuerpo cortado del
+      // working tree ANTES de agregar, para que el presupuesto de tokens se
+      // calcule sobre el texto real que verá el agente.
+      const chunks = params.template === "v2"
+        ? new ChunkBodyResolver(this.db).resolve(rawChunks)
+        : rawChunks;
+
+      stage = "agregación";
+      const aggregated = new ContextAggregator().aggregate(chunks, params.maxTokens);
+      verbose(`[CLI] chunks recuperados: ${aggregated.length}`);
+
+      const enrichedPrompt = new PromptInjector().inject(query, aggregated, params.template);
+      return this.#build(query, params, sanitized, groundingDiagnostics, aggregated, enrichedPrompt);
+    } catch (err) {
+      throw new PipelineStageError(stage, err);
+    }
+  }
+
+  async #getStrategy(
+    strategyName: string,
+    chunks: number | undefined,
+  ): Promise<{ strategy: RecoveryStrategy; lanceDb?: LaCoCoLanceDb }> {
+    const key = `${strategyName}:${chunks ?? "default"}`;
+    const cached = this.strategyCache.get(key);
+    if (cached) return cached;
+
+    const created = await this.runtime.createStrategy(
+      strategyName,
+      this.db,
+      this.config.lancedb,
+      this.config.ollamaEndpoint,
+      this.timeoutMs,
+      this.ollama,
+      chunks === undefined ? {} : { chunks },
+    );
+    const entry = {
+      strategy: created.strategy,
+      ...(created.connectedLanceDb ? { lanceDb: created.connectedLanceDb } : {}),
+    };
+    this.strategyCache.set(key, entry);
+    return entry;
+  }
+
+  #build(
+    originalQuery: string,
+    params: SessionRetrieveParams,
+    sanitized: SanitizerOutput,
+    grounding: GroundingDiagnostics,
+    chunks: RetrievedContext["chunks"],
+    enrichedPrompt: string,
+  ): RetrievedContext {
+    return {
+      id: createContextId(originalQuery),
+      generatedAt: new Date().toISOString(),
+      originalQuery,
+      options: {
+        strategy: params.strategy,
+        db: this.config.db,
+        lancedb: this.config.lancedb,
+        ollama: this.config.ollamaEndpoint,
+        strategyParameters: getEffectiveStrategyParameters(
+          params.strategy as (typeof STRATEGY_NAMES)[number],
+          params.chunks === undefined ? {} : { chunks: params.chunks },
+        ),
+        maxTokens: params.maxTokens,
+        templateVersion: params.template,
+      },
+      sanitized,
+      grounding,
+      chunks,
+      enrichedPrompt,
+    };
+  }
+
+  async close(onError?: (message: string) => void): Promise<void> {
+    this.ollama.abort();
+    for (const { lanceDb } of this.strategyCache.values()) {
+      if (!lanceDb) continue;
+      try {
+        await lanceDb.close();
+      } catch (err) {
+        onError?.(`[CLI] Error cerrando LanceDB: ${formatError(err)}`);
+      }
+    }
+    this.strategyCache.clear();
+    try {
+      this.db.close();
+    } catch (err) {
+      onError?.(`[CLI] Error cerrando SQLite: ${formatError(err)}`);
+    }
+  }
 }
 
 function renderContextMarkdown(context: RetrievedContext): string {

@@ -24,6 +24,7 @@ import {
   isDeprecated,
   buildArrowSignature,
   getMethodSignature,
+  lineSpan,
   resolveSymbolToId,
   resolveTypeToId,
 } from "./utilities.js";
@@ -67,6 +68,7 @@ function extractObjectLiteralMethods(
           filepath: filePath,
           signature: buildArrowSignature(propName, init),
           isDeprecated: 0,
+          ...lineSpan(init),
         });
         cb.insertEdge(parentId, propId, "DECLARES");
         analyzeCallable(init, propId, cb);
@@ -78,6 +80,7 @@ function extractObjectLiteralMethods(
           filepath: filePath,
           signature: `${propName}: { ... }`,
           isDeprecated: 0,
+          ...lineSpan(init),
         });
         cb.insertEdge(parentId, propId, "DECLARES");
         extractObjectLiteralMethods(init, propId, filePath, cb);
@@ -92,6 +95,7 @@ function extractObjectLiteralMethods(
         filepath: filePath,
         signature: getMethodSignature(prop),
         isDeprecated: isDeprecated(prop.getSymbol()),
+        ...lineSpan(prop),
       });
       cb.insertEdge(parentId, methodId, "DECLARES");
       analyzeCallable(prop, methodId, cb);
@@ -135,6 +139,7 @@ export function extractVariableDeclarations(
         filepath: filePath,
         signature: buildArrowSignature(varName, initializer),
         isDeprecated: isDeprecated(varDecl.getSymbol()),
+        ...lineSpan(varDecl),
       });
       analyzeCallable(initializer, nodeId, cb);
     } else if (Node.isObjectLiteralExpression(initializer)) {
@@ -146,6 +151,7 @@ export function extractVariableDeclarations(
         filepath: filePath,
         signature: `const ${varName} = { ... }`,
         isDeprecated: isDeprecated(varDecl.getSymbol()),
+        ...lineSpan(varDecl),
       });
       extractObjectLiteralMethods(initializer, nodeId, filePath, cb);
     } else {
@@ -156,6 +162,7 @@ export function extractVariableDeclarations(
         filepath: filePath,
         signature: varDecl.getText(),
         isDeprecated: isDeprecated(varDecl.getSymbol()),
+        ...lineSpan(varDecl),
       });
       if (Node.isNewExpression(initializer)) {
         const targetId = resolveTypeToId(initializer.getType());

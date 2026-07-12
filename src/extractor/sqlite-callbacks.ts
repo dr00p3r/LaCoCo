@@ -12,15 +12,17 @@ export class SqliteCallbacks implements ExtractionCallbacks {
   constructor(db: Database.Database) {
     this.stmtInsertNode = db.prepare(`
       INSERT INTO nodes
-        (id, kind, name, filepath, signature, isDeprecated)
+        (id, kind, name, filepath, signature, isDeprecated, startLine, endLine)
       VALUES
-        (@id, @kind, @name, @filepath, @signature, @isDeprecated)
+        (@id, @kind, @name, @filepath, @signature, @isDeprecated, @startLine, @endLine)
       ON CONFLICT(id) DO UPDATE SET
         kind = excluded.kind,
         name = excluded.name,
         filepath = excluded.filepath,
         signature = excluded.signature,
-        isDeprecated = excluded.isDeprecated
+        isDeprecated = excluded.isDeprecated,
+        startLine = excluded.startLine,
+        endLine = excluded.endLine
     `);
 
     this.stmtInsertEdge = db.prepare(`
@@ -30,7 +32,16 @@ export class SqliteCallbacks implements ExtractionCallbacks {
   }
 
   insertNode(row: NodeRow): void {
-    this.stmtInsertNode.run(row);
+    this.stmtInsertNode.run({
+      id: row.id,
+      kind: row.kind,
+      name: row.name,
+      filepath: row.filepath,
+      signature: row.signature,
+      isDeprecated: row.isDeprecated,
+      startLine: row.startLine ?? null,
+      endLine: row.endLine ?? null,
+    });
     this.nodesWritten++;
   }
 

@@ -55,6 +55,50 @@ describe("CodeExtractor relations", () => {
   });
 });
 
+describe("CodeExtractor line spans", () => {
+  it("populates startLine/endLine from ts-morph declarations", () => {
+    const project = new Project({
+      useInMemoryFileSystem: true,
+      compilerOptions: {
+        moduleResolution: ModuleResolutionKind.NodeJs,
+        target: ScriptTarget.ES2022,
+      },
+    });
+    // Contenido sin newline inicial → líneas 1-indexadas predecibles.
+    project.createSourceFile(
+      "/spans.ts",
+      [
+        "export interface Foo { a: number }", // L1
+        "export function bar(): void {}", // L2
+        "export class Baz {", // L3
+        "  run(): void {}", // L4
+        "}", // L5
+        "export const qux = (n: number) => n + 1;", // L6
+      ].join("\n"),
+    );
+
+    const nodes: NodeRow[] = [];
+    const callbacks: ExtractionCallbacks = {
+      insertNode: (node) => nodes.push(node),
+      insertEdge: () => {},
+    };
+    const extractor = new CodeExtractor(callbacks);
+    for (const sourceFile of project.getSourceFiles()) extractor.processFile(sourceFile);
+
+    const byId = (id: string): NodeRow => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node) throw new Error(`nodo no encontrado: ${id}`);
+      return node;
+    };
+
+    expect(byId("/spans.ts#Foo")).toMatchObject({ startLine: 1, endLine: 1 });
+    expect(byId("/spans.ts#bar")).toMatchObject({ startLine: 2, endLine: 2 });
+    expect(byId("/spans.ts#Baz")).toMatchObject({ startLine: 3, endLine: 5 });
+    expect(byId("/spans.ts#Baz.run")).toMatchObject({ startLine: 4, endLine: 4 });
+    expect(byId("/spans.ts#qux")).toMatchObject({ startLine: 6, endLine: 6 });
+  });
+});
+
 function edge(sourceId: string, targetId: string, relation: EdgeRow["relation"]): EdgeRow {
   return { sourceId, targetId, relation };
 }

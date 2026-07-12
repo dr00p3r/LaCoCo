@@ -7,6 +7,7 @@ import { registerRetrievalCommands } from "./commands/retrieval-commands.js";
 import { registerStateCommands } from "./commands/state-commands.js";
 import { registerWatchCommands } from "./commands/watch-command.js";
 import { registerProfileCommands } from "./commands/profile-commands.js";
+import { registerMcpCommand } from "./commands/mcp-command.js";
 import { formatError } from "./formatters.js";
 
 export const program = new Command();
@@ -20,10 +21,12 @@ registerRetrievalCommands(program);
 registerWatchCommands(program);
 registerIndexingCommands(program);
 registerProfileCommands(program);
+registerMcpCommand(program);
 
 export {
   runRetrieve,
   runContextExport,
+  RetrievalSession,
   type RetrieveCliOptions,
   type ContextExportCliOptions,
   type CliStreams,
@@ -32,6 +35,9 @@ export {
   type RetrieveJsonResult,
   type RetrieveJsonSuccess,
   type RetrieveJsonFailure,
+  type RetrievedContext,
+  type RetrievalSessionConfig,
+  type SessionRetrieveParams,
 } from "./pipeline.js";
 
 if (isMainModule()) {
