@@ -31,12 +31,13 @@ MSWE_DATA=eval/data/multi-swe-bench/instances.normalized.jsonl
 # Elección: mui (46, profundidad) + svelte/serverless/prettier + coder/code-server.
 # Se descartó microsoft/vscode (gigante, clone lento) por code-server (mirror ya existe).
 SP_REPOS=(mui/material-ui sveltejs/svelte serverless/serverless prettier/prettier coder/code-server)
-SP_MH_LIMIT=${SP_MH_LIMIT:-8}   # num_nodes 2-4 (multi-hop)
+SP_MH_LIMIT=${SP_MH_LIMIT:-12}  # num_nodes 2-4 (multi-hop); mui tiene 46 → sube profundidad
 SP_SH_LIMIT=${SP_SH_LIMIT:-6}   # num_nodes==1 (single-hop)
 
 # Repos Multi-SWE-bench (slug) y tope por repo (el régimen lo decide enrich por símbolos).
+# dayjs (56) es la fuente principal de MH: un fix que toca ≥2 funciones = ≥2 símbolos.
 MSWE_REPOS=(iamkun/dayjs anuraghazra/github-readme-stats axios/axios expressjs/express Kong/insomnia)
-MSWE_LIMIT=${MSWE_LIMIT:-20}
+MSWE_LIMIT=${MSWE_LIMIT:-30}
 
 echo "########## 0) FETCH Multi-SWE-bench ##########"
 if [ ! -f "$MSWE_DATA" ]; then

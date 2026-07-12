@@ -316,9 +316,10 @@ splits:
   benchmulti:
     description: >-
       Retrieval benchmark multi-repo SWE-PolyBench, breadth desigual (5 repos:
-      mui/svelte/prettier x5 + serverless x5 + code-server x2 = 22), 8 estrategias
-      deterministas. connector (SCR) vs baselines a escala. Los gigantes asset-heavy
-      (vscode/three.js/angular) quedan fuera por costo de infra, no por retrieval.
+      mui/svelte/prettier x5 + serverless x5 + code-server x2 = 22), 8
+      estrategias deterministas. connector (SCR) vs baselines a escala. Los
+      gigantes asset-heavy (vscode/three.js/angular) quedan fuera por costo de
+      infra, no por retrieval.
     strategies:
       - hybrid
       - ictd
@@ -359,8 +360,9 @@ splits:
   benchvalid:
     description: >-
       Subconjunto con indice valido (mui/svelte/prettier x5 = 15). serverless/
-      code-server pendientes de indexar (entorno no sostiene el embedding largo).
-      8 estrategias deterministas. Da la tabla connector vs baselines a 3 repos x5.
+      code-server pendientes de indexar (entorno no sostiene el embedding
+      largo). 8 estrategias deterministas. Da la tabla connector vs baselines a
+      3 repos x5.
     strategies:
       - hybrid
       - ictd
@@ -393,12 +395,13 @@ splits:
 
   benchmulti_mh:
     description: >-
-      Split MULTI-HOP (num_nodes 2-4, --only-mixed) sobre mui/svelte/serverless/prettier
-      (4 c/u = 16). Regimen donde connector (SCR) DEBE separarse de los baselines: el gold
-      no es el ancla, hay que conectar anclas por el grafo. Contraste directo con el split
-      single-hop. Requiere indexar estos 16 commits (distintos de los single-hop).
-    strategies: [hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector]
-    sanitizer_variants: [deterministic]
+      Split MULTI-HOP (num_nodes 2-4, --only-mixed) sobre
+      mui/svelte/serverless/prettier (4 c/u = 16). Regimen donde connector (SCR)
+      DEBE separarse de los baselines: el gold no es el ancla, hay que conectar
+      anclas por el grafo. Contraste directo con el split single-hop. Requiere
+      indexar estos 16 commits (distintos de los single-hop).
+    strategies: [ hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector ]
+    sanitizer_variants: [ deterministic ]
     require_gold_status: ready
     repo_ids: &benchmulti_mh_ids
       - material-ui-11987
@@ -419,23 +422,214 @@ splits:
       - prettier-666
     task_ids: *benchmulti_mh_ids
   benchvalid_mui:
-    strategies: &bv8 [hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector]
-    sanitizer_variants: [deterministic]
+    strategies: &bv8 [ hybrid, ictd, clcr, rpr, consensus, repograph, ppr, connector ]
+    sanitizer_variants: [ deterministic ]
     require_gold_status: ready
-    repo_ids: &bv_mui [material-ui-11451, material-ui-11858, material-ui-12406, material-ui-13690, material-ui-13778]
+    repo_ids:
+      &bv_mui [
+        material-ui-11451,
+        material-ui-11858,
+        material-ui-12406,
+        material-ui-13690,
+        material-ui-13778
+      ]
     task_ids: *bv_mui
   benchvalid_svelte:
     strategies: *bv8
-    sanitizer_variants: [deterministic]
+    sanitizer_variants: [ deterministic ]
     require_gold_status: ready
-    repo_ids: &bv_svelte [svelte-510, svelte-728, svelte-906, svelte-907, svelte-1116]
+    repo_ids: &bv_svelte [ svelte-510, svelte-728, svelte-906, svelte-907, svelte-1116 ]
     task_ids: *bv_svelte
   benchvalid_prettier:
     strategies: *bv8
-    sanitizer_variants: [deterministic]
+    sanitizer_variants: [ deterministic ]
     require_gold_status: ready
-    repo_ids: &bv_prettier [prettier-14400, prettier-12930, prettier-6604, prettier-5025, prettier-4667]
+    repo_ids:
+      &bv_prettier [
+        prettier-14400,
+        prettier-12930,
+        prettier-6604,
+        prettier-5025,
+        prettier-4667
+      ]
     task_ids: *bv_prettier
+  bench10_mh:
+    description: "10 repos, MULTI-HOP (fix toca >=2 símbolos): régimen donde
+      connector/SCR separa."
+    require_gold_status: ready
+    sanitizer_variants:
+      - deterministic
+    repo_ids: &a1
+      - code-server-3277
+      - material-ui-11987
+      - material-ui-12236
+      - material-ui-12303
+      - material-ui-13534
+      - material-ui-13789
+      - material-ui-18683
+      - material-ui-20356
+      - material-ui-25874
+      - material-ui-26098
+      - material-ui-26746
+      - material-ui-34207
+      - prettier-11637
+      - prettier-666
+      - prettier-8046
+      - prettier-9850
+      - serverless-1910
+      - serverless-2434
+      - serverless-5640
+      - serverless-6366
+      - serverless-6869
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+      - svelte-3435
+      - svelte-3749
+      - svelte-4558
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-6759
+    task_ids: *a1
+    strategies:
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+      - consensus
+      - repograph
+      - ppr
+      - connector
+  bench10_sh:
+    description: "10 repos, SINGLE-HOP (fix toca 1 símbolo): control, los baselines
+      empatan."
+    require_gold_status: ready
+    sanitizer_variants:
+      - deterministic
+    repo_ids: &a1
+      - code-server-4923
+      - code-server-6278
+      - material-ui-11451
+      - material-ui-11858
+      - material-ui-12406
+      - material-ui-13690
+      - material-ui-13778
+      - material-ui-14364
+      - prettier-12930
+      - prettier-14400
+      - prettier-3723
+      - prettier-4667
+      - prettier-5025
+      - prettier-6604
+      - serverless-6827
+      - serverless-7277
+      - serverless-7374
+      - svelte-1116
+      - svelte-1227
+      - svelte-510
+      - svelte-728
+      - svelte-906
+      - svelte-907
+    task_ids: *a1
+    strategies:
+      - hybrid
+      - ictd
+      - clcr
+      - rpr
+      - consensus
+      - repograph
+      - ppr
+      - connector
+  bench10_mh_gen:
+    description: 10 repos, MULTI-HOP para GENERACIÓN (Pass@1). Agente opencode_mcp
+      (contexto on-demand vía lacoco_retrieve) + connector/hybrid pre-inyectado.
+      Corre opt-in con BENCH10_GEN=1, mismo run-id que el retrieval.
+    require_gold_status: ready
+    sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
+    repo_ids: &a1
+      - code-server-3277
+      - material-ui-11987
+      - material-ui-12236
+      - material-ui-12303
+      - material-ui-13534
+      - material-ui-13789
+      - material-ui-18683
+      - material-ui-20356
+      - material-ui-25874
+      - material-ui-26098
+      - material-ui-26746
+      - material-ui-34207
+      - prettier-11637
+      - prettier-666
+      - prettier-8046
+      - prettier-9850
+      - serverless-1910
+      - serverless-2434
+      - serverless-5640
+      - serverless-6366
+      - serverless-6869
+      - svelte-1095
+      - svelte-1137
+      - svelte-1231
+      - svelte-1376
+      - svelte-1932
+      - svelte-3435
+      - svelte-3749
+      - svelte-4558
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-6759
+    task_ids: *a1
+    strategies:
+      - no_context
+      - connector
+      - hybrid
+    agents:
+      - opencode_mcp
+  bench10_sh_gen:
+    description: 10 repos, SINGLE-HOP para GENERACIÓN (control de Pass@1). Mismo
+      agente/estrategias que bench10_mh_gen.
+    require_gold_status: ready
+    sanitizer_variant: baseline
+    sanitizer_variants:
+      - baseline
+    repo_ids: &a1
+      - code-server-4923
+      - code-server-6278
+      - material-ui-11451
+      - material-ui-11858
+      - material-ui-12406
+      - material-ui-13690
+      - material-ui-13778
+      - material-ui-14364
+      - prettier-12930
+      - prettier-14400
+      - prettier-3723
+      - prettier-4667
+      - prettier-5025
+      - prettier-6604
+      - serverless-6827
+      - serverless-7277
+      - serverless-7374
+      - svelte-1116
+      - svelte-1227
+      - svelte-510
+      - svelte-728
+      - svelte-906
+      - svelte-907
+    task_ids: *a1
+    strategies:
+      - no_context
+      - connector
+      - hybrid
+    agents:
+      - opencode_mcp
 
 resource_limits:
   max_parallel_repos: 1

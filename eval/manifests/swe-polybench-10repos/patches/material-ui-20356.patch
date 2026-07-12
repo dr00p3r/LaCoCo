@@ -1,0 +1,143 @@
+diff --git a/docs/src/pages/components/selects/MultipleSelect.js b/docs/src/pages/components/selects/MultipleSelect.js
+--- a/docs/src/pages/components/selects/MultipleSelect.js
++++ b/docs/src/pages/components/selects/MultipleSelect.js
+@@ -161,6 +161,7 @@ export default function MultipleSelect() {
+             return selected.join(', ');
+           }}
+           MenuProps={MenuProps}
++          inputProps={{ 'aria-label': 'Without label' }}
+         >
+           <MenuItem disabled value="">
+             <em>Placeholder</em>
+diff --git a/docs/src/pages/components/selects/MultipleSelect.tsx b/docs/src/pages/components/selects/MultipleSelect.tsx
+--- a/docs/src/pages/components/selects/MultipleSelect.tsx
++++ b/docs/src/pages/components/selects/MultipleSelect.tsx
+@@ -163,6 +163,7 @@ export default function MultipleSelect() {
+             return (selected as string[]).join(', ');
+           }}
+           MenuProps={MenuProps}
++          inputProps={{ 'aria-label': 'Without label' }}
+         >
+           <MenuItem disabled value="">
+             <em>Placeholder</em>
+diff --git a/docs/src/pages/components/selects/SimpleSelect.js b/docs/src/pages/components/selects/SimpleSelect.js
+--- a/docs/src/pages/components/selects/SimpleSelect.js
++++ b/docs/src/pages/components/selects/SimpleSelect.js
+@@ -57,7 +57,13 @@ export default function SimpleSelect() {
+         <FormHelperText>Some important helper text</FormHelperText>
+       </FormControl>
+       <FormControl className={classes.formControl}>
+-        <Select value={age} onChange={handleChange} displayEmpty className={classes.selectEmpty}>
++        <Select
++          value={age}
++          onChange={handleChange}
++          displayEmpty
++          className={classes.selectEmpty}
++          inputProps={{ 'aria-label': 'Without label' }}
++        >
+           <MenuItem value="">
+             <em>None</em>
+           </MenuItem>
+@@ -160,7 +166,13 @@ export default function SimpleSelect() {
+         <FormHelperText>Auto width</FormHelperText>
+       </FormControl>
+       <FormControl className={classes.formControl}>
+-        <Select value={age} onChange={handleChange} displayEmpty className={classes.selectEmpty}>
++        <Select
++          value={age}
++          onChange={handleChange}
++          displayEmpty
++          className={classes.selectEmpty}
++          inputProps={{ 'aria-label': 'Without label' }}
++        >
+           <MenuItem value="" disabled>
+             Placeholder
+           </MenuItem>
+diff --git a/docs/src/pages/components/selects/SimpleSelect.tsx b/docs/src/pages/components/selects/SimpleSelect.tsx
+--- a/docs/src/pages/components/selects/SimpleSelect.tsx
++++ b/docs/src/pages/components/selects/SimpleSelect.tsx
+@@ -59,7 +59,13 @@ export default function SimpleSelect() {
+         <FormHelperText>Some important helper text</FormHelperText>
+       </FormControl>
+       <FormControl className={classes.formControl}>
+-        <Select value={age} onChange={handleChange} displayEmpty className={classes.selectEmpty}>
++        <Select
++          value={age}
++          onChange={handleChange}
++          displayEmpty
++          className={classes.selectEmpty}
++          inputProps={{ 'aria-label': 'Without label' }}
++        >
+           <MenuItem value="">
+             <em>None</em>
+           </MenuItem>
+@@ -162,7 +168,13 @@ export default function SimpleSelect() {
+         <FormHelperText>Auto width</FormHelperText>
+       </FormControl>
+       <FormControl className={classes.formControl}>
+-        <Select value={age} onChange={handleChange} displayEmpty className={classes.selectEmpty}>
++        <Select
++          value={age}
++          onChange={handleChange}
++          displayEmpty
++          className={classes.selectEmpty}
++          inputProps={{ 'aria-label': 'Without label' }}
++        >
+           <MenuItem value="" disabled>
+             Placeholder
+           </MenuItem>
+diff --git a/packages/material-ui/src/Select/SelectInput.js b/packages/material-ui/src/Select/SelectInput.js
+--- a/packages/material-ui/src/Select/SelectInput.js
++++ b/packages/material-ui/src/Select/SelectInput.js
+@@ -26,6 +26,7 @@ function isEmpty(display) {
+  */
+ const SelectInput = React.forwardRef(function SelectInput(props, ref) {
+   const {
++    'aria-label': ariaLabel,
+     autoFocus,
+     autoWidth,
+     children,
+@@ -320,8 +321,9 @@ const SelectInput = React.forwardRef(function SelectInput(props, ref) {
+         tabIndex={tabIndex}
+         role="button"
+         aria-expanded={open ? 'true' : undefined}
+-        aria-labelledby={`${labelId || ''} ${buttonId || ''}`}
+         aria-haspopup="listbox"
++        aria-label={ariaLabel}
++        aria-labelledby={[labelId, buttonId].filter(Boolean).join(' ') || undefined}
+         onKeyDown={handleKeyDown}
+         onMouseDown={disabled || readOnly ? null : handleMouseDown}
+         onBlur={handleBlur}
+@@ -379,6 +381,10 @@ const SelectInput = React.forwardRef(function SelectInput(props, ref) {
+ });
+ 
+ SelectInput.propTypes = {
++  /**
++   * @ignore
++   */
++  'aria-label': PropTypes.string,
+   /**
+    * @ignore
+    */
+diff --git a/packages/material-ui/src/TablePagination/TablePagination.js b/packages/material-ui/src/TablePagination/TablePagination.js
+--- a/packages/material-ui/src/TablePagination/TablePagination.js
++++ b/packages/material-ui/src/TablePagination/TablePagination.js
+@@ -35,9 +35,9 @@ export const styles = (theme) => ({
+   caption: {
+     flexShrink: 0,
+   },
++  // TODO v5: `.selectRoot` should be merged with `.input`
+   /* Styles applied to the Select component root element. */
+   selectRoot: {
+-    // `.selectRoot` should be merged with `.input` in v5.
+     marginRight: 32,
+     marginLeft: 8,
+   },
+@@ -122,6 +122,7 @@ const TablePagination = React.forwardRef(function TablePagination(props, ref) {
+             input={<InputBase className={clsx(classes.input, classes.selectRoot)} />}
+             value={rowsPerPage}
+             onChange={onChangeRowsPerPage}
++            inputProps={{ 'aria-label': labelRowsPerPage }}
+             {...SelectProps}
+           >
+             {rowsPerPageOptions.map((rowsPerPageOption) => (

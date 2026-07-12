@@ -1,0 +1,1793 @@
+manifest_version: 1
+kind: repositories
+updated_at: "2026-07-07"
+
+selection:
+  description: >-
+    Repositorios open source JavaScript/TypeScript con Node.js usados para
+    evaluar LaCoCo en escenarios de recuperacion y generacion de codigo.
+  inclusion_criteria:
+    - "Open source"
+    - "Ecosistema JavaScript/TypeScript con Node.js"
+    - "Proyecto con pruebas automatizadas"
+    - "Popularidad alta o relevancia tecnica para repos de librerias"
+    - "Tamanos pequeno, mediano y grande"
+  notes:
+    - >-
+      Los valores expected_loc son aproximaciones metodologicas usadas para
+      clasificar el tamano. El pipeline debe calcular LOC reales en cada
+      corrida.
+    - >-
+      Cuando framework_from_plan y framework_verified difieren, prevalece
+      framework_verified para la ejecucion; framework_from_plan conserva la
+      trazabilidad con el documento academico.
+
+defaults:
+  clone:
+    depth: 0
+    fetch_tags: true
+    clean_before_task: true
+    clean_command: "git reset --hard HEAD && git clean -fdx"
+  runtime:
+    node_version: ">=20"
+    env:
+      CI: "true"
+      NO_COLOR: "1"
+  install:
+    timeout_ms: 900000
+  build:
+    timeout_ms: 900000
+    optional: true
+  test:
+    timeout_ms: 900000
+    run_before_generation: true
+    run_after_generation: true
+  lacoco_index:
+    graph_db_name: "tensor.sqlite"
+    vector_dir_name: "lancedb"
+    generate_eval_tsconfig_when_missing: true
+    eval_tsconfig_name: "tsconfig.lacoco-eval.json"
+
+repositories:
+  - id: material-ui-11987
+    display_name: material-ui @ 09896d4
+    url: https://github.com/mui/material-ui.git
+    ref: 09896d42e6206984a54272cc2059c49a7aa9d54f
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/SvgIcon/SvgIcon.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs/src
+      - packages/material-ui/src
+      - pages
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-12236
+    display_name: material-ui @ 18aa629
+    url: https://github.com/mui/material-ui.git
+    ref: 18aa6293ad8b67dc8a323db19117c93efa966c7c
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/withWidth/withWidth.test.js
+      packages/material-ui/src/styles/withTheme.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-12303
+    display_name: material-ui @ f432f8a
+    url: https://github.com/mui/material-ui.git
+    ref: f432f8a733514b3fa83718102d78f1311cb19de0
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha
+      packages/material-ui/src/FormControlLabel/FormControlLabel.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs/src
+      - packages/material-ui/src
+      - pages
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13534
+    display_name: material-ui @ 20cd3e3
+    url: https://github.com/mui/material-ui.git
+    ref: 20cd3e33ae60e4970653716b7732212e93bab38c
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Badge/Badge.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs/src
+      - packages/material-ui/src
+      - pages
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13789
+    display_name: material-ui @ 42c60e9
+    url: https://github.com/mui/material-ui.git
+    ref: 42c60e9848696ebc167d87e1743222e758d0213e
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Dialog/Dialog.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-18683
+    display_name: material-ui @ dfe2779
+    url: https://github.com/mui/material-ui.git
+    ref: dfe2779b8b6499ccd1922990ac9178d84e02f8b6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/withWidth/withWidth.test.js
+      packages/material-ui/src/useMediaQuery/useMediaQuery.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-20356
+    display_name: material-ui @ 6746867
+    url: https://github.com/mui/material-ui.git
+    ref: 67468679f7c5dfa881ea12a32cfe4a5b44cf6680
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Select/Select.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs/src
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-25874
+    display_name: material-ui @ a4d8c4f
+    url: https://github.com/mui/material-ui.git
+    ref: a4d8c4ffadca14ebb941003082e607a96eacb409
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && npx cross-env
+      NODE_ENV=test mocha
+      packages/material-ui-lab/src/LoadingButton/LoadingButton.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs
+      - docs/src
+      - packages/material-ui-lab/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-26098
+    display_name: material-ui @ 36c1e08
+    url: https://github.com/mui/material-ui.git
+    ref: 36c1e08520f8add7bdc341825d44f50d59ceab83
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && npx cross-env
+      NODE_ENV=test mocha
+      packages/material-ui/src/NativeSelect/NativeSelect.test.js
+      packages/material-ui-styled-engine/src/styled.test.js
+      packages/material-ui-styled-engine-sc/src/styled.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages
+      - packages/material-ui-styled-engine-sc/src
+      - packages/material-ui-styled-engine/src
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-26746
+    display_name: material-ui @ 9acf8be
+    url: https://github.com/mui/material-ui.git
+    ref: 9acf8be6d2fd08210665c294830df3c85c014214
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && npx cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Grid/Grid.test.js
+      packages/material-ui/src/styles/responsiveFontSizes.test.js
+      packages/material-ui/src/Stack/Stack.test.js
+      packages/material-ui-system/src/createTheme/createBreakpoints.test.js
+      packages/material-ui/src/styles/adaptV4Theme.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs/src
+      - packages/material-ui-system/src
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-34207
+    display_name: material-ui @ 1a4263a
+    url: https://github.com/mui/material-ui.git
+    ref: 1a4263a50af00eaffdca2e58b8ff16d62c4408a7
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 18.8.0 && npx cross-env
+      NODE_ENV=test mocha
+      packages/mui-material/src/FormControlLabel/FormControlLabel.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - docs
+      - packages/mui-material/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-11451
+    display_name: material-ui @ 04fae47
+    url: https://github.com/mui/material-ui.git
+    ref: 04fae47c2a876f38aacfae866d220ddcbb7358ef
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/ListItem/ListItem.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-11858
+    display_name: material-ui @ 4acfb8d
+    url: https://github.com/mui/material-ui.git
+    ref: 4acfb8da9fb5fc258871aa5a55788fa37208babc
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha
+      packages/material-ui/src/ListItemText/ListItemText.test.js --reporter
+      /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+      - pages
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-12406
+    display_name: material-ui @ cbc6828
+    url: https://github.com/mui/material-ui.git
+    ref: cbc6828c93df70b897366f0c6d0b17da681d1b89
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Input/Textarea.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13690
+    display_name: material-ui @ ce64258
+    url: https://github.com/mui/material-ui.git
+    ref: ce642582728c63d1837e0a3e3fd455be4b260950
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Tooltip/Tooltip.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-13778
+    display_name: material-ui @ 550e949
+    url: https://github.com/mui/material-ui.git
+    ref: 550e949bab55d3fe3f3aba04f76baa7e45d324cc
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/Modal/Modal.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: material-ui-14364
+    display_name: material-ui @ b5d9b24
+    url: https://github.com/mui/material-ui.git
+    ref: b5d9b243d30a879ab33e53bda4c6553402d99e39
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 14.21.3 && yarn cross-env
+      NODE_ENV=test mocha packages/material-ui/src/InputBase/InputBase.test.js
+      --reporter /testbed/custom-reporter.js --exit
+    source_roots:
+      - packages/material-ui/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-464
+    display_name: svelte @ 79c4563
+    url: https://github.com/sveltejs/svelte.git
+    ref: 79c456333c255a8ae23acf02ed714b624cd1cca9
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-477
+    display_name: svelte @ ec543cf
+    url: https://github.com/sveltejs/svelte.git
+    ref: ec543cf9b6e234b1f7e77011fa7e62056e8d1dda
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-630
+    display_name: svelte @ 728594b
+    url: https://github.com/sveltejs/svelte.git
+    ref: 728594b1c2b24f7b32d0abd10f27ec3cc1773d45
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1095
+    display_name: svelte @ 9cfa174
+    url: https://github.com/sveltejs/svelte.git
+    ref: 9cfa1747036607debd8502018681fa5697f1d5bf
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1137
+    display_name: svelte @ 86a0765
+    url: https://github.com/sveltejs/svelte.git
+    ref: 86a07652d8d0c2f2895a7fea4610cf7beb43609b
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1231
+    display_name: svelte @ 0ac7701
+    url: https://github.com/sveltejs/svelte.git
+    ref: 0ac77019d0bbde3c626f5da36a8637cffa7788f9
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1376
+    display_name: svelte @ ed605bf
+    url: https://github.com/sveltejs/svelte.git
+    ref: ed605bfa790f5989bca5241adddcb30367a8c70b
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1932
+    display_name: svelte @ fc0ef22
+    url: https://github.com/sveltejs/svelte.git
+    ref: fc0ef221aff4789c7c579932e70c5f8243e97f32
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-3435
+    display_name: svelte @ 63a7a37
+    url: https://github.com/sveltejs/svelte.git
+    ref: 63a7a37bb7c6820bda0a1716f52ec7eeb9b3711e
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-3749
+    display_name: svelte @ 8d7d0ff
+    url: https://github.com/sveltejs/svelte.git
+    ref: 8d7d0ff7dd7b248ca6d9b6b4cac098430c6e6ffa
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-4558
+    display_name: svelte @ ec3589e
+    url: https://github.com/sveltejs/svelte.git
+    ref: ec3589e31425c54cda3c5f6a80b89eb3aaa7bd52
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-6759
+    display_name: svelte @ cfc880b
+    url: https://github.com/sveltejs/svelte.git
+    ref: cfc880bb31b09df50ea6619e71afa7f969d2c4d0
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-510
+    display_name: svelte @ 4012414
+    url: https://github.com/sveltejs/svelte.git
+    ref: 4012414fa733628bb029be39195a278301da46be
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-728
+    display_name: svelte @ 5c4905a
+    url: https://github.com/sveltejs/svelte.git
+    ref: 5c4905a595ece6885dfed8c44b26be544130b6a6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-906
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-907
+    display_name: svelte @ 1dad8f1
+    url: https://github.com/sveltejs/svelte.git
+    ref: 1dad8f1936c5ac974854930b32814db907528f56
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1116
+    display_name: svelte @ 8057884
+    url: https://github.com/sveltejs/svelte.git
+    ref: 8057884cb64f6c2cdf837411bc3962daf69e2bb5
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: svelte-1227
+    display_name: svelte @ dc4fdcf
+    url: https://github.com/sveltejs/svelte.git
+    ref: dc4fdcf77e6156da9579c03d83668f86b5a54c1a
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 16.20.2 && npm pkg set
+      scripts.lint="echo noop" && npm run test -- --reporter json --exit
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-7277
+    display_name: serverless @ c09f718
+    url: https://github.com/serverless/serverless.git
+    ref: c09f71897a67fe8ec98d460075f0f02b397f8ee5
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/sns/index.test.js --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-6987
+    display_name: serverless @ 05eec83
+    url: https://github.com/serverless/serverless.git
+    ref: 05eec837ec20ec0d321b3592e5440d126de9c218
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/apiGateway/lib/method/index.test.js
+      --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-6869
+    display_name: serverless @ 18852ec
+    url: https://github.com/serverless/serverless.git
+    ref: 18852ec34bbe1bdd9457c563e21e53cab3dc2fcd
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha lib/classes/Variables.test.js
+      --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-6366
+    display_name: serverless @ dfe6e07
+    url: https://github.com/serverless/serverless.git
+    ref: dfe6e071612bcb80b14a87f862c33f1620a62d0c
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/sns/index.test.js --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-5640
+    display_name: serverless @ 660804d
+    url: https://github.com/serverless/serverless.git
+    ref: 660804d4a6e471825e291a26413bbbf2cb365dc9
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/print/print.test.js lib/classes/Service.test.js
+      lib/classes/Variables.test.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-2945
+    display_name: serverless @ 5a3e0c2
+    url: https://github.com/serverless/serverless.git
+    ref: 5a3e0c2bcaff15d77c925995693379967da42d80
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/deploy/lib/mergeIamTemplates.test.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-2434
+    display_name: serverless @ cf927bf
+    url: https://github.com/serverless/serverless.git
+    ref: cf927bf8a68496f762a55e5222415c808aa6087b
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha lib/classes/Service.test.js
+      --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-1910
+    display_name: serverless @ 67644f7
+    url: https://github.com/serverless/serverless.git
+    ref: 67644f72843e558d5d407a40480e3ca011a3a6ce
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/create/tests/create.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-8159
+    display_name: serverless @ 56aa5aa
+    url: https://github.com/serverless/serverless.git
+    ref: 56aa5aa15abed64db6758aecd8c27719928b5a14
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/apiGateway/lib/method/index.test.js
+      --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-7617
+    display_name: serverless @ 2e56dea
+    url: https://github.com/serverless/serverless.git
+    ref: 2e56dea5652540cf5d82c9d35a999c8c921fa020
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/apiGateway/lib/method/index.test.js
+      --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-7587
+    display_name: serverless @ 7479a9a
+    url: https://github.com/serverless/serverless.git
+    ref: 7479a9ae82b44fb06de3ab84094b18e8f72affc4
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/info/getResourceCount.test.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-7374
+    display_name: serverless @ 8518000
+    url: https://github.com/serverless/serverless.git
+    ref: 8518000d4fbf3a6cf0a6e2f81bd6421e017a1b5f
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/utils/fs/fileExistsSync.test.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-6842
+    display_name: serverless @ 6e55723
+    url: https://github.com/serverless/serverless.git
+    ref: 6e5572350549e1277eebb5952dc01b45a96a8957
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/lib/mergeIamTemplates.test.js --reporter json
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: serverless-6827
+    display_name: serverless @ aba4e09
+    url: https://github.com/serverless/serverless.git
+    ref: aba4e09c7be7e1c89b14728428f0f1a3bf9ccbbb
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && npx mocha
+      lib/plugins/aws/package/compile/events/cloudWatchLog/index.test.js
+      --reporter json
+    source_roots:
+      - docs
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-11637
+    display_name: prettier @ 5909f5b
+    url: https://github.com/prettier/prettier.git
+    ref: 5909f5b3f191a0a32f759e1f4378477d3b90e28e
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/format/scss/configuration/jsfmt.spec.js
+      tests/format/scss/configuration/__snapshots__/jsfmt.spec.js.snap
+      tests/format/scss/quotes/__snapshots__/jsfmt.spec.js.snap
+      tests/format/scss/configuration/use.scss --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-9850
+    display_name: prettier @ 19a8df2
+    url: https://github.com/prettier/prettier.git
+    ref: 19a8df2f572f1bc4504cebe0614f45f868b786fa
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/js/ignore/semi/__snapshots__/jsfmt.spec.js.snap
+      tests/js/ignore/semi/jsfmt.spec.js tests/js/ignore/semi/directive.js
+      --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-8046
+    display_name: prettier @ 19545e0
+    url: https://github.com/prettier/prettier.git
+    ref: 19545e049ea424273fb6d647eefd1787d998b333
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/misc/errors/babel-ts/__snapshots__/jsfmt.spec.js.snap
+      tests/misc/errors/babel-ts/issue-8041.ts
+      tests/misc/errors/babel-ts/jsfmt.spec.js --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-666
+    display_name: prettier @ 6632b95
+    url: https://github.com/prettier/prettier.git
+    ref: 6632b95497423ed07ddaee8035abed99aaf5a777
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test tests/conditional/jsfmt.spec.js
+      tests/conditional/comments.js
+      tests/conditional/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-14400
+    display_name: prettier @ 6905b39
+    url: https://github.com/prettier/prettier.git
+    ref: 6905b39ec7bc6ed38732e26ceced5b57677e2600
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test tests/format/html/svg/svg.html
+      tests/config/utils/check-parsers.js
+      tests/format/html/svg/embeded/__snapshots__/jsfmt.spec.js.snap
+      tests/format/html/svg/embeded/svg.svg
+      tests/format/html/svg/embeded/jsfmt.spec.js
+      tests/format/html/svg/embeded/svg.html
+      tests/format/html/svg/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-12930
+    display_name: prettier @ 3147244
+    url: https://github.com/prettier/prettier.git
+    ref: 3147244f55e6e0aafd2cc6fa5875f7c8cfa8e4e3
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/format/typescript/enum/computed-members.ts
+      tests/format/typescript/enum/__snapshots__/jsfmt.spec.js.snap
+      tests/format/typescript/enum/jsfmt.spec.js --json
+    source_roots:
+      - changelog_unreleased
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-6604
+    display_name: prettier @ affa24c
+    url: https://github.com/prettier/prettier.git
+    ref: affa24ce764bd14ac087abeef0603012f5c635d6
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/typescript_intersection/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_union/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_union/inlining.ts
+      tests/typescript_intersection/jsfmt.spec.js
+      tests/typescript_keyof/keyof.ts
+      tests/typescript_intersection/intersection-parens.ts
+      tests/typescript_conditional_types/__snapshots__/jsfmt.spec.js.snap
+      tests/typescript_conditional_types/conditonal-types.ts
+      tests/typescript_keyof/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-5025
+    display_name: prettier @ 93e8b15
+    url: https://github.com/prettier/prettier.git
+    ref: 93e8b15311cc88d30eadf8a34acbc062d0965f2b
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/markdown_footnoteDefinition/long.md
+      tests/markdown_footnoteDefinition/jsfmt.spec.js
+      tests/markdown_footnoteDefinition/__snapshots__/jsfmt.spec.js.snap --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-4667
+    display_name: prettier @ 4a16319
+    url: https://github.com/prettier/prettier.git
+    ref: 4a16319470cfb929799783118ad78afcf99461d2
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests_integration/cli/config/resolve-relative/.prettierrc
+      tests_integration/__tests__/config-resolution.js --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: prettier-3723
+    display_name: prettier @ bef646d
+    url: https://github.com/prettier/prettier.git
+    ref: bef646d4a4d2df9a7e1e06ea5dd28380475f624c
+    package_manager: npm
+    install_command: npm install
+    test_command: . /usr/local/nvm/nvm.sh && nvm use 20.16.0 && npm pkg set
+      scripts.lint="echo noop" && yarn test
+      tests/css_empty_file/__snapshots__/jsfmt.spec.js.snap
+      tests/empty/empty-file.js tests/css_empty_file/single-space.css
+      tests/css_empty_file/jsfmt.spec.js
+      tests/empty/__snapshots__/jsfmt.spec.js.snap tests/empty/single-space.js
+      tests/css_empty_file/empty-file.css --json
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: code-server-3277
+    display_name: code-server @ f8d8ad3
+    url: https://github.com/coder/code-server.git
+    ref: f8d8ad38c166d74332fb71adbce5f08c14bfc7e3
+    package_manager: npm
+    install_command: npm install
+    test_command: yarn test:unit --json --silent
+    source_roots:
+      - lib
+      - lib/vscode/src
+      - src
+      - typings
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: code-server-4923
+    display_name: code-server @ 78658f1
+    url: https://github.com/coder/code-server.git
+    ref: 78658f1cf48a5e019a82cde937cfa8feed8b986b
+    package_manager: npm
+    install_command: npm install
+    test_command: yarn test:unit --json --silent
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: code-server-6278
+    display_name: code-server @ 5d3c9ed
+    url: https://github.com/coder/code-server.git
+    ref: 5d3c9edce436d11d51aa1e586c11eaa49d626dc2
+    package_manager: npm
+    install_command: npm install
+    test_command: yarn test:unit --json --silent
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2532
+    display_name: dayjs @ f4cb2cf
+    url: https://github.com/iamkun/dayjs.git
+    ref: f4cb2cfd77246116cb4151c74ca2f600a17cd951
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2420
+    display_name: dayjs @ a9d7d03
+    url: https://github.com/iamkun/dayjs.git
+    ref: a9d7d0398d22ebd4bfc3812ca0134a97606d54d9
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2399
+    display_name: dayjs @ a9d7d03
+    url: https://github.com/iamkun/dayjs.git
+    ref: a9d7d0398d22ebd4bfc3812ca0134a97606d54d9
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2377
+    display_name: dayjs @ f0a0b54
+    url: https://github.com/iamkun/dayjs.git
+    ref: f0a0b546b074b3b511c2319a1ce83d412894b91f
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2369
+    display_name: dayjs @ f0a0b54
+    url: https://github.com/iamkun/dayjs.git
+    ref: f0a0b546b074b3b511c2319a1ce83d412894b91f
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2367
+    display_name: dayjs @ 1fe1b1d
+    url: https://github.com/iamkun/dayjs.git
+    ref: 1fe1b1d9a214d3b8c9f267b432801424a493f1c4
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2231
+    display_name: dayjs @ e70bee7
+    url: https://github.com/iamkun/dayjs.git
+    ref: e70bee7f840c89ec523b9ac997e5ac621a522726
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-2175
+    display_name: dayjs @ e4468a4
+    url: https://github.com/iamkun/dayjs.git
+    ref: e4468a46de423e7590f045a9e0f4b4a7251298e0
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1964
+    display_name: dayjs @ 3d31611
+    url: https://github.com/iamkun/dayjs.git
+    ref: 3d316117f04362d31f4e8bd349620b8414ce5d0c
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1954
+    display_name: dayjs @ 74e82b9
+    url: https://github.com/iamkun/dayjs.git
+    ref: 74e82b9da5ec8b90361fc27ac7c8b63faf354502
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1953
+    display_name: dayjs @ cbe91fd
+    url: https://github.com/iamkun/dayjs.git
+    ref: cbe91fd1087767337ff1089325c96bf2a1915eac
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1725
+    display_name: dayjs @ 5a108ff
+    url: https://github.com/iamkun/dayjs.git
+    ref: 5a108ff3159c53fd270ea7638f33c35c934d6457
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1611
+    display_name: dayjs @ f68e4b1
+    url: https://github.com/iamkun/dayjs.git
+    ref: f68e4b1a29fc33542f74cde10ec6d9fb045ca37e
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1567
+    display_name: dayjs @ b5e40e6
+    url: https://github.com/iamkun/dayjs.git
+    ref: b5e40e6f16abeaea6a0facfa466d20aefaa8a444
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1502
+    display_name: dayjs @ 06f88f4
+    url: https://github.com/iamkun/dayjs.git
+    ref: 06f88f425828b1ce96b737332d25145a95a4ee9d
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1470
+    display_name: dayjs @ 0fdac93
+    url: https://github.com/iamkun/dayjs.git
+    ref: 0fdac93ff2531542301b76952be9b084b2e2dfa0
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1414
+    display_name: dayjs @ b1abdc4
+    url: https://github.com/iamkun/dayjs.git
+    ref: b1abdc40ee6c9d18ff46c311a114e0755677ea6f
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1321
+    display_name: dayjs @ 344bdc0
+    url: https://github.com/iamkun/dayjs.git
+    ref: 344bdc0eed6843edb05723dc7853a41833d88f08
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1319
+    display_name: dayjs @ cc993f0
+    url: https://github.com/iamkun/dayjs.git
+    ref: cc993f0a8d18d33c0137616b80adc86127ba3424
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1307
+    display_name: dayjs @ bfaabe4
+    url: https://github.com/iamkun/dayjs.git
+    ref: bfaabe4f398c11564eca6cda7c8aded22e1b231a
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1295
+    display_name: dayjs @ de49bb1
+    url: https://github.com/iamkun/dayjs.git
+    ref: de49bb100badfb92b9a5933cc568841f340a923f
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1209
+    display_name: dayjs @ 9544ed2
+    url: https://github.com/iamkun/dayjs.git
+    ref: 9544ed2a6c466b8308d26b33a388a6737435a1f4
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1202
+    display_name: dayjs @ 9544ed2
+    url: https://github.com/iamkun/dayjs.git
+    ref: 9544ed2a6c466b8308d26b33a388a6737435a1f4
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+      - types
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1201
+    display_name: dayjs @ ed9629b
+    url: https://github.com/iamkun/dayjs.git
+    ref: ed9629b5ab2895652111fc854e6081422ed5c010
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1161
+    display_name: dayjs @ 9a407a1
+    url: https://github.com/iamkun/dayjs.git
+    ref: 9a407a140b089345a387d1aceab4d0d1635229c7
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+      - types
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1160
+    display_name: dayjs @ 1d429e5
+    url: https://github.com/iamkun/dayjs.git
+    ref: 1d429e5fe4467ebddcf81b43cf6f36e5e3be944c
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+      - types
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1112
+    display_name: dayjs @ 7937ccd
+    url: https://github.com/iamkun/dayjs.git
+    ref: 7937ccdeac47d094a60e65ebb62a6020b81c46f4
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1047
+    display_name: dayjs @ cdc49a1
+    url: https://github.com/iamkun/dayjs.git
+    ref: cdc49a1911c74b7ea96ed222f42796d53715cfed
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - build
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1023
+    display_name: dayjs @ a09d259
+    url: https://github.com/iamkun/dayjs.git
+    ref: a09d259a407b81d1cb6bb5623fad551c775d8674
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: dayjs-1019
+    display_name: dayjs @ e1890c9
+    url: https://github.com/iamkun/dayjs.git
+    ref: e1890c969122c677350af2f457b7066d1fcf787a
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-3442
+    display_name: github-readme-stats @ 9c6eb22
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 9c6eb2286284a44ea3ba983ab4d2d2f8a8c2203e
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - cloudflare
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-2844
+    display_name: github-readme-stats @ c5d4bcb
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: c5d4bcbc1ac5e1811681e4acd825cd39145fb2d9
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-2491
+    display_name: github-readme-stats @ 1120006
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 112000667c01f18fd161f204ae3ee796ec2e3011
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-2228
+    display_name: github-readme-stats @ 8e31470
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 8e3147014ca6ef63033574f12c70c1372ec26db8
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-2099
+    display_name: github-readme-stats @ daa1977
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: daa1977ba310f5dcb44f7945e7ecb5537e708c05
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-2075
+    display_name: github-readme-stats @ 6001270
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 60012707c7eaa51fd0377ce8ae46da6ebad24342
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-1608
+    display_name: github-readme-stats @ d57251c
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: d57251cdf1cb5e7b6cea6081147eb9daf8257eef
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-1378
+    display_name: github-readme-stats @ 02ebd32
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 02ebd3243b4dc1aba224c7c75c23ebd3e4867ed2
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-1370
+    display_name: github-readme-stats @ d0ab2ff
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: d0ab2ff030edfecf74373de8ca16e9d09a273afa
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-1314
+    display_name: github-readme-stats @ 4dbb9e9
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 4dbb9e93b9be070169228d89bff9a82342587a81
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-1041
+    display_name: github-readme-stats @ fef8bc3
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: fef8bc3a4a4ddb12a5c779e7cae18438231845a7
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-721
+    display_name: github-readme-stats @ 9959191
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 99591915eceb5136c0882037aa893cda5b5dbb34
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-293
+    display_name: github-readme-stats @ e1932fd
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: e1932fdf7479fd48051de5ec788fcb76d4e783f0
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - docs
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-148
+    display_name: github-readme-stats @ aa44bd7
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: aa44bd7615442cc927ac070c5aedf35cb865c3a2
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-117
+    display_name: github-readme-stats @ 9fb28c9
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 9fb28c91126d798b9f489dc25d0055b805cd40e6
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-105
+    display_name: github-readme-stats @ b4a9bd4
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: b4a9bd4468cfddfac0b556c16ead03f0683a2656
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+      - themes
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-99
+    display_name: github-readme-stats @ b039fa1
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: b039fa16afedf91cc9044f790ec63f23dbfa0299
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-88
+    display_name: github-readme-stats @ 96f89ad
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 96f89ad2b7ef282b3dc15642e3c658af86972b19
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: github-readme-stats-58
+    display_name: github-readme-stats @ 2efb399
+    url: https://github.com/anuraghazra/github-readme-stats.git
+    ref: 2efb399f33d8f3dca7eb156404598384f419cb8b
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - api
+      - src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: axios-5919
+    display_name: axios @ bc9af51
+    url: https://github.com/axios/axios.git
+    ref: bc9af51b1886d1b3529617702f2a21a6c0ed5d92
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: axios-5661
+    display_name: axios @ 0abc705
+    url: https://github.com/axios/axios.git
+    ref: 0abc70564746496eb211bbd951041b4655aec268
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: axios-5338
+    display_name: axios @ 7fbfbbe
+    url: https://github.com/axios/axios.git
+    ref: 7fbfbbeff69904cd64e8ac62da8969a1e633ee23
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: axios-5085
+    display_name: axios @ 85740c3
+    url: https://github.com/axios/axios.git
+    ref: 85740c3e7a1fa48346dfcbd4497f463ccb1c1b05
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: express-5555
+    display_name: express @ a1fa90f
+    url: https://github.com/expressjs/express.git
+    ref: a1fa90fcea7d8e844e1c9938ad095d62669c3abd
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: express-3870
+    display_name: express @ dc538f6
+    url: https://github.com/expressjs/express.git
+    ref: dc538f6e810bd462c98ee7e6aae24c64d4b1da93
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: express-3695
+    display_name: express @ 3ed5090
+    url: https://github.com/expressjs/express.git
+    ref: 3ed5090ca91f6a387e66370d57ead94d886275e1
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: express-3495
+    display_name: express @ 8da5110
+    url: https://github.com/expressjs/express.git
+    ref: 8da51108e7bb501344c537d3f1f846a7477ae329
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - lib
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript
+  - id: insomnia-7734
+    display_name: insomnia @ 44642a4
+    url: https://github.com/Kong/insomnia.git
+    ref: 44642a49e9a104a53964b3b2b9c589910d391236
+    package_manager: npm
+    install_command: npm install
+    test_command: npm test
+    source_roots:
+      - packages/insomnia/src
+    tsconfig_candidates: []
+    language_scope:
+      - javascript
+      - typescript

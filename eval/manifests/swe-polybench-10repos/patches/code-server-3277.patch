@@ -1,0 +1,398 @@
+diff --git a/lib/vscode/.eslintignore b/lib/vscode/.eslintignore
+--- a/lib/vscode/.eslintignore
++++ b/lib/vscode/.eslintignore
+@@ -19,3 +19,4 @@
+ # These are code-server code symlinks.
+ src/vs/base/node/proxy_agent.ts
+ src/vs/ipc.d.ts
++src/vs/server/common/util.ts
+diff --git a/lib/vscode/src/vs/server/browser/client.ts b/lib/vscode/src/vs/server/browser/client.ts
+--- a/lib/vscode/src/vs/server/browser/client.ts
++++ b/lib/vscode/src/vs/server/browser/client.ts
+@@ -1,8 +1,10 @@
+ import * as path from 'vs/base/common/path';
+-import { URI } from 'vs/base/common/uri';
+ import { Options } from 'vs/ipc';
+ import { localize } from 'vs/nls';
++import { MenuId, MenuRegistry } from 'vs/platform/actions/common/actions';
++import { CommandsRegistry } from 'vs/platform/commands/common/commands';
+ import { Extensions, IConfigurationRegistry } from 'vs/platform/configuration/common/configurationRegistry';
++import { ContextKeyExpr, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+ import { registerSingleton } from 'vs/platform/instantiation/common/extensions';
+ import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
+ import { ILogService } from 'vs/platform/log/common/log';
+@@ -11,10 +13,18 @@ import { Registry } from 'vs/platform/registry/common/platform';
+ import { IStorageService, StorageScope, StorageTarget } from 'vs/platform/storage/common/storage';
+ import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+ import { TelemetryChannelClient } from 'vs/server/common/telemetry';
++import { getOptions } from 'vs/server/common/util';
+ import 'vs/workbench/contrib/localizations/browser/localizations.contribution';
+ import 'vs/workbench/services/localizations/browser/localizationsService';
+ import { IRemoteAgentService } from 'vs/workbench/services/remote/common/remoteAgentService';
+ 
++/**
++ * All client-side customization to VS Code should live in this file when
++ * possible.
++ */
++
++const options = getOptions<Options>();
++
+ class TelemetryService extends TelemetryChannelClient {
+ 	public constructor(
+ 		@IRemoteAgentService remoteAgentService: IRemoteAgentService,
+@@ -23,26 +33,6 @@ class TelemetryService extends TelemetryChannelClient {
+ 	}
+ }
+ 
+-/**
+- * Remove extra slashes in a URL.
+- */
+-export const normalize = (url: string, keepTrailing = false): string => {
+-	return url.replace(/\/\/+/g, '/').replace(/\/+$/, keepTrailing ? '/' : '');
+-};
+-
+-/**
+- * Get options embedded in the HTML.
+- */
+-export const getOptions = <T extends Options>(): T => {
+-	try {
+-		return JSON.parse(document.getElementById('coder-options')!.getAttribute('data-settings')!);
+-	} catch (error) {
+-		return {} as T;
+-	}
+-};
+-
+-const options = getOptions();
+-
+ const TELEMETRY_SECTION_ID = 'telemetry';
+ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfiguration({
+ 	'id': TELEMETRY_SECTION_ID,
+@@ -173,38 +163,36 @@ export const initialize = async (services: ServiceCollection): Promise<void> =>
+ 	if (theme) {
+ 		localStorage.setItem('colorThemeData', theme);
+ 	}
+-};
+ 
+-export interface Query {
+-	[key: string]: string | undefined;
+-}
+-
+-/**
+- * Split a string up to the delimiter. If the delimiter doesn't exist the first
+- * item will have all the text and the second item will be an empty string.
+- */
+-export const split = (str: string, delimiter: string): [string, string] => {
+-	const index = str.indexOf(delimiter);
+-	return index !== -1 ? [str.substring(0, index).trim(), str.substring(index + 1)] : [str, ''];
+-};
++	// Use to show or hide logout commands and menu options.
++	const contextKeyService = (services.get(IContextKeyService) as IContextKeyService);
++	contextKeyService.createKey('code-server.authed', options.authed);
++
++	// Add a logout command.
++	const logoutEndpoint = path.join(options.base, '/logout') + `?base=${options.base}`;
++	const LOGOUT_COMMAND_ID = 'code-server.logout';
++	CommandsRegistry.registerCommand(
++		LOGOUT_COMMAND_ID,
++		() => {
++			window.location.href = logoutEndpoint;
++		},
++	);
++
++	// Add logout to command palette.
++	MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
++		command: {
++			id: LOGOUT_COMMAND_ID,
++			title: localize('logout', "Log out")
++		},
++		when: ContextKeyExpr.has('code-server.authed')
++	});
+ 
+-/**
+- * Return the URL modified with the specified query variables. It's pretty
+- * stupid so it probably doesn't cover any edge cases. Undefined values will
+- * unset existing values. Doesn't allow duplicates.
+- */
+-export const withQuery = (url: string, replace: Query): string => {
+-	const uri = URI.parse(url);
+-	const query = { ...replace };
+-	uri.query.split('&').forEach((kv) => {
+-		const [key, value] = split(kv, '=');
+-		if (!(key in query)) {
+-			query[key] = value;
+-		}
++	// Add logout to the (web-only) home menu.
++	MenuRegistry.appendMenuItem(MenuId.MenubarHomeMenu, {
++		command: {
++			id: LOGOUT_COMMAND_ID,
++			title: localize('logout', "Log out")
++		},
++		when: ContextKeyExpr.has('code-server.authed')
+ 	});
+-	return uri.with({
+-		query: Object.keys(query)
+-			.filter((k) => typeof query[k] !== 'undefined')
+-			.map((k) => `${k}=${query[k]}`).join('&'),
+-	}).toString(true);
+ };
+diff --git a/lib/vscode/src/vs/server/common/cookie.ts b/lib/vscode/src/vs/server/common/cookie.ts
+deleted file mode 100644
+--- a/lib/vscode/src/vs/server/common/cookie.ts
++++ /dev/null
+@@ -1,3 +0,0 @@
+-export enum Cookie {
+-  Key = 'key',
+-}
+diff --git a/lib/vscode/src/vs/server/common/util.ts b/lib/vscode/src/vs/server/common/util.ts
+new file mode 120000
+--- /dev/null
++++ b/lib/vscode/src/vs/server/common/util.ts
+@@ -0,0 +1 @@
++../../../../../../src/common/util.ts
+\ No newline at end of file
+diff --git a/lib/vscode/src/vs/workbench/browser/parts/titlebar/menubarControl.ts b/lib/vscode/src/vs/workbench/browser/parts/titlebar/menubarControl.ts
+--- a/lib/vscode/src/vs/workbench/browser/parts/titlebar/menubarControl.ts
++++ b/lib/vscode/src/vs/workbench/browser/parts/titlebar/menubarControl.ts
+@@ -9,7 +9,7 @@ import { registerThemingParticipant, IThemeService } from 'vs/platform/theme/com
+ import { MenuBarVisibility, getTitleBarStyle, IWindowOpenable, getMenuBarVisibility } from 'vs/platform/windows/common/windows';
+ import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+ import { IAction, Action, SubmenuAction, Separator } from 'vs/base/common/actions';
+-import { addDisposableListener, Dimension, EventType, getCookieValue } from 'vs/base/browser/dom';
++import { addDisposableListener, Dimension, EventType } from 'vs/base/browser/dom';
+ import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
+ import { isMacintosh, isWeb, isIOS, isNative } from 'vs/base/common/platform';
+ import { IConfigurationService, IConfigurationChangeEvent } from 'vs/platform/configuration/common/configuration';
+@@ -38,8 +38,6 @@ import { KeyCode } from 'vs/base/common/keyCodes';
+ import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
+ import { IsWebContext } from 'vs/platform/contextkey/common/contextkeys';
+ import { ICommandService } from 'vs/platform/commands/common/commands';
+-import { ILogService } from 'vs/platform/log/common/log';
+-import { Cookie } from 'vs/server/common/cookie';
+ 
+ export type IOpenRecentAction = IAction & { uri: URI, remoteAuthority?: string };
+ 
+@@ -318,8 +316,7 @@ export class CustomMenubarControl extends MenubarControl {
+ 		@IThemeService private readonly themeService: IThemeService,
+ 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+ 		@IHostService protected readonly hostService: IHostService,
+-		@ICommandService commandService: ICommandService,
+-		@ILogService private readonly logService: ILogService
++		@ICommandService commandService: ICommandService
+ 	) {
+ 		super(menuService, workspacesService, contextKeyService, keybindingService, configurationService, labelService, updateService, storageService, notificationService, preferencesService, environmentService, accessibilityService, hostService, commandService);
+ 
+@@ -721,28 +718,6 @@ export class CustomMenubarControl extends MenubarControl {
+ 			webNavigationActions.pop();
+ 		}
+ 
+-		webNavigationActions.push(new Action('logout', localize('logout', "Log out"), undefined, true,
+-		async (event?: MouseEvent) => {
+-			const COOKIE_KEY = Cookie.Key;
+-			const loginCookie = getCookieValue(COOKIE_KEY);
+-
+-			this.logService.info('Logging out of code-server');
+-
+-			if(loginCookie) {
+-				this.logService.info(`Removing cookie under ${COOKIE_KEY}`);
+-
+-				if (document && document.cookie) {
+-					// We delete the cookie by setting the expiration to a date/time in the past
+-					document.cookie = COOKIE_KEY +'=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+-					window.location.href = '/login';
+-				} else {
+-					this.logService.warn('Could not delete cookie because document and/or document.cookie is undefined');
+-				}
+-			} else {
+-				this.logService.warn('Could not log out because we could not find cookie');
+-			}
+-		}));
+-
+ 		return webNavigationActions;
+ 	}
+ 
+diff --git a/src/browser/register.ts b/src/browser/register.ts
+--- a/src/browser/register.ts
++++ b/src/browser/register.ts
+@@ -1,3 +1,4 @@
++import { logger } from "@coder/logger"
+ import { getOptions, normalize, logError } from "../common/util"
+ 
+ import "./pages/error.css"
+@@ -6,19 +7,21 @@ import "./pages/login.css"
+ 
+ export async function registerServiceWorker(): Promise<void> {
+   const options = getOptions()
++  logger.level = options.logLevel
++
+   const path = normalize(`${options.csStaticBase}/dist/serviceWorker.js`)
+   try {
+     await navigator.serviceWorker.register(path, {
+       scope: options.base + "/",
+     })
+-    console.log("[Service Worker] registered")
++    logger.info(`[Service Worker] registered`)
+   } catch (error) {
+-    logError(`[Service Worker] registration`, error)
++    logError(logger, `[Service Worker] registration`, error)
+   }
+ }
+ 
+ if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+   registerServiceWorker()
+ } else {
+-  console.error(`[Service Worker] navigator is undefined`)
++  logger.error(`[Service Worker] navigator is undefined`)
+ }
+diff --git a/src/common/util.ts b/src/common/util.ts
+--- a/src/common/util.ts
++++ b/src/common/util.ts
+@@ -1,5 +1,13 @@
+-import { logger, field } from "@coder/logger"
++/*
++ * This file exists in two locations:
++ * - src/common/util.ts
++ * - lib/vscode/src/vs/server/common/util.ts
++ * The second is a symlink to the first.
++ */
+ 
++/**
++ * Base options included on every page.
++ */
+ export interface Options {
+   base: string
+   csStaticBase: string
+@@ -69,6 +77,9 @@ export const getOptions = <T extends Options>(): T => {
+     options = {} as T
+   }
+ 
++  // You can also pass options in stringified form to the options query
++  // variable. Options provided here will override the ones in the options
++  // element.
+   const params = new URLSearchParams(location.search)
+   const queryOpts = params.get("options")
+   if (queryOpts) {
+@@ -78,13 +89,9 @@ export const getOptions = <T extends Options>(): T => {
+     }
+   }
+ 
+-  logger.level = options.logLevel
+-
+   options.base = resolveBase(options.base)
+   options.csStaticBase = resolveBase(options.csStaticBase)
+ 
+-  logger.debug("got options", field("options", options))
+-
+   return options
+ }
+ 
+@@ -113,7 +120,8 @@ export const getFirstString = (value: string | string[] | object | undefined): s
+   return typeof value === "string" ? value : undefined
+ }
+ 
+-export function logError(prefix: string, err: any): void {
++// TODO: Might make sense to add Error handling to the logger itself.
++export function logError(logger: { error: (msg: string) => void }, prefix: string, err: Error | string): void {
+   if (err instanceof Error) {
+     logger.error(`${prefix}: ${err.message} ${err.stack}`)
+   } else {
+diff --git a/src/node/app.ts b/src/node/app.ts
+--- a/src/node/app.ts
++++ b/src/node/app.ts
+@@ -37,7 +37,7 @@ export const createApp = async (args: DefaultedArgs): Promise<[Express, Express,
+         reject(err)
+       } else {
+         // Promise resolved earlier so this is an unrelated error.
+-        util.logError("http server error", err)
++        util.logError(logger, "http server error", err)
+       }
+     })
+ 
+diff --git a/src/node/routes/index.ts b/src/node/routes/index.ts
+--- a/src/node/routes/index.ts
++++ b/src/node/routes/index.ts
+@@ -20,6 +20,7 @@ import * as apps from "./apps"
+ import * as domainProxy from "./domainProxy"
+ import * as health from "./health"
+ import * as login from "./login"
++import * as logout from "./logout"
+ import * as pathProxy from "./pathProxy"
+ // static is a reserved keyword.
+ import * as _static from "./static"
+@@ -136,10 +137,10 @@ export const register = async (
+ 
+   if (args.auth === AuthType.Password) {
+     app.use("/login", login.router)
++    app.use("/logout", logout.router)
+   } else {
+-    app.all("/login", (req, res) => {
+-      redirect(req, res, "/", {})
+-    })
++    app.all("/login", (req, res) => redirect(req, res, "/", {}))
++    app.all("/logout", (req, res) => redirect(req, res, "/", {}))
+   }
+ 
+   app.use("/static", _static.router)
+diff --git a/src/node/routes/logout.ts b/src/node/routes/logout.ts
+new file mode 100644
+--- /dev/null
++++ b/src/node/routes/logout.ts
+@@ -0,0 +1,17 @@
++import { Router } from "express"
++import { getCookieDomain, redirect } from "../http"
++import { Cookie } from "./login"
++
++export const router = Router()
++
++router.get("/", async (req, res) => {
++  // Must use the *identical* properties used to set the cookie.
++  res.clearCookie(Cookie.Key, {
++    domain: getCookieDomain(req.headers.host || "", req.args["proxy-domain"]),
++    path: req.body.base || "/",
++    sameSite: "lax",
++  })
++
++  const to = (typeof req.query.to === "string" && req.query.to) || "/"
++  return redirect(req, res, to, { to: undefined, base: undefined })
++})
+diff --git a/src/node/routes/vscode.ts b/src/node/routes/vscode.ts
+--- a/src/node/routes/vscode.ts
++++ b/src/node/routes/vscode.ts
+@@ -3,6 +3,7 @@ import { Request, Router } from "express"
+ import { promises as fs } from "fs"
+ import * as path from "path"
+ import qs from "qs"
++import * as ipc from "../../../typings/ipc"
+ import { Emitter } from "../../common/emitter"
+ import { HttpCode, HttpError } from "../../common/http"
+ import { getFirstString } from "../../common/util"
+@@ -39,12 +40,13 @@ router.get("/", async (req, res) => {
+   options.productConfiguration.codeServerVersion = version
+ 
+   res.send(
+-    replaceTemplates(
++    replaceTemplates<ipc.Options>(
+       req,
+       // Uncomment prod blocks if not in development. TODO: Would this be
+       // better as a build step? Or maintain two HTML files again?
+       commit !== "development" ? content.replace(/<!-- PROD_ONLY/g, "").replace(/END_PROD_ONLY -->/g, "") : content,
+       {
++        authed: req.args.auth !== "none",
+         disableTelemetry: !!req.args["disable-telemetry"],
+         disableUpdateCheck: !!req.args["disable-update-check"],
+       },
+diff --git a/typings/ipc.d.ts b/typings/ipc.d.ts
+--- a/typings/ipc.d.ts
++++ b/typings/ipc.d.ts
+@@ -6,9 +6,12 @@
+  * The second is a symlink to the first.
+  */
+ export interface Options {
++  authed: boolean
+   base: string
++  csStaticBase: string
+   disableTelemetry: boolean
+   disableUpdateCheck: boolean
++  logLevel: number
+ }
+ 
+ export interface InitMessage {

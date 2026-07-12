@@ -1,0 +1,12 @@
+diff --git a/packages/material-ui/src/Input/Textarea.test.js b/packages/material-ui/src/Input/Textarea.test.js
+--- a/packages/material-ui/src/Input/Textarea.test.js
++++ b/packages/material-ui/src/Input/Textarea.test.js
+@@ -28,7 +28,7 @@ describe('<Textarea />', () => {
+   let mount;
+ 
+   before(() => {
+-    shallow = createShallow({ disableLifecycleMethods: true });
++    shallow = createShallow();
+     mount = createMount();
+   });
+ 

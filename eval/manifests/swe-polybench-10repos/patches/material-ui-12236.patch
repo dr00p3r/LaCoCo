@@ -1,0 +1,83 @@
+diff --git a/packages/material-ui/src/styles/withTheme.d.ts b/packages/material-ui/src/styles/withTheme.d.ts
+--- a/packages/material-ui/src/styles/withTheme.d.ts
++++ b/packages/material-ui/src/styles/withTheme.d.ts
+@@ -3,6 +3,7 @@ import { ConsistentWith } from '..';
+ 
+ export interface WithTheme {
+   theme: Theme;
++  innerRef?: React.Ref<any> | React.RefObject<any>;
+ }
+ 
+ declare const withTheme: () => <P extends ConsistentWith<P, WithTheme>>(
+diff --git a/packages/material-ui/src/styles/withTheme.js b/packages/material-ui/src/styles/withTheme.js
+--- a/packages/material-ui/src/styles/withTheme.js
++++ b/packages/material-ui/src/styles/withTheme.js
+@@ -1,4 +1,5 @@
+ import React from 'react';
++import PropTypes from 'prop-types';
+ import hoistNonReactStatics from 'hoist-non-react-statics';
+ import wrapDisplayName from 'recompose/wrapDisplayName';
+ import createMuiTheme from './createMuiTheme';
+@@ -44,10 +45,18 @@ const withTheme = () => Component => {
+     }
+ 
+     render() {
+-      return <Component theme={this.state.theme} {...this.props} />;
++      const { innerRef, ...other } = this.props;
++      return <Component theme={this.state.theme} ref={innerRef} {...other} />;
+     }
+   }
+ 
++  WithTheme.propTypes = {
++    /**
++     * Use that property to pass a ref callback to the decorated component.
++     */
++    innerRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
++  };
++
+   WithTheme.contextTypes = themeListener.contextTypes;
+ 
+   if (process.env.NODE_ENV !== 'production') {
+diff --git a/packages/material-ui/src/withWidth/withWidth.d.ts b/packages/material-ui/src/withWidth/withWidth.d.ts
+--- a/packages/material-ui/src/withWidth/withWidth.d.ts
++++ b/packages/material-ui/src/withWidth/withWidth.d.ts
+@@ -7,6 +7,7 @@ export interface WithWidthOptions {
+ 
+ export interface WithWidthProps {
+   width: Breakpoint;
++  innerRef?: React.Ref<any> | React.RefObject<any>;
+ }
+ 
+ export function isWidthDown(
+diff --git a/packages/material-ui/src/withWidth/withWidth.js b/packages/material-ui/src/withWidth/withWidth.js
+--- a/packages/material-ui/src/withWidth/withWidth.js
++++ b/packages/material-ui/src/withWidth/withWidth.js
+@@ -98,7 +98,7 @@ const withWidth = (options = {}) => Component => {
+     }
+ 
+     render() {
+-      const { initialWidth, theme, width, ...other } = this.props;
++      const { initialWidth, theme, width, innerRef, ...other } = this.props;
+ 
+       const props = {
+         width:
+@@ -127,7 +127,7 @@ const withWidth = (options = {}) => Component => {
+ 
+       return (
+         <EventListener target="window" onResize={this.handleResize}>
+-          <Component {...more} {...props} />
++          <Component {...more} {...props} ref={innerRef} />
+         </EventListener>
+       );
+     }
+@@ -144,6 +144,10 @@ const withWidth = (options = {}) => Component => {
+      * http://caniuse.com/#search=client%20hint
+      */
+     initialWidth: PropTypes.oneOf(['xs', 'sm', 'md', 'lg', 'xl']),
++    /**
++     * Use that property to pass a ref callback to the decorated component.
++     */
++    innerRef: PropTypes.oneOfType([PropTypes.func, PropTypes.object]),
+     /**
+      * @ignore
+      */

@@ -1,0 +1,12 @@
+diff --git a/lib/plugins/aws/info/getResourceCount.test.js b/lib/plugins/aws/info/getResourceCount.test.js
+index 2dfa0baba44..89ace1fba7e 100644
+--- a/lib/plugins/aws/info/getResourceCount.test.js
++++ b/lib/plugins/aws/info/getResourceCount.test.js
+@@ -131,6 +131,7 @@ describe('#getResourceCount()', () => {
+       expect(
+         listStackResourcesStub.calledWithExactly('CloudFormation', 'listStackResources', {
+           StackName: awsInfo.provider.naming.getStackName(),
++          NextToken: undefined,
+         })
+       ).to.equal(true);
+ 

@@ -1,0 +1,123 @@
+diff --git a/.size-limit.js b/.size-limit.js
+--- a/.size-limit.js
++++ b/.size-limit.js
+@@ -27,7 +27,7 @@ module.exports = [
+     name: 'The size of all the modules of material-ui.',
+     webpack: true,
+     path: 'packages/material-ui/build/index.js',
+-    limit: '94.8 KB',
++    limit: '94.9 KB',
+   },
+   {
+     name: 'The main bundle of the docs',
+diff --git a/docs/src/pages/style/icons/SvgIcons.js b/docs/src/pages/style/icons/SvgIcons.js
+--- a/docs/src/pages/style/icons/SvgIcons.js
++++ b/docs/src/pages/style/icons/SvgIcons.js
+@@ -2,6 +2,7 @@ import React from 'react';
+ import PropTypes from 'prop-types';
+ import { withStyles } from '@material-ui/core/styles';
+ import red from '@material-ui/core/colors/red';
++import blue from '@material-ui/core/colors/blue';
+ import SvgIcon from '@material-ui/core/SvgIcon';
+ 
+ const styles = theme => ({
+@@ -39,6 +40,22 @@ function SvgIcons(props) {
+       <HomeIcon className={classes.icon} color="action" />
+       <HomeIcon className={classes.iconHover} color="error" style={{ fontSize: 30 }} />
+       <HomeIcon color="disabled" className={classes.icon} style={{ fontSize: 36 }} />
++      <HomeIcon
++        className={classes.icon}
++        color="primary"
++        style={{ fontSize: 36 }}
++        component={svgProps => (
++          <svg {...svgProps}>
++            <defs>
++              <linearGradient id="gradient1">
++                <stop offset="30%" stopColor={blue[400]} />
++                <stop offset="70%" stopColor={red[400]} />
++              </linearGradient>
++            </defs>
++            {React.cloneElement(svgProps.children[0], { fill: 'url(#gradient1)' })}
++          </svg>
++        )}
++      />
+     </div>
+   );
+ }
+diff --git a/packages/material-ui/src/SvgIcon/SvgIcon.d.ts b/packages/material-ui/src/SvgIcon/SvgIcon.d.ts
+--- a/packages/material-ui/src/SvgIcon/SvgIcon.d.ts
++++ b/packages/material-ui/src/SvgIcon/SvgIcon.d.ts
+@@ -4,6 +4,7 @@ import { StandardProps, PropTypes } from '..';
+ export interface SvgIconProps
+   extends StandardProps<React.SVGProps<SVGSVGElement>, SvgIconClassKey> {
+   color?: PropTypes.Color | 'action' | 'disabled' | 'error';
++  component?: React.ReactType<SvgIconProps>;
+   fontSize?: 'inherit' | 'default';
+   nativeColor?: string;
+   titleAccess?: string;
+diff --git a/packages/material-ui/src/SvgIcon/SvgIcon.js b/packages/material-ui/src/SvgIcon/SvgIcon.js
+--- a/packages/material-ui/src/SvgIcon/SvgIcon.js
++++ b/packages/material-ui/src/SvgIcon/SvgIcon.js
+@@ -43,6 +43,7 @@ function SvgIcon(props) {
+     classes,
+     className: classNameProp,
+     color,
++    component: Component,
+     fontSize,
+     nativeColor,
+     titleAccess,
+@@ -60,7 +61,7 @@ function SvgIcon(props) {
+   );
+ 
+   return (
+-    <svg
++    <Component
+       className={className}
+       focusable="false"
+       viewBox={viewBox}
+@@ -68,9 +69,9 @@ function SvgIcon(props) {
+       aria-hidden={titleAccess ? 'false' : 'true'}
+       {...other}
+     >
+-      {titleAccess ? <title>{titleAccess}</title> : null}
+       {children}
+-    </svg>
++      {titleAccess ? <title>{titleAccess}</title> : null}
++    </Component>
+   );
+ }
+ 
+@@ -93,6 +94,11 @@ SvgIcon.propTypes = {
+    * You can use the `nativeColor` property to apply a color attribute to the SVG element.
+    */
+   color: PropTypes.oneOf(['inherit', 'primary', 'secondary', 'action', 'error', 'disabled']),
++  /**
++   * The component used for the root node.
++   * Either a string to use a DOM element or a component.
++   */
++  component: PropTypes.oneOfType([PropTypes.string, PropTypes.func, PropTypes.object]),
+   /**
+    * The fontSize applied to the icon. Defaults to 24px, but can be configure to inherit font size.
+    */
+@@ -118,8 +124,9 @@ SvgIcon.propTypes = {
+ 
+ SvgIcon.defaultProps = {
+   color: 'inherit',
+-  viewBox: '0 0 24 24',
++  component: 'svg',
+   fontSize: 'default',
++  viewBox: '0 0 24 24',
+ };
+ 
+ SvgIcon.muiName = 'SvgIcon';
+diff --git a/pages/api/svg-icon.md b/pages/api/svg-icon.md
+--- a/pages/api/svg-icon.md
++++ b/pages/api/svg-icon.md
+@@ -18,6 +18,7 @@ title: SvgIcon API
+ | <span class="prop-name required">children *</span> | <span class="prop-type">node |   | Node passed into the SVG element. |
+ | <span class="prop-name">classes</span> | <span class="prop-type">object |   | Override or extend the styles applied to the component. See [CSS API](#css-api) below for more details. |
+ | <span class="prop-name">color</span> | <span class="prop-type">enum:&nbsp;'inherit', 'primary', 'secondary', 'action', 'error', 'disabled'<br> | <span class="prop-default">'inherit'</span> | The color of the component. It supports those theme colors that make sense for this component. You can use the `nativeColor` property to apply a color attribute to the SVG element. |
++| <span class="prop-name">component</span> | <span class="prop-type">union:&nbsp;string&nbsp;&#124;<br>&nbsp;func&nbsp;&#124;<br>&nbsp;object<br> | <span class="prop-default">'svg'</span> | The component used for the root node. Either a string to use a DOM element or a component. |
+ | <span class="prop-name">fontSize</span> | <span class="prop-type">enum:&nbsp;'inherit'&nbsp;&#124;<br>&nbsp;'default'<br> | <span class="prop-default">'default'</span> | The fontSize applied to the icon. Defaults to 24px, but can be configure to inherit font size. |
+ | <span class="prop-name">nativeColor</span> | <span class="prop-type">string |   | Applies a color attribute to the SVG element. |
+ | <span class="prop-name">titleAccess</span> | <span class="prop-type">string |   | Provides a human-readable title for the element that contains it. https://www.w3.org/TR/SVG-access/#Equivalent |
