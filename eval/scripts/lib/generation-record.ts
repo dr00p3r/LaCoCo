@@ -94,6 +94,12 @@ export interface GenerationRecord {
   // Diagnostico del harness: tests ejecutados pero output no parseable.
   // Opcional para mantener compat con generation.jsonl historicos (v3 sin campo).
   runner_error?: "unknown_runner" | null;
+
+  // Motivo REAL de medicion invalida (SWE-PolyBench): test_patch_apply_failed,
+  // zero_tests_matched, fewer_tests_than_f2p, "jest: no spec targets...", etc.
+  // Diagnostico legible; runner_error queda como la senal binaria para metricas
+  // (m1_unknown_runner_count). Opcional (compat con jsonl v3 previos + --resume).
+  invalid_reason?: string | null;
 }
 
 export const GENERATION_RECORD_SCHEMA_VERSION = 3;

@@ -445,14 +445,14 @@ function parseJest(combined: string): ParsedTestResult {
   while ((m = passLine.exec(combined)) !== null) {
     passed.add(m[1]!.trim());
   }
-  // Summary: 'Tests:   N failed, M passed, T total' (also accept 'Tests:  N passed, T total')
-  const summary = /Tests:\s+(?:(\d+)\s+failed,\s+)?(\d+)\s+passed,\s+(\d+)\s+total/.exec(combined);
-  let totalFailed = 0;
-  let totalPassed = 0;
-  if (summary) {
-    totalFailed = Number(summary[1] ?? 0);
-    totalPassed = Number(summary[2] ?? 0);
-  }
+  // Summary anclada a la línea `Tests:` (no `Test Suites:`). Extrae failed/passed
+  // por SEPARADO para tolerar todas las formas: `N failed, M passed, T total`,
+  // `M passed, T total` (solo-pass), y `N failed, T total` (solo-fallos, SIN la
+  // palabra `passed` — el regex viejo la exigía y devolvía 0/0, un falso
+  // zero_tests_matched). El orden con skipped/todo tampoco importa.
+  const testsLine = /^Tests:.*$/m.exec(combined)?.[0] ?? "";
+  const totalFailed = Number(/(\d+)\s+failed/.exec(testsLine)?.[1] ?? 0);
+  const totalPassed = Number(/(\d+)\s+passed/.exec(testsLine)?.[1] ?? 0);
   return { failed, passed, totalFailed, totalPassed, unknownRunner: false };
 }
 

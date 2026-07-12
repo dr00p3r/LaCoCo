@@ -146,14 +146,36 @@ describe("resolveConcreteRunner", () => {
 });
 
 describe("synthesizeF2pTestRun", () => {
-  it("mocha: invocación con --grep --reporter dot (sin regresión svelte/mui)", () => {
-    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.mochaMui), ["some-fixture-name"], {
-      concreteRunner: "mocha",
-    });
+  it("mocha svelte-shape (targets vacío, opts default) → byte-idéntico a la versión previa (regresión)", () => {
+    const parsed = { ...parseTestCommand(CMD.mochaMui), testTargets: [] as string[] };
+    const synth = synthesizeF2pTestRun(parsed, ["some-fixture-name"], { concreteRunner: "mocha" });
     expect(synth.testInvocation).toBe(
       "./node_modules/.bin/mocha --opts mocha.opts --grep 'some-fixture-name' --reporter dot",
     );
     expect(synth.expectedFixtures).toEqual(["some-fixture-name"]);
+  });
+
+  it("mocha mui-shape: pasa el spec target + test/mocha.opts", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.mochaMui), ["some-fixture-name"], {
+      concreteRunner: "mocha",
+      mochaOpts: "test/mocha.opts",
+    });
+    expect(synth.testInvocation).toBe(
+      "./node_modules/.bin/mocha --opts test/mocha.opts " +
+        "'packages/material-ui/src/ListItem/ListItem.test.js' " +
+        "--grep 'some-fixture-name' --reporter dot",
+    );
+    expect(synth.expectedFixtures).toEqual(["some-fixture-name"]);
+  });
+
+  it("mocha: mochaOpts=null → sin --opts (repo sin fichero), pero con el spec", () => {
+    const synth = synthesizeF2pTestRun(parseTestCommand(CMD.mochaMui), ["some-fixture-name"], {
+      concreteRunner: "mocha",
+      mochaOpts: null,
+    });
+    expect(synth.testInvocation).not.toContain("--opts");
+    expect(synth.testInvocation!).toContain("'packages/material-ui/src/ListItem/ListItem.test.js'");
+    expect(synth.testInvocation!).toContain("--grep 'some-fixture-name'");
   });
 
   it("jest (prettier): corre el .spec.js, no fixtures ni --json", () => {
@@ -179,11 +201,15 @@ describe("synthesizeF2pTestRun", () => {
     expect(synth.testInvocation!).toContain("tests/config/utils");
   });
 
-  it("jest sin targets usables → null con motivo", () => {
+  it("jest sin targets usables → fallback -t por título F2P (no null)", () => {
     const parsed = { ...parseTestCommand(CMD.jestTailwind), testTargets: [] as string[] };
-    const synth = synthesizeF2pTestRun(parsed, ["format"], { concreteRunner: "jest" });
-    expect(synth.testInvocation).toBeNull();
-    expect(synth.reason).toContain("no spec targets");
+    const title = "API resolveConfig resolves relative path values based on config filepath";
+    const synth = synthesizeF2pTestRun(parsed, [title], { concreteRunner: "jest" });
+    expect(synth.testInvocation).not.toBeNull();
+    expect(synth.testInvocation!).toContain(`-t '${title}'`);
+    expect(synth.testInvocation!).toContain("--ci");
+    expect(synth.testInvocation!).toContain("--runInBand");
+    expect(synth.testInvocation!).not.toContain("--json");
   });
 
   it("sin títulos F2P → null (comportamiento preservado)", () => {

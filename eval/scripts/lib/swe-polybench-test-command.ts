@@ -350,8 +350,13 @@ export interface SynthesizeOptions {
   readonly concreteRunner?: ConcreteRunner | null;
   /** Ruta al binario de mocha (def. `./node_modules/.bin/mocha`). */
   readonly mochaBin?: string;
-  /** Fichero de opciones de mocha del repo (def. `mocha.opts`). */
-  readonly mochaOpts?: string;
+  /**
+   * Fichero de opciones de mocha del repo, resuelto por el caller vía fs
+   * (root `mocha.opts` en svelte vs `test/mocha.opts` en mui v5). `undefined`
+   * → default histórico `"mocha.opts"`; `null` → NO emitir `--opts` (repos sin
+   * fichero de opts).
+   */
+  readonly mochaOpts?: string | null;
   /** Ruta al binario de jest (def. `./node_modules/.bin/jest`). */
   readonly jestBin?: string;
 }
@@ -404,7 +409,8 @@ export function synthesizeF2pTestRun(
   opts: SynthesizeOptions = {},
 ): SynthesizedF2pRun {
   const mochaBin = opts.mochaBin ?? "./node_modules/.bin/mocha";
-  const mochaOpts = opts.mochaOpts ?? "mocha.opts";
+  // `undefined` → default histórico; `null` sobrevive (no emitir --opts).
+  const mochaOpts = opts.mochaOpts === undefined ? "mocha.opts" : opts.mochaOpts;
   const jestBin = opts.jestBin ?? "./node_modules/.bin/jest";
 
   const fixtures = [...new Set(f2pTitles.map((t) => f2pFixtureSlug(t)).filter((s) => s !== ""))];
@@ -427,19 +433,31 @@ export function synthesizeF2pTestRun(
     const grepPattern = fixtures.map(escapeRegex).join("|");
     // Reporter `dot`: compacto y parseable por parseTestRunnerOutput; NO usar
     // `json`, que el volcado de código-generado-en-fallo de svelte corrompe.
-    const testInvocation = `${mochaBin} --opts ${mochaOpts} --grep '${grepPattern.replace(/'/g, "'\\''")}' --reporter dot`;
-    return { testInvocation, grepPattern, expectedFixtures: fixtures };
+    // Construido por partes para: (a) omitir --opts cuando el repo no tiene
+    // fichero (mochaOpts===null); (b) pasar los spec files del test_command
+    // (parsed.testTargets) — svelte los deja vacíos y su mocha.opts enumera el
+    // suite (test/test.js), pero mui v5 los necesita en la CLI porque su
+    // test/mocha.opts solo registra @babel/register, no enumera specs. Byte-
+    // idéntico a la versión previa cuando testTargets=[] y mochaOpts="mocha.opts".
+    const parts = [mochaBin];
+    if (mochaOpts !== null) parts.push("--opts", mochaOpts);
+    for (const t of parsed.testTargets) parts.push(`'${t.replace(/'/g, "'\\''")}'`);
+    parts.push("--grep", `'${grepPattern.replace(/'/g, "'\\''")}'`, "--reporter", "dot");
+    return { testInvocation: parts.join(" "), grepPattern, expectedFixtures: fixtures };
   }
 
   if (runner === "jest") {
     const specTargets = jestScopeTargets(parsed.testTargets);
     if (specTargets.length === 0) {
-      return {
-        testInvocation: null,
-        grepPattern: null,
-        expectedFixtures: fixtures,
-        reason: "jest: no spec targets to scope F2P run",
-      };
+      // Sin file scope (test_command = `yarn test` pelado, sin target). Fallback
+      // defense-in-depth: acota por TÍTULO F2P con `-t` sobre la suite completa.
+      // Liveness-check (exit agregado + guarda ran>0), no conteo exacto: el
+      // snapshot graded vive en el test_patch aplicado y `--ci` impide reescritura.
+      // Solo se alcanza sin path-targets (coste de suite completa); el scoping por
+      // spec (arriba) sigue siendo la ruta primaria y la del manifiesto actual.
+      const titlePattern = f2pTitles.map(escapeRegex).join("|");
+      const testInvocation = `${jestBin} -t '${titlePattern.replace(/'/g, "'\\''")}' --ci --runInBand --colors=false`;
+      return { testInvocation, grepPattern: titlePattern, expectedFixtures: fixtures };
     }
     const quoted = specTargets.map((t) => `'${t.replace(/'/g, "'\\''")}'`).join(" ");
     // Sin --json (parseJest lee la línea "Tests: N passed, M total" del reporter

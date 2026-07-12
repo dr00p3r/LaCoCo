@@ -136,6 +136,24 @@ describe("parseTestRunnerOutput", () => {
     expect(parsed.totalPassed).toBe(1);
   });
 
+  it("parses jest fail-only summary (sin la palabra 'passed')", () => {
+    // Regresión: el regex viejo exigía `passed` → `Tests: 1 failed, 1 total`
+    // devolvía 0/0 → falso zero_tests_matched. Ahora extrae failed por separado.
+    const stdout = ["FAIL src/foo.spec.ts", "  ✕ boom", "Tests:  1 failed, 1 total"].join("\n");
+    const parsed = parseTestRunnerOutput(stdout, "");
+    expect(parsed.unknownRunner).toBe(false);
+    expect(parsed.totalFailed).toBe(1);
+    expect(parsed.totalPassed).toBe(0);
+  });
+
+  it("parses jest pass-only summary", () => {
+    const stdout = ["PASS src/foo.spec.ts", "  ✓ ok", "Tests:  3 passed, 3 total"].join("\n");
+    const parsed = parseTestRunnerOutput(stdout, "");
+    expect(parsed.unknownRunner).toBe(false);
+    expect(parsed.totalFailed).toBe(0);
+    expect(parsed.totalPassed).toBe(3);
+  });
+
   it("parses mocha output", () => {
     const stdout = [
       "  1) mergeMap",

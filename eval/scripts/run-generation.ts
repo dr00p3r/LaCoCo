@@ -615,6 +615,38 @@ function resolveDelegatedScriptBody(repoPath: string, scriptName: string | null)
 }
 
 /**
+ * Resuelve el fichero de opciones de mocha del repo checked-out: root
+ * `mocha.opts` (svelte, enumera el suite vía test/test.js) → `test/mocha.opts`
+ * (mui v5, solo registra @babel/register) → `null` (repo sin fichero de opts).
+ * synthesizeF2pTestRun es pura (sin fs); esta resolución vive aquí, con repoPath.
+ */
+function resolveMochaOptsPath(repoPath: string): string | null {
+  if (existsSync(join(repoPath, "mocha.opts"))) return "mocha.opts";
+  if (existsSync(join(repoPath, "test", "mocha.opts"))) return "test/mocha.opts";
+  return null;
+}
+
+/**
+ * Los repos ~2018 del whitelist (p.ej. mui) asignan `global.navigator` en su DOM
+ * setup (`test/utils/createDOM.js`), lo que en Node ≥21 lanza "Cannot set property
+ * navigator ... which has only a getter" (el global Navigator pasó a ser de
+ * solo-lectura). El `test_command` original fija `nvm use 14.x`, pero el harness
+ * corre en el node AMBIENTE (nvm no siempre disponible). Restauramos la
+ * mutabilidad pre-21 con `--no-experimental-global-navigator`. Guardado por la
+ * major del node en curso: el flag NO existe en <21 y node abortaría con "bad
+ * option" si se lo pasáramos. No-op para suites modernas (jest de prettier, mocha
+ * de svelte) que no reasignan el global.
+ */
+function legacyNodeTestEnv(): NodeJS.ProcessEnv {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (!Number.isFinite(major) || major < 21) return {};
+  const flag = "--no-experimental-global-navigator";
+  const existing = process.env.NODE_OPTIONS ?? "";
+  const nodeOptions = existing.includes(flag) ? existing : `${existing} ${flag}`.trim();
+  return { NODE_OPTIONS: nodeOptions };
+}
+
+/**
  * Corre los tests F2P de una instancia SWE-PolyBench y devuelve un exit code
  * *confiable* para M1/Pass@1. A diferencia del flujo legacy, aquí:
  *   1. Se aplica el `test_patch` — los tests F2P los CREA/MODIFICA ese patch;
@@ -678,7 +710,7 @@ async function runSwePolybenchTests(
   let stdout = "";
   let stderr = "";
   try {
-    const result = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath });
+    const result = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath, env: legacyNodeTestEnv() });
     exitCode = result.exitCode; durationMs = result.durationMs; stdout = result.stdout; stderr = result.stderr;
   } catch (error) {
     if (error instanceof CommandExecutionError) {
@@ -1204,7 +1236,10 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           const parsedTestCmd = parseTestCommand(rawTestCommand);
           const scriptBody = resolveDelegatedScriptBody(locked.repoPath, parsedTestCmd.scriptName);
           const concreteRunner = resolveConcreteRunner(parsedTestCmd, scriptBody);
-          const synth = synthesizeF2pTestRun(parsedTestCmd, task.target_tests, { concreteRunner });
+          const synth = synthesizeF2pTestRun(parsedTestCmd, task.target_tests, {
+            concreteRunner,
+            mochaOpts: resolveMochaOptsPath(locked.repoPath),
+          });
           if (synth.testInvocation === null) {
             swePolyInvalid = synth.reason ?? "unsynthesizable";
             writeFileSync(paths.test_log, `(SWE-PolyBench: test no sintetizable: ${swePolyInvalid})\n`, "utf8");
@@ -1256,6 +1291,9 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         // Si el runner de tests no es parseable, NO contamos el exit=0 como pass
         // silencioso. Forzamos test_exit_code=null y dejamos runner_error para que
         // compute-generation-metrics lo agregue a m1_unknown_runner_count.
+        // runner_error queda como la senal binaria (compat metricas); el motivo
+        // REAL (zero_tests_matched, jest-no-targets, test_patch_apply_failed...)
+        // va en invalid_reason para poder diagnosticar celda a celda.
         const testRunnerError = (testResult?.unknownRunner === true || swePolyInvalid !== null)
           ? "unknown_runner" as const
           : null;
@@ -1290,6 +1328,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           artifact_paths: paths,
           error: recordError,
           runner_error: testRunnerError,
+          invalid_reason: swePolyInvalid,
         };
 
         appendFileSync(outputPath, `${JSON.stringify(record)}\n`, "utf8");
