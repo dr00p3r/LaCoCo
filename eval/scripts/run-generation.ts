@@ -25,6 +25,7 @@ import {
   resetRepoClean,
 } from "./lib/git.js";
 import { loadManifests } from "./lib/load-manifests.js";
+import { filesInDiff } from "./lib/patch-evidence-gold.js";
 import {
   parseTestCommand,
   resolveConcreteRunner,
@@ -348,6 +349,46 @@ export function isGroundedPromptEnabled(): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
+/**
+ * Variante del hint MCP. `hard` (default) = protocolo obligatorio (localizador
+ * primario, no editar hasta llamar la tool). `soft` = mención mínima ("úsala
+ * primero"), la versión previa a `02663f4`. Se conmuta con `LACOCO_EVAL_MCP_HINT`
+ * para poder comparar suave vs fuerte a igual arnés sin tocar el código.
+ */
+export function mcpHintVariant(): "soft" | "hard" {
+  const raw = (process.env.LACOCO_EVAL_MCP_HINT ?? "hard").trim().toLowerCase();
+  return raw === "soft" ? "soft" : "hard";
+}
+
+/** Hint MCP suave (mínimo): mide la UTILIDAD de la tool, no su descubribilidad. */
+export const MCP_HINT_SOFT = [
+  "# Herramienta de contexto disponible",
+  "",
+  "Tienes la tool `lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`.",
+  "Úsala PRIMERO para localizar los símbolos relevantes antes de grep/read: devuelve rutas,",
+  "rangos de línea y el cuerpo de cada símbolo tal como está en el repositorio.",
+].join("\n");
+
+/** Hint MCP fuerte (protocolo obligatorio): endurecido en `02663f4`. */
+export const MCP_HINT_HARD = [
+  "# Localización de código: usa `lacoco_retrieve` PRIMERO (obligatorio)",
+  "",
+  "Este repositorio está indexado. Tienes la tool",
+  "`lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`,",
+  "que devuelve los símbolos relevantes con su ruta, rango de líneas y CUERPO",
+  "tal como están en el repo — la localización que normalmente harías con grep/read.",
+  "",
+  "Protocolo de trabajo (síguelo):",
+  "1. ANTES de cualquier grep, glob o read exploratorio, llama a `lacoco_retrieve`",
+  "   con la descripción del problema para localizar dónde está el código a tocar.",
+  "2. Si la primera respuesta no basta, vuelve a llamarla refinando la query o el",
+  "   `intent`/`dimensions` — es más barata y precisa que rastrear el repo a mano.",
+  "3. Usa grep/read SOLO como fallback puntual para confirmar o ampliar lo que la",
+  "   tool ya te señaló, no para descubrir la ubicación desde cero.",
+  "",
+  "No edites ningún archivo hasta haber localizado el sitio con `lacoco_retrieve`.",
+].join("\n");
+
 export function buildPrompt(
   task: TaskDefinition,
   strategy: StrategyDefinition,
@@ -362,29 +403,10 @@ export function buildPrompt(
   if (options?.mcpHint === true) {
     // Modo tool: el agente tiene la tool `lacoco_retrieve` disponible. Hint fijo
     // (mismo para todas las celdas) para medir su UTILIDAD, no su descubribilidad.
-    // Endurecido a PROTOCOLO obligatorio: la corrida previa mostró que un hint
-    // suave ("úsala primero") daba solo 0.7 llamadas/celda porque el agente seguía
-    // grepeando. Aquí la tool es el localizador PRIMARIO y grep/read son fallback.
-    sections.push(
-      [
-        "# Localización de código: usa `lacoco_retrieve` PRIMERO (obligatorio)",
-        "",
-        "Este repositorio está indexado. Tienes la tool",
-        "`lacoco_retrieve(query, clean_query?, embedding_input?, intent?, dimensions?)`,",
-        "que devuelve los símbolos relevantes con su ruta, rango de líneas y CUERPO",
-        "tal como están en el repo — la localización que normalmente harías con grep/read.",
-        "",
-        "Protocolo de trabajo (síguelo):",
-        "1. ANTES de cualquier grep, glob o read exploratorio, llama a `lacoco_retrieve`",
-        "   con la descripción del problema para localizar dónde está el código a tocar.",
-        "2. Si la primera respuesta no basta, vuelve a llamarla refinando la query o el",
-        "   `intent`/`dimensions` — es más barata y precisa que rastrear el repo a mano.",
-        "3. Usa grep/read SOLO como fallback puntual para confirmar o ampliar lo que la",
-        "   tool ya te señaló, no para descubrir la ubicación desde cero.",
-        "",
-        "No edites ningún archivo hasta haber localizado el sitio con `lacoco_retrieve`.",
-      ].join("\n"),
-    );
+    // La variante (`soft`/`hard`) se elige con LACOCO_EVAL_MCP_HINT para comparar
+    // suave vs fuerte a igual arnés. `hard` (default) endurece a PROTOCOLO
+    // obligatorio; `soft` es la mención mínima previa a `02663f4`.
+    sections.push(mcpHintVariant() === "soft" ? MCP_HINT_SOFT : MCP_HINT_HARD);
   }
 
   sections.push(
@@ -650,13 +672,28 @@ function resolveMochaOptsPath(repoPath: string): string | null {
  * major del node en curso: el flag NO existe en <21 y node abortaría con "bad
  * option" si se lo pasáramos. No-op para suites modernas (jest de prettier, mocha
  * de svelte) que no reasignan el global.
+ *
+ * Además, los builds ~2018-2020 (webpack-4 de prettier, p.ej.) computan hashes con
+ * MD4, que OpenSSL 3 (node ≥17) retira del proveedor por defecto → crash
+ * `ERR_OSSL_EVP_UNSUPPORTED` que rompe el build ANTES de correr los tests.
+ * `--openssl-legacy-provider` (existe desde node 17) rehabilita el proveedor
+ * legacy. No-op para suites que no compilan con hashers legacy.
  */
+export function legacyNodeFlags(major: number): string[] {
+  const flags: string[] = [];
+  if (Number.isFinite(major) && major >= 17) flags.push("--openssl-legacy-provider");
+  if (Number.isFinite(major) && major >= 21) flags.push("--no-experimental-global-navigator");
+  return flags;
+}
+
 function legacyNodeTestEnv(): NodeJS.ProcessEnv {
   const major = Number(process.versions.node.split(".")[0]);
-  if (!Number.isFinite(major) || major < 21) return {};
-  const flag = "--no-experimental-global-navigator";
+  const flags = legacyNodeFlags(major);
+  if (flags.length === 0) return {};
   const existing = process.env.NODE_OPTIONS ?? "";
-  const nodeOptions = existing.includes(flag) ? existing : `${existing} ${flag}`.trim();
+  const missing = flags.filter((flag) => !existing.includes(flag));
+  if (missing.length === 0) return { NODE_OPTIONS: existing };
+  const nodeOptions = `${existing} ${missing.join(" ")}`.trim();
   return { NODE_OPTIONS: nodeOptions };
 }
 
@@ -683,15 +720,29 @@ async function runSwePolybenchTests(
   logPath: string,
 ): Promise<SwePolyTestOutcome> {
   // 0. El gold de tests (test_patch) es autoritativo: el agente solo debe tocar
-  //    `src/`. Si el agente escribió/editó archivos bajo `test/` (p.ej. creó los
-  //    propios fixtures F2P), esas ediciones chocan con el test_patch ("already
-  //    exists"/conflicto). Revertimos `test/` a base ANTES de aplicar el gold,
-  //    preservando el fix en `src/`.
+  //    `src/`. Si el agente escribió/editó los archivos que el test_patch va a
+  //    tocar (p.ej. creó los propios fixtures F2P), esas ediciones chocan con el
+  //    gold ("already exists"/conflicto). Revertimos EXACTAMENTE esas rutas a base
+  //    ANTES de aplicar el gold, preservando el fix en `src/`.
+  //    El `test/` fijo del código previo fallaba en repos que colocan tests fuera
+  //    de `test/`: mui usa `packages/*/src/*.test.js`, prettier usa `tests/` →
+  //    el agente los editaba, no se revertían, y `git apply` chocaba
+  //    (`test_patch_apply_failed`). `filesInDiff` extrae las rutas new-side del
+  //    propio test_patch, así el reset sigue al gold sea cual sea su layout.
+  //    Fallback a `test/` si el diff no expone rutas (p.ej. patch vacío/malformado).
   // Secuencia a prueba de balas: unstage (por si el agente hizo `git add`) →
   // revertir tracked modificados → borrar untracked. Cubre los 3 estados en que
-  // el agente pudo dejar `test/` (staged-nuevo, modificado, untracked).
+  // el agente pudo dejar esas rutas (staged-nuevo, modificado, untracked).
+  let resetPaths: string[] = [];
+  try {
+    resetPaths = filesInDiff(readFileSync(testPatchPath, "utf8"));
+  } catch {
+    resetPaths = [];
+  }
+  if (resetPaths.length === 0) resetPaths = ["test/"];
+  const quotedPaths = resetPaths.map(shellQuote).join(" ");
   await executeCommand({
-    command: "git reset -q -- test/ 2>/dev/null; git checkout -q HEAD -- test/ 2>/dev/null; git clean -fdq test/ 2>/dev/null; true",
+    command: `git reset -q -- ${quotedPaths} 2>/dev/null; git checkout -q HEAD -- ${quotedPaths} 2>/dev/null; git clean -fdq -- ${quotedPaths} 2>/dev/null; true`,
     cwd: repoPath,
     timeoutMs: 60_000,
     logPath,
@@ -711,29 +762,57 @@ async function runSwePolybenchTests(
     return { testExitCode: null, timedOut: false, durationMs: 0, invalidReason: "test_patch_apply_failed", passed: 0, failed: 0 };
   }
 
-  // 2+3. Build (fix en src/) y correr solo los F2P.
-  // `--if-present`: no-op con exit 0 si el repo no define `scripts.build` (p.ej.
-  // los MUI ~2018, que transpilan `src/` al vuelo con babel-register vía mocha.opts).
-  // Sin esto, `npm run build` aborta con "Missing script: build" antes del runner.
-  // Límite: un repo cuyo build se llame distinto (compile/prepare) se saltaría en
-  // silencio; ninguna instancia del whitelist actual lo necesita.
-  const command = `npm run build --if-present && ${testInvocation}`;
-  let exitCode: number | null = null;
-  let timedOut = false;
-  let durationMs = 0;
-  let stdout = "";
-  let stderr = "";
-  try {
-    const result = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath, env: legacyNodeTestEnv() });
-    exitCode = result.exitCode; durationMs = result.durationMs; stdout = result.stdout; stderr = result.stderr;
-  } catch (error) {
-    if (error instanceof CommandExecutionError) {
-      exitCode = error.result.exitCode; timedOut = error.result.timedOut;
-      durationMs = error.result.durationMs; stdout = error.result.stdout; stderr = error.result.stderr;
-    } else {
+  // Ejecuta un comando devolviendo el resultado incluso si sale no-cero (no lanza).
+  const runCapturing = async (
+    command: string,
+  ): Promise<{ exitCode: number | null; timedOut: boolean; durationMs: number; stdout: string; stderr: string }> => {
+    try {
+      const r = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath, env: legacyNodeTestEnv() });
+      return { exitCode: r.exitCode, timedOut: false, durationMs: r.durationMs, stdout: r.stdout, stderr: r.stderr };
+    } catch (error) {
+      if (error instanceof CommandExecutionError) {
+        return {
+          exitCode: error.result.exitCode,
+          timedOut: error.result.timedOut,
+          durationMs: error.result.durationMs,
+          stdout: error.result.stdout,
+          stderr: error.result.stderr,
+        };
+      }
       throw error;
     }
+  };
+
+  // 2. Build (fix en src/) — EJECUCIÓN SEPARADA del test. Antes iban con `&&` en
+  // un solo comando: si el build crasheaba (p.ej. `ERR_OSSL_EVP_UNSUPPORTED` de
+  // webpack-4/prettier antes del flag openssl), el runner nunca corría → `ran===0`
+  // → mal-etiquetado `zero_tests_matched`. De-conflado: un build no-cero devuelve
+  // el nuevo `invalid_reason: "build_failed"` (diagnosticable, distinto de "no
+  // matcheó tests") y NO corre el test. NO usamos `;` para no enmascarar un build
+  // roto como pase falso.
+  // `--if-present`: no-op con exit 0 si el repo no define `scripts.build` (p.ej.
+  // los MUI ~2018, que transpilan `src/` al vuelo con babel-register vía mocha.opts).
+  // Límite: un repo cuyo build se llame distinto (compile/prepare) se saltaría en
+  // silencio; ninguna instancia del whitelist actual lo necesita.
+  const build = await runCapturing("npm run build --if-present");
+  if (build.exitCode !== 0) {
+    return {
+      testExitCode: null,
+      timedOut: build.timedOut,
+      durationMs: build.durationMs,
+      invalidReason: "build_failed",
+      passed: 0,
+      failed: 0,
+    };
   }
+
+  // 3. Correr solo los F2P.
+  const test = await runCapturing(testInvocation);
+  const exitCode = test.exitCode;
+  const timedOut = test.timedOut;
+  const durationMs = test.durationMs;
+  const stdout = test.stdout;
+  const stderr = test.stderr;
 
   // 4. Guarda anti-cero-match: parsear el conteo real de tests.
   const parsed = parseTestRunnerOutput(stdout, stderr);

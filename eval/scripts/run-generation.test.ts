@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { StrategyDefinition, TaskDefinition } from "./lib/types.js";
 import {
   buildPrompt,
+  legacyNodeFlags,
   loadRequiredEnrichedPrompt,
   parseOpenCodeCost,
   parseOpenCodeTelemetry,
@@ -98,6 +99,29 @@ describe("generation retrieval context preflight", () => {
 
     const withoutHint = buildPrompt(task(), strategy("no_context"), null);
     expect(withoutHint).not.toContain("lacoco_retrieve");
+  });
+
+  it("conmuta hint MCP suave vs fuerte con LACOCO_EVAL_MCP_HINT", () => {
+    const prev = process.env.LACOCO_EVAL_MCP_HINT;
+    try {
+      process.env.LACOCO_EVAL_MCP_HINT = "hard";
+      const hard = buildPrompt(task(), strategy("no_context"), null, undefined, { mcpHint: true });
+      expect(hard).toContain("PRIMERO (obligatorio)");
+      expect(hard).toContain("No edites ningún archivo hasta haber localizado");
+
+      process.env.LACOCO_EVAL_MCP_HINT = "soft";
+      const soft = buildPrompt(task(), strategy("no_context"), null, undefined, { mcpHint: true });
+      expect(soft).toContain("Herramienta de contexto disponible");
+      expect(soft).not.toContain("(obligatorio)");
+      expect(soft).not.toContain("No edites ningún archivo hasta haber localizado");
+
+      delete process.env.LACOCO_EVAL_MCP_HINT;
+      const dflt = buildPrompt(task(), strategy("no_context"), null, undefined, { mcpHint: true });
+      expect(dflt).toContain("PRIMERO (obligatorio)");
+    } finally {
+      if (prev === undefined) delete process.env.LACOCO_EVAL_MCP_HINT;
+      else process.env.LACOCO_EVAL_MCP_HINT = prev;
+    }
   });
 
   it("loads a successful enriched prompt", () => {
@@ -314,5 +338,26 @@ describe("OpenCode telemetry parsing (tokens + tool-calls)", () => {
 
   it("cost null cuando no hay step_finish", () => {
     expect(parseOpenCodeTelemetry('{"type":"step_start"}').cost_usd).toBeNull();
+  });
+});
+
+describe("legacyNodeFlags", () => {
+  it("node <17: sin flags (openssl-legacy no existe todavía)", () => {
+    expect(legacyNodeFlags(16)).toEqual([]);
+  });
+
+  it("node 17-20: solo openssl-legacy (webpack-4/md4), sin navigator", () => {
+    expect(legacyNodeFlags(18)).toEqual(["--openssl-legacy-provider"]);
+  });
+
+  it("node ≥21: openssl-legacy + navigator read-only", () => {
+    expect(legacyNodeFlags(22)).toEqual([
+      "--openssl-legacy-provider",
+      "--no-experimental-global-navigator",
+    ]);
+  });
+
+  it("major no finito → sin flags (no arriesgamos 'bad option')", () => {
+    expect(legacyNodeFlags(Number.NaN)).toEqual([]);
   });
 });

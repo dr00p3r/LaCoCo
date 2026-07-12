@@ -6,6 +6,7 @@ import {
   deriveEditedSymbolsFromCheckout,
   enrichPatchEvidenceWithDefinitions,
   extractPatchEvidenceTier1,
+  filesInDiff,
   parseUnifiedDiff,
   sourceChangesFromPatch,
 } from "./patch-evidence-gold.js";
@@ -45,6 +46,51 @@ describe("parseUnifiedDiff", () => {
     const combined = `${SINGLE_EDIT_PATCH}${TEST_PATCH}`;
     const src = sourceChangesFromPatch(combined, TEST_PATCH);
     expect(src.map((c) => c.path)).toEqual(["src/math/box.ts"]);
+  });
+});
+
+describe("filesInDiff (rutas para el reset del test_patch)", () => {
+  it("extrae la ruta new-side de un test_patch clásico bajo test/", () => {
+    expect(filesInDiff(TEST_PATCH)).toEqual(["test/box.spec.ts"]);
+  });
+
+  it("mui coloca tests en packages/*/src (fuera de test/)", () => {
+    const muiPatch = `diff --git a/packages/material-ui/src/Slider/Slider.test.js b/packages/material-ui/src/Slider/Slider.test.js
+--- a/packages/material-ui/src/Slider/Slider.test.js
++++ b/packages/material-ui/src/Slider/Slider.test.js
+@@ -1,2 +1,3 @@
+ import * as React from 'react';
++it('renders', () => {});
+`;
+    expect(filesInDiff(muiPatch)).toEqual(["packages/material-ui/src/Slider/Slider.test.js"]);
+  });
+
+  it("prettier usa tests/ (plural)", () => {
+    const prettierPatch = `diff --git a/tests/format/js/foo/jsfmt.spec.js b/tests/format/js/foo/jsfmt.spec.js
+--- a/tests/format/js/foo/jsfmt.spec.js
++++ b/tests/format/js/foo/jsfmt.spec.js
+@@ -1 +1,2 @@
+ run_spec(__dirname);
++// extra
+`;
+    expect(filesInDiff(prettierPatch)).toEqual(["tests/format/js/foo/jsfmt.spec.js"]);
+  });
+
+  it("archivo de test AÑADIDO (/dev/null → b/…) sigue exponiendo la ruta new-side", () => {
+    const addedPatch = `diff --git a/test/new-case.spec.ts b/test/new-case.spec.ts
+new file mode 100644
+--- /dev/null
++++ b/test/new-case.spec.ts
+@@ -0,0 +1,2 @@
++import { Box } from "../src/math/box";
++it("added", () => {});
+`;
+    expect(filesInDiff(addedPatch)).toEqual(["test/new-case.spec.ts"]);
+  });
+
+  it("dedup de múltiples archivos tocados por un mismo diff", () => {
+    const multi = `${TEST_PATCH}${TEST_PATCH}`;
+    expect(filesInDiff(multi)).toEqual(["test/box.spec.ts"]);
   });
 });
 
