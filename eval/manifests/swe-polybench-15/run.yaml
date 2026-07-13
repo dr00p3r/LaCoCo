@@ -455,7 +455,7 @@ splits:
     require_gold_status: ready
     repo_ids: *gen13ids
     task_ids: *gen13ids
-    agents: [opencode]
+    agents: [opencode, claude-code]
 
   # Variante 4 del A/B: MCP bajo demanda. strategy no_context (sin contexto
   # pre-inyectado) + agente opencode_mcp con la tool lacoco_retrieve disponible.
@@ -471,7 +471,7 @@ splits:
     require_gold_status: ready
     repo_ids: *gen13ids
     task_ids: *gen13ids
-    agents: [opencode_mcp]
+    agents: [opencode_mcp, claude-code-mcp]
 
   gen_mcp_p1:
     description: "gen13_mcp particion 1/3 (secuencial: Ollama compartido)."
