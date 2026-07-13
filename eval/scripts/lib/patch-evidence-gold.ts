@@ -154,9 +154,24 @@ export interface PatchEvidenceTier1Input {
   readonly f2p?: string | readonly string[] | null;
 }
 
+/**
+ * Un símbolo direccionable es un identificador JS, opcionalmente punteado
+ * (`Foo`, `Foo.bar`). Descarta ruido de derivación como patrones destructurados
+ * (`{ a, b }`) que se colaron como nombre de símbolo.
+ */
+const IDENTIFIER_SYMBOL = /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/;
+
+/** `true` si `symbol` es un símbolo direccionable (identificador, opcional punteado). */
+export function isAddressableSymbol(symbol: string): boolean {
+  return IDENTIFIER_SYMBOL.test(symbol);
+}
+
 export function dedupeSymbols(refs: SymbolRef[]): SymbolRef[] {
   const seen = new Map<string, SymbolRef>();
-  for (const ref of refs) seen.set(`${ref.file}#${ref.symbol}`, ref);
+  for (const ref of refs) {
+    if (!isAddressableSymbol(ref.symbol)) continue;
+    seen.set(`${ref.file}#${ref.symbol}`, ref);
+  }
   return [...seen.values()];
 }
 
@@ -258,8 +273,14 @@ export function enclosingSymbol(node: Node): { symbol: string; kind: SymbolKind 
       current.getParent()?.getKind() === SyntaxKind.SourceFile
     ) {
       const decl = current.asKind(SyntaxKind.VariableStatement)?.getDeclarations()[0];
-      const name = decl?.getName();
-      if (name) return { symbol: name, kind: "variable" };
+      // Solo declaraciones con nombre IDENTIFICADOR: un destructuring
+      // (`const { a, b } = ...`) tiene un ObjectBindingPattern cuyo `getName()`
+      // devuelve el texto crudo del patrón (`{ a, b }`), que no es un símbolo
+      // direccionable. En ese caso no emitimos símbolo (cae a nivel archivo).
+      if (decl?.getNameNode().getKind() === SyntaxKind.Identifier) {
+        const name = decl.getName();
+        if (name) return { symbol: name, kind: "variable" };
+      }
     }
     current = current.getParent();
   }

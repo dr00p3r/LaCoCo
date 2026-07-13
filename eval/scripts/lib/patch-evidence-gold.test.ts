@@ -261,6 +261,37 @@ diff --git a/src/added.ts b/src/added.ts
     const symbols = deriveEditedSymbolsFromCheckout(changes, project, "/repo", (rel) => `/repo/${rel}`);
     expect(symbols).toEqual([]);
   });
+
+  it("does not emit a destructuring binding pattern as a symbol", () => {
+    // Regresión: un `const { a, b } = require(...)` top-level producía el símbolo
+    // basura `#{ a, b }` (getName() del ObjectBindingPattern). Debe ignorarse.
+    const BASE = `const { kFormatter, encodeHTML } = require("./utils");
+
+export function render(): string {
+  return kFormatter(1);
+}
+`;
+    const project = new Project({ useInMemoryFileSystem: true });
+    project.createSourceFile("/repo/src/card.ts", BASE);
+
+    const patch = `diff --git a/src/card.ts b/src/card.ts
+--- a/src/card.ts
++++ b/src/card.ts
+@@ -1,1 +1,1 @@
+-const { kFormatter, encodeHTML } = require("./utils");
++const { kFormatter, encodeHTML, fallbackColor } = require("./utils");
+@@ -4,1 +4,1 @@
+-  return kFormatter(1);
++  return kFormatter(2);
+`;
+    const changes = sourceChangesFromPatch(patch);
+    const symbols = deriveEditedSymbolsFromCheckout(changes, project, "/repo", (rel) => `/repo/${rel}`);
+
+    // La línea del cuerpo de render sí resuelve al símbolo función.
+    expect(symbols).toContainEqual({ file: "src/card.ts", symbol: "render", kind: "function" });
+    // Ningún símbolo malformado (con llaves/comas del binding pattern).
+    expect(symbols.every((s) => /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(s.symbol))).toBe(true);
+  });
 });
 
 describe("independence invariant", () => {
