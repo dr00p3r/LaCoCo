@@ -32,7 +32,9 @@
     "eval:gold:worksheet": "node --import tsx eval/scripts/create-ground-truth-worksheet.ts",
     "eval:gold:validate": "node --import tsx eval/scripts/validate-ground-truth.ts",
     "test": "vitest run --config vitest.lacoco.config.ts",
-    "test:watch": "vitest --config vitest.lacoco.config.ts"
+    "test:watch": "vitest --config vitest.lacoco.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:all": "pnpm test && pnpm run test:integration"
   },
   "keywords": [
     "typescript",

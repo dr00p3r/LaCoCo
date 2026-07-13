@@ -46,7 +46,7 @@ anteriores y para tests del harness; no debe usarse para reportes nuevos.
 | Archivo | Funcion |
 |---|---|
 | `manifests/repos.yaml` | Define repositorios, refs, gestores de paquetes, comandos de instalacion, pruebas e indexacion. |
-| `manifests/strategies.yaml` | Define las estrategias que se comparan: `no_context`, `hybrid`, `ictd`, `clcr`, `rpr` y `agentic`. |
+| `manifests/strategies.yaml` | Define las estrategias que se comparan. En el manifest SWE-PolyBench vigente incluye `no_context`, `hybrid`, `ictd`, `clcr`, `consensus`, `rpr` y `agentic`; el registro del CLI tambien soporta `repograph`, `ppr` y `connector`. |
 | `manifests/agents.yaml` | Define adaptadores para agentes externos, inicialmente OpenCode, Codex CLI, Claude Code, modo manual y dry-run. |
 | `manifests/metrics.yaml` | Formaliza las metricas de generacion, retrieval (patch-evidence) y grounding. Cada metrica lleva `role` (`agent_outcome`/`gold_derived`/`diagnostic`/`legacy`); `quality_gates.*.required_metrics` no puede incluir `diagnostic`/`legacy` (invariante validado por `load-manifests.ts`). |
 | `manifests/run.yaml` | Controla rutas, repeticiones, timeouts, semillas, politicas de limpieza, formato de salida y gates de ejecucion. |
@@ -57,26 +57,26 @@ anteriores y para tests del harness; no debe usarse para reportes nuevos.
 Flujo recomendado, pasando el directorio canonico en cada comando:
 
 ```bash
-npm run eval:check-manifests -- --manifests-dir eval/manifests/swe-polybench
-npm run eval:prepare -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
-npm run eval:index -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:check-manifests -- --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:prepare -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:index -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
 # Opcional para A/B de grounding:
-npm run eval:grounding:profiles -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
-npm run eval:retrieval -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
-npm run eval:metrics:retrieval -- --run-id <run> --manifests-dir eval/manifests/swe-polybench --strict
-npm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:grounding:profiles -- --run-id <run> --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:retrieval -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
+pnpm run eval:metrics:retrieval -- --run-id <run> --manifests-dir eval/manifests/swe-polybench --strict
+pnpm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official --manifests-dir eval/manifests/swe-polybench
 ```
 
 Alternativa para una sesion completa:
 
 ```bash
 export LACOCO_EVAL_MANIFESTS_DIR=eval/manifests/swe-polybench
-npm run eval:check-manifests
-npm run eval:prepare -- --run-id <run>
-npm run eval:index -- --run-id <run>
-npm run eval:retrieval -- --run-id <run> --split retrieval_official
-npm run eval:metrics:retrieval -- --run-id <run> --strict
-npm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official
+pnpm run eval:check-manifests
+pnpm run eval:prepare -- --run-id <run>
+pnpm run eval:index -- --run-id <run>
+pnpm run eval:retrieval -- --run-id <run> --split retrieval_official
+pnpm run eval:metrics:retrieval -- --run-id <run> --strict
+pnpm run eval:benchmark:doctor -- --run-id <run> --split retrieval_official
 ```
 
 `eval:benchmark:doctor` escribe `benchmark-doctor.json` y
@@ -178,9 +178,9 @@ El split `semantic_profile_ab` ejecuta las variantes `baseline` y `grounded`
 sin confundirlas con estrategias:
 
 ```bash
-npm run eval:index -- --run-id <run> --repo-id <repo> --profile
-npm run eval:retrieval -- --run-id <run> --split semantic_profile_ab --sanitizer-variant grounded
-npm run eval:metrics:semantic-profile -- --run-id <run>
+pnpm run eval:index -- --run-id <run> --repo-id <repo> --profile
+pnpm run eval:retrieval -- --run-id <run> --split semantic_profile_ab --sanitizer-variant grounded
+pnpm run eval:metrics:semantic-profile -- --run-id <run>
 ```
 
 ### 4. Generacion

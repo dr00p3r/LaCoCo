@@ -1,8 +1,11 @@
 # Plan: Multi-SWE-bench con gold a nivel símbolo → benchmark de 10 repos (>1000★)
 
-> **Handoff autocontenido.** Escrito 2026-07-11 (rama `feat/consensus-baselines`). Una sesión
+> **Handoff autocontenido historico.** Escrito 2026-07-11 (rama
+> `feat/consensus-baselines`). Una sesión
 > fresca sin contexto debería poder ejecutarlo leyendo solo este doc + los file:line citados.
 > No re-explores lo ya mapeado aquí.
+> Para el contrato operativo vigente usa `README.md`, `AGENTS.md`, `docs/cli.md`
+> y `eval/RUNBOOK.md`.
 
 ## 0. Objetivo y por qué
 
@@ -168,7 +171,7 @@ metrics + compare. Un run-id por régimen (por el truncado de retrieval.jsonl). 
 asset-heavy (three.js) — vscode es grande pero puro TS, indexable con paciencia.
 
 ## 6. Verificación
-- `deriveEditedSymbolsFromCheckout`: test de fixture verde (símbolo + fallback file-level). `npm test`
+- `deriveEditedSymbolsFromCheckout`: test de fixture verde (símbolo + fallback file-level). `pnpm test`
   + typecheck (`tsc --project eval/tsconfig.json --noEmit`) verdes.
 - Tras enrich: en tasks.yaml de un repo Multi-SWE-bench, `edited_symbols` no vacío en instancias con
   modificación (no pura adición); `fell_back_to_file_level=false` ahí.

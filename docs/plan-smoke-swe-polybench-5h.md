@@ -1,5 +1,11 @@
 # Plan cerrado — Smoke SWE-PolyBench en <5h (retrieval M3–M5)
 
+> Documento historico de planificacion del 2026-07-07. Para comandos vigentes de
+> LaCoCo usa `README.md`, `AGENTS.md`, `docs/cli.md` y `eval/RUNBOOK.md`.
+> Las menciones a `npm install` en este archivo se refieren a instalar
+> dependencias de repositorios benchmark en sus commits, no al gestor del
+> repositorio LaCoCo.
+
 **Fecha:** 2026-07-07 · **Meta del usuario:** poder *probar ya* con un subconjunto
 reducido (30–50 instancias, empezar con ~10), en un máximo de **5 horas de trabajo
 conjunto**, sin dejar puntos abiertos y sin hacer trabajo desactualizado.

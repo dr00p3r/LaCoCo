@@ -25,7 +25,7 @@ lacoco index_graph   <ruta-al-tsconfig>   # grafo estructural (SQLite)
 lacoco index_vectors <ruta-al-tsconfig>   # embeddings (LanceDB) — necesario para hybrid
 ```
 
-Y LaCoCo compilado (`pnpm build`); el servidor corre desde `dist/`.
+Y LaCoCo compilado (`pnpm run build`); el servidor corre desde `dist/`.
 
 ## La tool `lacoco_retrieve`
 
@@ -38,7 +38,7 @@ Entrada:
 | `embedding_input` | no | Descripción en lenguaje natural de la evidencia buscada. |
 | `intent` | no | `understand \| refactor \| create \| debug \| integrate \| unknown`. |
 | `dimensions` | no | `SYS` (contratos/módulos/deps), `CPG` (clases/llamadas), `DTG` (datos/tipos/estado). |
-| `strategy` | no | Estrategia de recuperación (default del servidor). |
+| `strategy` | no | Estrategia de recuperación (`hybrid`, `agentic`, `ictd`, `clcr`, `rpr`, `consensus`, `repograph`, `ppr`, `connector`; default del servidor). |
 | `maxTokens` | no | Presupuesto de tokens del contexto. |
 
 **Clasificación**: si el agente aporta `clean_query` + `embedding_input` +

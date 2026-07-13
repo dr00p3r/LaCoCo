@@ -42,7 +42,7 @@ Ya está regenerado. Solo si quieres rehacerlo (escribe `tasks/repos/run.yaml`,
 `patches/*.patch` y `gold.patch_evidence`):
 
 ```bash
-npm run eval:import:swe-polybench -- --repo sveltejs/svelte --limit 10
+pnpm run eval:import:swe-polybench -- --repo sveltejs/svelte --limit 10
 ```
 
 ---
@@ -50,9 +50,9 @@ npm run eval:import:swe-polybench -- --repo sveltejs/svelte --limit 10
 ## 2. Común (una vez por run)
 
 ```bash
-npm run eval:check-manifests -- --manifests-dir $MD
-npm run eval:prepare         -- --run-id $RUN --manifests-dir $MD
-npm run eval:index           -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:check-manifests -- --manifests-dir $MD
+pnpm run eval:prepare         -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:index           -- --run-id $RUN --manifests-dir $MD
 ```
 
 ---
@@ -64,15 +64,15 @@ Estrategias: `hybrid / ictd / clcr / rpr / agentic` (+ `no_context` en generaci�
 
 ```bash
 # Retrieval + métricas + doctor
-npm run eval:retrieval         -- --run-id $RUN --split retrieval_official --manifests-dir $MD
-npm run eval:metrics:retrieval -- --run-id $RUN --manifests-dir $MD --strict
-npm run eval:benchmark:doctor  -- --run-id $RUN --split retrieval_official --manifests-dir $MD
+pnpm run eval:retrieval         -- --run-id $RUN --split retrieval_official --manifests-dir $MD
+pnpm run eval:metrics:retrieval -- --run-id $RUN --manifests-dir $MD --strict
+pnpm run eval:benchmark:doctor  -- --run-id $RUN --split retrieval_official --manifests-dir $MD
 
 # Generación (opencode deepseek-v4-flash high) + análisis
-npm run eval:generation         -- --run-id $RUN --split generation_official --manifests-dir $MD
-npm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
-npm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
-npm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:generation         -- --run-id $RUN --split generation_official --manifests-dir $MD
+pnpm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
 ```
 
 ---
@@ -85,17 +85,17 @@ debe correr antes que la generación grounded (produce los registros
 
 ```bash
 # Perfil semántico (build offline con el 4b)
-npm run eval:grounding:profiles -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:grounding:profiles -- --run-id $RUN --manifests-dir $MD
 
 # Retrieval grounded + métricas (registros hybrid@grounded, agentic@grounded, ...)
-npm run eval:retrieval          -- --run-id $RUN --split retrieval_grounded --manifests-dir $MD
-npm run eval:metrics:retrieval  -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:retrieval          -- --run-id $RUN --split retrieval_grounded --manifests-dir $MD
+pnpm run eval:metrics:retrieval  -- --run-id $RUN --manifests-dir $MD
 
 # Generación alimentada con el contexto grounded
-npm run eval:generation         -- --run-id $RUN --split generation_grounded --manifests-dir $MD
-npm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
-npm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
-npm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:generation         -- --run-id $RUN --split generation_grounded --manifests-dir $MD
+pnpm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
 ```
 
 ---
@@ -106,9 +106,9 @@ Baseline (sin grounding) vs grounded, solo retrieval, para aislar el efecto del
 Project Semantic Profile:
 
 ```bash
-npm run eval:retrieval               -- --run-id $RUN --split semantic_profile_ab --manifests-dir $MD
-npm run eval:metrics:retrieval       -- --run-id $RUN --manifests-dir $MD
-npm run eval:metrics:semantic-profile -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:retrieval               -- --run-id $RUN --split semantic_profile_ab --manifests-dir $MD
+pnpm run eval:metrics:retrieval       -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:metrics:semantic-profile -- --run-id $RUN --manifests-dir $MD
 ```
 
 ---
@@ -124,21 +124,21 @@ tabla comparable.
 Secuencia mínima end-to-end (ambas configs, un solo run):
 
 ```bash
-npm run eval:check-manifests    -- --manifests-dir $MD
-npm run eval:prepare            -- --run-id $RUN --manifests-dir $MD
-npm run eval:index              -- --run-id $RUN --manifests-dir $MD
-npm run eval:grounding:profiles -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:check-manifests    -- --manifests-dir $MD
+pnpm run eval:prepare            -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:index              -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:grounding:profiles -- --run-id $RUN --manifests-dir $MD
 # retrieval de ambas variantes
-npm run eval:retrieval          -- --run-id $RUN --split retrieval_official --manifests-dir $MD
-npm run eval:retrieval          -- --run-id $RUN --split retrieval_grounded --manifests-dir $MD
-npm run eval:metrics:retrieval  -- --run-id $RUN --manifests-dir $MD --strict
-npm run eval:benchmark:doctor   -- --run-id $RUN --split retrieval_official --manifests-dir $MD
+pnpm run eval:retrieval          -- --run-id $RUN --split retrieval_official --manifests-dir $MD
+pnpm run eval:retrieval          -- --run-id $RUN --split retrieval_grounded --manifests-dir $MD
+pnpm run eval:metrics:retrieval  -- --run-id $RUN --manifests-dir $MD --strict
+pnpm run eval:benchmark:doctor   -- --run-id $RUN --split retrieval_official --manifests-dir $MD
 # generación de ambas variantes (grounded exige retrieval_grounded previo)
-npm run eval:generation         -- --run-id $RUN --split generation_official --manifests-dir $MD
-npm run eval:generation         -- --run-id $RUN --split generation_grounded --manifests-dir $MD
-npm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
-npm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
-npm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:generation         -- --run-id $RUN --split generation_official --manifests-dir $MD
+pnpm run eval:generation         -- --run-id $RUN --split generation_grounded --manifests-dir $MD
+pnpm run eval:hallucination      -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:metrics:generation -- --run-id $RUN --manifests-dir $MD
+pnpm run eval:compare:strategies -- --run-id $RUN --manifests-dir $MD
 ```
 
 ---

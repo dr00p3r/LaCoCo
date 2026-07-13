@@ -15,6 +15,8 @@ export default defineConfig({
     exclude: [
       "eval/workdir/**",
       "eval/runs/**",
+      "tests/**/*.integration.test.ts",
+      "tests/**/*e2e*.test.ts",
     ],
   },
 });

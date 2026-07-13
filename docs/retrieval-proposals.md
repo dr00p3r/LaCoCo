@@ -1,6 +1,6 @@
 # LaCoCo: propuestas de retrieval y estado actual
 
-> Estado verificado contra el código el 2026-07-05.
+> Estado verificado contra el código el 2026-07-12.
 >
 > Este documento reemplaza a `DEFERRED.md` y `considerations.md`. El primero
 > describía una auditoría ya resuelta y el segundo había quedado desactualizado
@@ -18,12 +18,16 @@ CLI:
 | Cross-Layer Cascade Retrieval | `clcr` | Implementada | SQLite, LanceDB y embeddings locales |
 | Relational Path Retrieval | `rpr` | Implementada | SQLite, LanceDB y embeddings locales |
 
-También están implementadas las estrategias de referencia:
+También están implementadas las estrategias de referencia y comparacion:
 
 | Estrategia | Papel | Dependencias específicas de estrategia |
 |---|---|---|
 | `hybrid` | Baseline y estrategia predeterminada | SQLite, LanceDB y embeddings locales |
 | `agentic` | Exploración guiada por un SLM local | SQLite y Ollama |
+| `consensus` | Consenso estructural de vecinos señalados por varias anclas | SQLite, LanceDB y embeddings locales |
+| `repograph` | Ego-graph plano, baseline estructural type-blind | SQLite, LanceDB y embeddings locales |
+| `ppr` | PageRank personalizado sobre subgrafo inducido | SQLite, LanceDB y embeddings locales |
+| `connector` | Confluencia tipada entre anclas | SQLite, LanceDB y embeddings locales |
 
 La CLI completa requiere Ollama antes de seleccionar estrategia porque
 `AgentIntermediary1` clasifica todas las consultas. La tabla separa únicamente
@@ -99,8 +103,8 @@ ninguno garantiza por sí solo el número de chunks inyectados.
 
 ## Familia de anclaje híbrido
 
-`hybrid`, `ictd`, `clcr` y `rpr` extienden
-`AbstractAnchoredStrategy`. Las cuatro comparten exactamente el mismo mecanismo
+`hybrid`, `ictd`, `clcr`, `rpr`, `consensus`, `repograph`, `ppr` y
+`connector` extienden `AbstractAnchoredStrategy`. Todas comparten exactamente el mismo mecanismo
 de anclaje mediante `HybridAnchorService`:
 
 1. BM25 busca `clean_query` en SQLite/FTS5.
@@ -134,7 +138,11 @@ dimensiones de la consulta para filtrar o ponderar anclas.
 | `ictd` | Nodo | Difusión bidireccional | Pesos por intent y hints dimensionales | 50 chunks |
 | `clcr` | Nodo | Capa dominante y cascada | Selección de dimensión dominante | 50 chunks |
 | `rpr` | Camino dirigido | BFS local y DFS | Dimensión de cada relación para scoring | 50 caminos |
-| `agentic` | Nodo | Herramientas elegidas por SLM o vecindad determinística | El plan recibe la consulta semántica | Sin límite final estricto |
+| `consensus` | Nodo | Vecindad 1-hop de anclas | Relacion x intent, consenso multi-ancla y penalizacion de hubs | 50 chunks |
+| `repograph` | Nodo | Ego-graph plano | No usa intent ni dimensiones | 50 chunks |
+| `ppr` | Nodo | PageRank personalizado | No usa intent ni dimensiones | 50 chunks |
+| `connector` | Nodo conector | Caminos entre anclas | Costos por dimensión ponderados por intent | 50 chunks |
+| `agentic` | Nodo | Herramientas elegidas por SLM o vecindad determinística | El plan recibe la consulta semántica | 50 chunks |
 
 ## Propuesta 1: ICTD
 
@@ -289,6 +297,8 @@ la cascada.
 | `chunkLimit` | 50 | Nodos máximos antes de agregación |
 | `bfsMaxNodes` | 5000 | Presupuesto por cada recorrido BFS |
 | `lambda` | 0.25 | Fuerza del boost cross-layer |
+| `primaryDecay` | 0.5 | Decaimiento por salto en la capa dominante |
+| `cascadeDecay` | 0.7 | Decaimiento por salto en cascadas secundarias |
 
 `bfsMaxNodes` se aplica a cada BFS por separado. No es hoy un límite global
 compartido entre la fase primaria y ambas cascadas. Estos parámetros tampoco se
@@ -439,6 +449,137 @@ de menor coste que las tres propuestas multirrelacionales.
 Su función experimental es separar la mejora producida por la expansión del
 grafo de la mejora ya obtenida al combinar búsqueda léxica y semántica.
 
+## Estrategia de referencia: consensus
+
+`ConsensusStrategy` expande una vecindad 1-hop desde todas las anclas y puntúa
+nodos por cuántas anclas independientes los señalan. Prioriza aristas
+entrantes, conserva las mejores anclas semánticas y permite que un vecino con
+consenso alto intercale por debajo de las anclas protegidas.
+
+Algoritmo vigente:
+
+1. Recuperar hasta 30 anclas híbridas BM25 + ANN + RRF.
+2. Consultar vecindad de las anclas con límite 5000.
+3. Puntuar vecinos por dirección: entrante 1.0, saliente 0.4.
+4. Multiplicar por peso relación × intent, usando la dimensión de la relación.
+5. Aplicar bonus por múltiples anclas independientes.
+6. Penalizar hubs por grado incidente cuando `hubDampening > 0`.
+7. Proteger la primera ancla y permitir interleave de nodos con al menos dos
+   anclas señalándolos.
+8. Ordenar anclas y consenso en un ranking único y devolver hasta 50 chunks.
+
+Configuración:
+
+| Parámetro | Valor | Efecto |
+|---|---:|---|
+| `anchorLimit` | 30 | Candidatos máximos después de RRF |
+| `chunkLimit` | 50 | Nodos máximos antes de agregación |
+| `neighborhoodLimit` | 5000 | Tope de aristas de vecindad |
+| `incomingWeight` | 1.0 | Peso de aristas entrantes |
+| `outgoingWeight` | 0.4 | Peso de aristas salientes |
+| `consensusWeight` | 1.0 | Escala global del consenso |
+| `multiAnchorBonus` | 0.5 | Bonus por cada ancla extra que señala el nodo |
+| `hubDampening` | 0.5 | Penalización por grado incidente |
+| `interleaveMinAnchors` | 2 | Mínimo de anclas para intercalar con anclas |
+| `topAnchorsProtected` | 1 | Anclas top que el consenso no desplaza |
+
+Comportamiento límite:
+
+| Situación | Resultado vigente |
+|---|---|
+| BM25 y ANN no devuelven anclas | `[]` |
+| No hay vecinos útiles | Devuelve las anclas como chunks RRF |
+| Un vecino solo tiene una ancla | Puede aparecer, pero queda capado por debajo de anclas |
+| Un nodo es hub | Su score se amortigua con `hubDampening` |
+
+## Estrategia de referencia: repograph
+
+`RepographStrategy` es un baseline de grafo plano. Recorre el ego-graph de las
+anclas sin usar dirección, dimensión, intent ni penalización de hubs. Sirve para
+separar "usar grafo" de "ponderar el grafo".
+
+Algoritmo vigente:
+
+1. Recuperar hasta 30 anclas híbridas.
+2. Construir una BFS bidireccional hasta dos saltos y 5000 nodos.
+3. Propagar score por proximidad con decaimiento 0.5 por salto.
+4. Conservar para cada nodo el mejor score alcanzado.
+5. Ordenar por score y devolver hasta 50 chunks con `source="REPOGRAPH"`.
+
+Configuración:
+
+| Parámetro | Valor | Efecto |
+|---|---:|---|
+| `anchorLimit` | 30 | Candidatos máximos después de RRF |
+| `chunkLimit` | 50 | Nodos máximos antes de agregación |
+| `maxHops` | 2 | Radio del ego-graph |
+| `bfsMaxNodes` | 5000 | Presupuesto de nodos visitados |
+| `decay` | 0.5 | Decaimiento por salto |
+
+Si no hay descubrimientos fuera de las anclas, degrada a las anclas con
+`source="REPOGRAPH"`.
+
+## Estrategia de referencia: ppr
+
+`PprStrategy` ejecuta PageRank personalizado sobre el subgrafo inducido por las
+anclas. La personalización usa los scores de ancla y el grafo se trata de forma
+agnóstica a intent y dimensiones.
+
+Algoritmo vigente:
+
+1. Recuperar hasta 30 anclas híbridas.
+2. Construir un subgrafo inducido hasta tres saltos y 5000 nodos.
+3. Si no hay aristas, devolver las anclas.
+4. Ejecutar PageRank personalizado con damping 0.85, 40 iteraciones máximas y
+   tolerancia `1e-6`.
+5. Ordenar por score PPR y devolver hasta 50 chunks con `source="PPR"`.
+
+Configuración:
+
+| Parámetro | Valor | Efecto |
+|---|---:|---|
+| `anchorLimit` | 30 | Candidatos máximos después de RRF |
+| `chunkLimit` | 50 | Nodos máximos antes de agregación |
+| `subgraphMaxHops` | 3 | Radio del subgrafo inducido |
+| `bfsMaxNodes` | 5000 | Presupuesto de nodos visitados |
+| `damping` | 0.85 | Factor de amortiguación |
+| `iterations` | 40 | Iteraciones máximas |
+| `tolerance` | `1e-6` | Corte por convergencia |
+
+## Estrategia de referencia: connector
+
+`ConnectorStrategy` busca nodos que conectan anclas entre sí. A diferencia de
+los rankers que esparcen relevancia desde anclas, puntúa nodos internos de
+caminos baratos entre pares de anclas, usando costos por dimensión derivados de
+los pesos por intent.
+
+Algoritmo vigente:
+
+1. Recuperar hasta 30 anclas híbridas.
+2. Si hay menos de dos anclas, devolver las anclas.
+3. Construir un subgrafo inducido hasta tres saltos y 5000 nodos.
+4. Convertir aristas a no dirigidas con costo `1 / weight_dim(intent)`.
+5. Tomar las 15 mejores anclas y calcular confluencia entre pares con Dijkstra.
+6. Acumular confluencia en nodos internos, con `pathDecay=0.6`.
+7. Penalizar hubs con `hubDampening=0.5`.
+8. Mantener el score semántico de las anclas y escalar conectores por debajo de
+   las tres anclas protegidas.
+9. Ordenar y devolver hasta 50 chunks; las anclas salen como `source="RRF"` y
+   conectores como `source="CONNECTOR"`.
+
+Configuración:
+
+| Parámetro | Valor | Efecto |
+|---|---:|---|
+| `anchorLimit` | 30 | Candidatos máximos después de RRF |
+| `chunkLimit` | 50 | Nodos máximos antes de agregación |
+| `subgraphMaxHops` | 3 | Radio del subgrafo inducido |
+| `bfsMaxNodes` | 5000 | Presupuesto de nodos visitados |
+| `maxPathAnchors` | 15 | Anclas top usadas para caminos entre pares |
+| `pathDecay` | 0.6 | Decaimiento por longitud del camino |
+| `hubDampening` | 0.5 | Penalización por grado incidente |
+| `topAnchorsProtected` | 3 | Anclas top que los conectores no desplazan |
+
 ## Estrategia exploratoria: agentic
 
 `AgenticStrategy` no pertenece a la familia de anclaje híbrido:
@@ -497,7 +638,7 @@ grandes; esas conclusiones pertenecen al benchmark, no a los tests unitarios.
 
 Esta capa aplica retrieval ligero a la transformación del prompt. Un inventario
 determinístico obtiene símbolos, archivos y dependencias reales; un SLM local
-les asigna alias bilingües, descripciones y hasta tres dominios canónicos. Los
+les asigna hasta cuatro alias, descripciones y hasta dos dominios canónicos. Los
 datos viven en un índice SQLite separado y nunca contaminan el grafo.
 
 En consulta, `QueryGrounder` fusiona coincidencias exactas y FTS5 mediante RRF.
@@ -541,12 +682,12 @@ internos.
 ## Comandos de verificación
 
 ```bash
-npm run typecheck
-npm test
-npm run build
-npm run dev -- retrieve --help
-npm run dev -- inspect-query --help
-npm run dev -- profile --help
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm run dev -- retrieve --help
+pnpm run dev -- inspect-query --help
+pnpm run dev -- profile --help
 ```
 
 Para evaluar propuestas, el contrato experimental vive en `eval/README.md` y en

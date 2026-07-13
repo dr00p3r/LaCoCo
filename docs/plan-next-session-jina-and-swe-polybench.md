@@ -1,5 +1,10 @@
 # Plan de handoff — próxima sesión (Jina grounding + SWE-PolyBench)
 
+> Documento historico de handoff del 2026-07-06. Para el contrato operativo
+> vigente usa `README.md`, `AGENTS.md`, `docs/cli.md` y `eval/RUNBOOK.md`.
+> Las menciones a modelos, comandos y estado de ramas dentro de este archivo
+> describen esa sesion pasada y no son fuente de verdad actual.
+
 **Fecha:** 2026-07-06 · **Encargado:** Claude (yo, en próxima sesión) · **Estado sesión actual:** contexto al 100%, se corta aquí.
 
 Contexto rápido: el reporte consolidado M3–M6 está entregado y citable
@@ -16,7 +21,7 @@ Memoria relevante: `benchmark-strategy-swe-polybench.md`,
 
 Nota operativa: el classifier de permisos de Bash ha estado **intermitente**
 (bloquea `ls`/`cat`, deja pasar `grep`/`python3`). Si bloquea comandos pesados
-(`npm run eval:*`), pedir al usuario correrlos con `! <cmd>`.
+(`pnpm run eval:*`), pedir al usuario correrlos con `! <cmd>`.
 
 ---
 
@@ -40,7 +45,7 @@ grande en paralelo. Ollama es el cuello serial: encola sus pasos.
    los 2 traductores nuevos están validados (typecheck + tests verdes) pero **sin
    commitear**. Revisamos el diff y commiteamos antes de tocar nada.
 2. [Responde (Cómo puedo configurarlo para que tarde mucho menos, en la herramienta estaba pensando tener un tiempo menor a 10 minutos, incluso menor a 5? )]**[arranca temprano, es largo — Ollama] Perfiles rxjs + inversify** (para el A/B
-   completo de 6 tareas): `npm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --model qwen2.5:7b-instruct`
+   completo de 6 tareas): `pnpm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --model qwen2.5:7b-instruct`
    (~1–1.5 h c/u). ⚠ `inversify` puede chocar con M1 — avísame para coordinar.
    **Atajo:** el A/B **solo-zod** ya se puede correr (perfil listo) → señal rápida
    en minutos mientras rxjs/inversify construyen.
@@ -106,7 +111,7 @@ modelo mal hecho: era agotamiento de presupuesto por thinking.
   `tests/cli/intermediary-model.test.ts`, y `think` passthrough en `ollama-service.test.ts`.
 
 **Resultado del build (comando ganador):**
-`npm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --repo-id zod --model qwen2.5:7b-instruct`
+`pnpm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --repo-id zod --model qwen2.5:7b-instruct`
 → **zod: 1011 términos, 4702 aliases, state=ready, smoke ground()=20 candidatos**,
 en **4551s (~76 min)**. El gate confirma `grounded != baseline`.
 
@@ -231,7 +236,7 @@ descripción), no de código → un **instruct** va mejor que un coder.
 
 **Pasos para retomar el enricher:**
 1. Elegir modelo: `qwen2.5:7b-instruct` (ya está) o `gemma3n:e4b` (pull primero).
-2. `npm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --repo-id zod --model <M>`
+2. `pnpm run eval:grounding:profiles -- --lock 2026-07-05-jina-code --repo-id zod --model <M>`
    (background; 7b en CPU es lento). Éxito = `semantic_terms>0`, `state=ready`,
    `ground>0`.
 3. **Si el volcado muestra que el modelo NO echoa los IDs opacos** (los reinventa):
@@ -280,16 +285,16 @@ Jina 768d. Referencia ya medida: Jina+determinista (run `2026-07-05-jina-code`).
    rxjs necesita recompilar `dist/types` para paridad de 2648 nodos (ver
    `eval/runs/2026-07-05-jina-code/comparison-vs-baseline.md`, nota final).
 2. **Perfil in-place:** por cada repo (zod, rxjs, inversify):
-   `npm run dev -- index_graph <tsconfig>` (sin `--db`, va a `.lacoco`) +
-   `npm run dev -- profile rebuild <repo_path> --json`. Usa el SLM (job largo:
+   `pnpm run dev -- index_graph <tsconfig>` (sin `--db`, va a `.lacoco`) +
+   `pnpm run dev -- profile rebuild <repo_path> --json`. Usa el SLM (job largo:
    enricher LLM sobre cientos de términos vía Ollama). **Verificar** que
    `semantic_terms` quedó poblado (`SELECT count(*) FROM semantic_terms`), sino el
    grounding no hace nada.
-3. **Correr A/B:** `npm run eval:retrieval -- --run-id 2026-07-06-jina-grounding-ab
+3. **Correr A/B:** `pnpm run eval:retrieval -- --run-id 2026-07-06-jina-grounding-ab
    --split semantic_profile_ab --use-slm` con env Jina. Congela el SLM 1×/tarea/variante.
    Para run-id nuevo, `eval:index` exige lock: reusar un lock existente (p. ej.
    copiar `eval/runs/2026-07-05-jina-code/repos.lock.json`) o correr `eval:prepare`.
-4. **Métricas + reporte:** `npm run eval:metrics:retrieval -- --run-id 2026-07-06-jina-grounding-ab`
+4. **Métricas + reporte:** `pnpm run eval:metrics:retrieval -- --run-id 2026-07-06-jina-grounding-ab`
    y reporte `eval/reports/2026-07-06-grounding-ab-jina.md` con columnas: **grounded**
    vs **baseline** (Jina+SLM) vs ref **Jina+det** (jina-code) y **MiniLM+SLM** (slm-fixed).
    Responder explícito: ¿grounding recupera M3–M5? ¿conserva M6?

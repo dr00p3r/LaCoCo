@@ -29,8 +29,13 @@ src/persistence/lacoco-vectors-manager/
 | `search(embedding, filter?, topK?)` | Búsqueda ANN con filtro pre-vectorial |
 | `deleteByNodeId(nodeId)` | Elimina embedding de un nodo |
 | `buildIndex()` | Construye índice HNSW sobre columna vector |
-| `health()` | Reporta conexión, disponibilidad del índice HNSW y último error de construcción |
+| `health()` | Reporta conexión, disponibilidad del índice HNSW, estado de mantenimiento y último error de construcción |
 
 `VectorCallbacks` usa `replaceBatch()` para que la indexación por lotes sea
 idempotente por `node_id` y no acumule duplicados durante reindexaciones
 parciales, reintentos o eventos del watcher.
+
+`LaCoCoLanceDb` ejecuta mantenimiento con `optimizeIfNeeded()` cuando se superan
+umbrales de operaciones, filas modificadas, fragmentos pequenos o filas sin
+indexar. Conserva versiones recientes y expone el ultimo resultado en
+`health().maintenance`.

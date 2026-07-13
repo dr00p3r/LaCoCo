@@ -114,7 +114,7 @@ El modelo de embeddings es `all-MiniLM-L6-v2` mediante `@xenova/transformers`. L
   perfil — valida con `temp: 0, seed: 42` y produce JSON estructurado
   consistente en prompts de retrieval (REPL, gist, URLs), a diferencia del
   1.5B que entraba en bucle de repetición.
-- **Override**: `LACOCO_AGENT_MODEL` (env) o `npm run dev -- config set agent.model <name> --local`.
+- **Override**: `LACOCO_AGENT_MODEL` (env) o `pnpm run dev -- config set agent.model <name> --local`.
 - **Para pruebas A/B**: setear `LACOCO_INTERMEDIARY_MODEL` por separado
   (p. ej. `qwen2.5:7b-instruct`) sin tocar `agent.model`. El intermediario del
   eval runner (`run-retrieval.ts:freezeSlmQuery`) honra `intermediary.model`
@@ -187,8 +187,16 @@ Estrategias CLI válidas:
 | `ictd` | Anclas híbridas + difusión tensorial guiada por intent y dimensión |
 | `clcr` | Anclas híbridas + recuperación por etapas entre capas |
 | `rpr` | Anclas híbridas + enumeración y puntuación de caminos relacionales |
+| `consensus` | Anclas híbridas + consenso estructural de vecinos señalados por varias anclas |
+| `repograph` | Anclas híbridas + ego-graph plano como baseline estructural |
+| `ppr` | Anclas híbridas + PageRank personalizado sobre subgrafo inducido |
+| `connector` | Anclas híbridas + confluencia tipada entre anclas |
 
-`hybrid` es la estrategia predeterminada. `hybrid`, `ictd`, `clcr` y `rpr` requieren LanceDB durante retrieval porque comparten el anclaje BM25 + ANN + RRF, centralizado en `AbstractAnchoredStrategy`. Cada subclase solo implementa `expand()` con su lógica de difusión específica. No reintroducir `bm25`, `bm25-dim` ni `agentic-standalone` como opciones CLI.
+`hybrid` es la estrategia predeterminada. Todas las estrategias excepto
+`agentic` requieren LanceDB durante retrieval porque comparten el anclaje BM25 +
+ANN + RRF, centralizado en `AbstractAnchoredStrategy`. Cada subclase implementa
+`expand()` con su lógica específica. No reintroducir `bm25`, `bm25-dim` ni
+`agentic-standalone` como opciones CLI.
 
 ## Benchmarks
 
@@ -221,7 +229,7 @@ alternativos fueron descartados.
 
 ## Directorio de manifests (eval)
 
-Todos los scripts de `npm run eval:*` resuelven el directorio de manifests en
+Todos los scripts de `pnpm run eval:*` resuelven el directorio de manifests en
 tres niveles de precedencia (`eval/scripts/lib/paths.ts:resolveManifestsDir`):
 
 1. Flag `--manifests-dir <path>` (mayor precedencia — override por comando)
@@ -243,32 +251,33 @@ El flag sigue funcionando como override por comando si se necesita mezclar dirs.
 ## Comandos
 
 ```bash
-npm run typecheck
-npm test
-npm run build
-npm run dev -- init
-npm run dev -- status
-npm run dev -- config list
-npm run dev -- config get <clave>
-npm run dev -- config set <clave> <valor> --local
-npm run dev -- config set <clave> <valor> --global
-npm run dev -- project list
-npm run dev -- project inspect <proyecto>
-npm run dev -- project remove <proyecto>
-npm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid
-npm run dev -- watch start [proyecto]
-npm run dev -- watch stop [proyecto]
-npm run dev -- watch restart [proyecto]
-npm run dev -- watch status [proyecto]
-npm run dev -- watch list
-npm run dev -- index_graph <ruta-tsconfig>
-npm run dev -- index_vectors <ruta-tsconfig>
-npm run dev -- profile rebuild [proyecto] --json
-npm run dev -- profile ground [proyecto] "<consulta>" --json
-npm run dev -- profile status [proyecto] --verify --json
-npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid
-npm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
-npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
+pnpm run typecheck
+pnpm test
+pnpm run build
+pnpm run dev -- init
+pnpm run dev -- status
+pnpm run dev -- config list
+pnpm run dev -- config get <clave>
+pnpm run dev -- config set <clave> <valor> --local
+pnpm run dev -- config set <clave> <valor> --global
+pnpm run dev -- project list
+pnpm run dev -- project inspect <proyecto>
+pnpm run dev -- project remove <proyecto>
+pnpm run dev -- context export [proyecto] "<consulta>" --output contexto.md --strategy hybrid
+pnpm run dev -- watch start [proyecto]
+pnpm run dev -- watch stop [proyecto]
+pnpm run dev -- watch restart [proyecto]
+pnpm run dev -- watch status [proyecto]
+pnpm run dev -- watch list
+pnpm run dev -- index_graph <ruta-tsconfig>
+pnpm run dev -- index_vectors <ruta-tsconfig>
+pnpm run dev -- index_propositions <ruta-tsconfig>
+pnpm run dev -- profile rebuild [proyecto] --json
+pnpm run dev -- profile ground [proyecto] "<consulta>" --json
+pnpm run dev -- profile status [proyecto] --verify --json
+pnpm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid
+pnpm run dev -- retrieve [proyecto] "<consulta>" --strategy hybrid --json
+pnpm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
 ```
 
 `retrieve` y `context export` aceptan `--chunks <entero>` y
@@ -276,7 +285,7 @@ npm run dev -- inspect-query [proyecto] "<consulta>" --strategy hybrid
 controla `anchorLimit` para `hybrid` y `chunkLimit` para las demás estrategias;
 el segundo controla el presupuesto de `ContextAggregator`.
 
-Consulta `npm run dev -- --help` para el contrato completo y opciones vigentes.
+Consulta `pnpm run dev -- --help` para el contrato completo y opciones vigentes.
 Cuando `retrieve`, `context export` o `inspect-query` omiten `--strategy` u
 `--ollama`, la CLI resuelve `strategy.default`, `agent.endpoint` y `agent.model` desde la
 configuración persistente, respetando la precedencia env > local > global >
@@ -340,9 +349,9 @@ archivos del patch se aplican antes de ejecutar pruebas.
 
 Antes de cerrar cambios de comportamiento:
 
-1. Ejecutar `npm run typecheck`.
-2. Ejecutar `npm test`.
-3. Ejecutar `npm run build` si se modificó CLI, configuración o contratos públicos.
+1. Ejecutar `pnpm run typecheck`.
+2. Ejecutar `pnpm test`.
+3. Ejecutar `pnpm run build` si se modificó CLI, configuración o contratos públicos.
 4. Buscar imports, opciones y documentación obsoletos con `rg`.
 
 La suite incluye una prueba E2E del binario CLI que crea un proyecto temporal,

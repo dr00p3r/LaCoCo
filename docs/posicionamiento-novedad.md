@@ -37,7 +37,7 @@ y ahí el "sin LLM en el ranking" es precisamente el argumento.
 
 El experimento honesto no es "consenso vs nada", sino "consenso vs los rankers grafo que ya existen,
 con el mismo anclaje y el mismo índice". Tres baselines, todos implementables como una estrategia más en
-`registry.ts` + `strategy-names.ts` (hoy 6):
+`registry.ts` + `strategy-names.ts` (hoy 9):
 
 | Baseline | Qué es | Cómo entra | Estado |
 |---|---|---|---|

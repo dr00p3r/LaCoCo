@@ -5,11 +5,12 @@ LaCoCo es un reforzador contextual local para proyectos TypeScript. Indexa la es
 ## Instalacion
 
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm run build
 ```
 
-El binario `lacoco` queda en `dist/cli/index.js`. Para desarrollo usar `npm run dev -- <comando>`.
+El binario `lacoco` queda en `dist/cli/index.js`. Para desarrollo usar
+`pnpm run dev -- <comando>`.
 
 ## Registro de proyectos
 
@@ -57,6 +58,20 @@ Opciones:
 
 Ambos comandos registran automaticamente el proyecto y guardan las rutas de almacenamiento en el registro.
 
+### Proposiciones doc-side C2 (opt-in)
+
+```bash
+lacoco index_propositions <ruta-tsconfig>
+```
+
+Genera proposiciones mediante SLM local por nodo y las embebe en LanceDB en la
+tabla `node_propositions`. No modifica `node_embeddings` y no forma parte del
+flujo minimo de indexacion.
+
+Opciones:
+- `--lancedb <path>` — directorio de LanceDB (defecto: `paths.data/lancedb` del proyecto)
+- `--ollama <url>` — endpoint de Ollama (defecto: `agent.endpoint`)
+
 ### Project Semantic Profile
 
 ```bash
@@ -72,8 +87,9 @@ clasificador ni retrieval. Reindexar el grafo deja el perfil `stale`.
 
 ## Retrieval
 
-Recupera contexto relevante del proyecto indexado usando una de seis estrategias
-(`hybrid`, `agentic`, `ictd`, `clcr`, `rpr`, `consensus`).
+Recupera contexto relevante del proyecto indexado usando una estrategia CLI
+vigente: `hybrid`, `agentic`, `ictd`, `clcr`, `rpr`, `consensus`,
+`repograph`, `ppr` o `connector`.
 
 ### Pipeline RAG completo
 
@@ -165,6 +181,10 @@ Opciones:
 | `ictd` | Anclas hibridas + difusion tensorial guiada por intent y dimension. |
 | `clcr` | Anclas hibridas + recuperacion por etapas entre capas dimensionales. |
 | `rpr` | Anclas hibridas + enumeracion y puntuacion de caminos relacionales. |
+| `consensus` | Anclas hibridas + consenso estructural de vecinos senalados por multiples anclas. |
+| `repograph` | Anclas hibridas + ego-graph plano como baseline estructural. |
+| `ppr` | Anclas hibridas + PageRank personalizado sobre subgrafo inducido. |
+| `connector` | Anclas hibridas + busqueda de conectores tipados entre anclas. |
 
 `--chunks` controla `anchorLimit` en `hybrid` y `chunkLimit` en las demás
 estrategias. Es un límite previo al agregador; `--max-tokens` puede reducir aún
@@ -207,11 +227,20 @@ Claves principales:
 |---|---|---|---|
 | `strategy.default` | string | `hybrid` | Estrategia de retrieval por defecto |
 | `agent.endpoint` | string | `http://localhost:11434` | Endpoint de Ollama |
-| `agent.model` | string | `qwen2.5-coder:1.5b` | Modelo de Ollama |
+| `agent.model` | string | `qwen3:4b-instruct` | Modelo de Ollama |
+| `intermediary.model` | string | `""` | Modelo opcional del intermediario; vacio hereda `agent.model` |
+| `retrieval.annOverfetch` | number | `1` | Sobre-recuperacion ANN para experimentos controlados |
+| `retrieval.annDimSource` | string | `kind` | Fuente de dimension para experimentos ANN (`kind` o `edge`) |
+| `retrieval.propositions` | boolean | `false` | Activa canal doc-side C2 de proposiciones |
+| `context.template` | string | `v1` | Plantilla de contexto (`v1` firmas, `v2` firmas + cuerpo) |
+| `context.maxTokens` | number | `4000` | Presupuesto predeterminado del agregador |
 | `paths.data` | string | `.lacoco` | Directorio de datos (relativo al proyecto) |
+| `paths.logs` | string | `.lacoco/logs` | Directorio de logs del watcher |
+| `paths.state` | string | `.lacoco/state` | Directorio de estado local |
 | `timeout.ms` | number | `30000` | Timeout para Ollama |
 | `watcher.debounceMs` | number | `80` | Debounce del watcher |
 | `profile.groundingEnabled` | boolean | `false` | Activa grounding por defecto |
+| `profile.enrichConcurrency` | number | `4` | Concurrencia del enriquecedor del perfil semantico |
 
 Precedencia: variable de entorno > `--local` > `--global` > defecto.
 
@@ -220,7 +249,9 @@ Variables de entorno equivalentes:
 ```bash
 LACOCO_STRATEGY=hybrid
 LACOCO_AGENT_ENDPOINT=http://localhost:11434
-LACOCO_AGENT_MODEL=qwen2.5-coder:1.5b
+LACOCO_AGENT_MODEL=qwen3:4b-instruct
+LACOCO_INTERMEDIARY_MODEL=
+LACOCO_CONTEXT_MAX_TOKENS=4000
 LACOCO_PROFILE_GROUNDING=true
 ```
 
