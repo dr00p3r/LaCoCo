@@ -1,4 +1,4 @@
-import { Project } from "ts-morph";
+import { Project, type SourceFile } from "ts-morph";
 import { CodeExtractor } from "../extractor/code-extractor.js";
 import type { ExtractionCallbacks, NodeRow } from "../extractor/types.js";
 import { KIND_TO_DIM } from "../domain/dimensions.js";
@@ -21,12 +21,16 @@ const WRITE_BATCH_SIZE = 32;
 export class PropositionsIndexer {
   constructor(
     private readonly lanceDbPath: string,
-    private readonly tsConfigPath: string,
+    tsConfigPath: string | string[],
     private readonly llm: LlmClient,
     private readonly concurrency = 1,
     private readonly createStore: (path: string) => LaCoCoPropositionsDb = (path) => new LaCoCoPropositionsDb(path),
     private readonly embedGen: EmbeddingGenerator = new EmbeddingGenerator(),
-  ) {}
+  ) {
+    this.tsConfigPaths = Array.isArray(tsConfigPath) ? tsConfigPath : [tsConfigPath];
+  }
+
+  private readonly tsConfigPaths: string[];
 
   async index(): Promise<void> {
     const nodes = this.#collectNodes();
@@ -75,21 +79,39 @@ export class PropositionsIndexer {
   }
 
   #collectNodes(): NodeRow[] {
-    const project = new Project({ tsConfigFilePath: this.tsConfigPath });
     const collected: NodeRow[] = [];
     const callbacks: ExtractionCallbacks = {
       insertNode: (row) => collected.push(row),
       insertEdge: () => {},
     };
     const extractor = new CodeExtractor(callbacks);
-    for (const file of project.getSourceFiles()) {
+
+    const seenFiles = new Set<string>();
+    for (const tsconfigPath of this.tsConfigPaths) {
+      let sourceFiles: SourceFile[];
       try {
-        extractor.processFile(file);
+        const project = new Project({ tsConfigFilePath: tsconfigPath });
+        sourceFiles = project.getSourceFiles();
       } catch (err) {
         console.error(
-          `  ⚠  Error analizando ${file.getFilePath()}:`,
+          `  ⚠  Error cargando ${tsconfigPath}:`,
           err instanceof Error ? err.message : err,
         );
+        continue;
+      }
+
+      for (const file of sourceFiles) {
+        const filePath = file.getFilePath();
+        if (seenFiles.has(filePath)) continue;
+        seenFiles.add(filePath);
+        try {
+          extractor.processFile(file);
+        } catch (err) {
+          console.error(
+            `  ⚠  Error analizando ${filePath}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
     }
     // Solo nodos de código propio con nombre; las libs externas no aportan

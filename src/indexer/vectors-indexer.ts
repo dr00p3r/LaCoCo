@@ -1,4 +1,4 @@
-import { Project } from "ts-morph";
+import { Project, type SourceFile } from "ts-morph";
 import { CodeExtractor } from "../extractor/code-extractor.js";
 import { VectorCallbacks } from "../extractor/vector-callbacks.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
@@ -9,15 +9,15 @@ type VectorStore = Pick<LaCoCoLanceDb, "buildIndex" | "clear" | "close" | "conne
 
 export class VectorsIndexer {
   private readonly lanceDb: VectorStore;
-  private readonly tsConfigPath: string;
+  private readonly tsConfigPaths: string[];
 
   constructor(
     lanceDbPath: string,
-    tsConfigPath: string,
+    tsConfigPath: string | string[],
     createLanceDb: (lanceDbPath: string) => VectorStore = (path) => new LaCoCoLanceDb(path),
   ) {
     this.lanceDb = createLanceDb(lanceDbPath);
-    this.tsConfigPath = tsConfigPath;
+    this.tsConfigPaths = Array.isArray(tsConfigPath) ? tsConfigPath : [tsConfigPath];
   }
 
   async index(): Promise<void> {
@@ -25,9 +25,7 @@ export class VectorsIndexer {
     try {
       await this.lanceDb.clear();
 
-      const project = new Project({ tsConfigFilePath: this.tsConfigPath });
-      const sourceFiles = project.getSourceFiles();
-      console.log(`[VectorsIndexer] Archivos encontrados: ${sourceFiles.length}`);
+      console.log(`[VectorsIndexer] Proyectos TS detectados: ${this.tsConfigPaths.length}`);
 
       const embedGen = new EmbeddingGenerator();
       const generateEmbedding = (texts: string[]) => embedGen.generateBatch(texts);
@@ -40,7 +38,7 @@ export class VectorsIndexer {
       );
       const codeExtractor = new CodeExtractor(callbacks);
 
-      await this.#insertIntoLanceDB(codeExtractor, callbacks, sourceFiles);
+      await this.#insertIntoLanceDB(codeExtractor, callbacks);
       await this.lanceDb.buildIndex();
     } finally {
       await this.lanceDb.close();
@@ -49,24 +47,54 @@ export class VectorsIndexer {
 
   async #insertIntoLanceDB(
     codeExtractor: CodeExtractor, 
-    callbacks: VectorCallbacks, 
-    sourceFiles: ReturnType<Project["getSourceFiles"]>
+    callbacks: VectorCallbacks
   ): Promise<void> {
+    let processedFiles = 0;
+    let failedProjects = 0;
+    const seenFiles = new Set<string>();
+
     console.time("[VectorsIndexer] Extracción + Embeddings");
-    for (const file of sourceFiles) {
+    for (const tsconfigPath of this.tsConfigPaths) {
+      let sourceFiles: SourceFile[];
       try {
-        codeExtractor.processFile(file);
+        const project = new Project({ tsConfigFilePath: tsconfigPath });
+        sourceFiles = project.getSourceFiles();
       } catch (err) {
+        failedProjects++;
         console.error(
-          `  ⚠  Error analizando ${file.getFilePath()}:`,
+          `  ⚠  Error cargando ${tsconfigPath}:`,
           err instanceof Error ? err.message : err
         );
+        continue;
+      }
+
+      console.log(`[VectorsIndexer] ${tsconfigPath} → ${sourceFiles.length} archivos`);
+      for (const file of sourceFiles) {
+        const filePath = file.getFilePath();
+        if (seenFiles.has(filePath)) continue;
+        seenFiles.add(filePath);
+        try {
+          codeExtractor.processFile(file);
+          processedFiles++;
+        } catch (err) {
+          console.error(
+            `  ⚠  Error analizando ${filePath}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
       }
     }
     await callbacks.flush();
     console.timeEnd("[VectorsIndexer] Extracción + Embeddings");
 
-    console.log(`[VectorsIndexer] ✅ ${callbacks.nodesWritten} embeddings insertados en LanceDB.`);
+    if (processedFiles === 0) {
+      throw new Error("No se pudo procesar ningun archivo TypeScript/JavaScript indexable");
+    }
+
+    console.log(
+      `[VectorsIndexer] ✅ ${callbacks.nodesWritten} embeddings insertados en LanceDB, ` +
+      `${processedFiles} archivos procesados, ${failedProjects} proyectos omitidos.`
+    );
   }
 
 }

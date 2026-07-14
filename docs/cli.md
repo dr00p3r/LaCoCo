@@ -35,25 +35,31 @@ Dos pasos independientes que crean las bases de datos que consumen las estrategi
 ### Grafo estructural (SQLite + FTS5)
 
 ```bash
-lacoco index_graph <ruta-tsconfig>
+lacoco index_graph <ruta-tsconfig-o-proyecto>
+lacoco index_graph --project-dir <ruta-proyecto>
 ```
 
 Extrae el AST con ts-morph y persiste nodos, aristas y metadatos dimensionales (SYS/CPG/DTG) en SQLite. Activa FTS5 para busqueda BM25.
 
+Si recibe un directorio, descubre `tsconfig*.json` bajo esa raiz para indexar repos multi-servicio. Ignora artefactos como `node_modules`, `dist`, `build`, `coverage`, `target` y `tsconfig.build/spec/test/e2e.json`.
+
 Opciones:
 - `-d, --db <path>` — ruta de salida (defecto: `paths.data/tensor.sqlite` del proyecto)
+- `-p, --project-dir <path>` — directorio raiz de un repo multi-servicio
 - `-v, --verbose` — progreso detallado
 
 ### Vectores semanticos (LanceDB)
 
 ```bash
-lacoco index_vectors <ruta-tsconfig>
+lacoco index_vectors <ruta-tsconfig-o-proyecto>
+lacoco index_vectors --project-dir <ruta-proyecto>
 ```
 
 Genera embeddings con `all-MiniLM-L6-v2` (384 dimensiones) y los persiste en LanceDB con indice HNSW.
 
 Opciones:
 - `--lancedb <path>` — directorio de salida (defecto: `paths.data/lancedb` del proyecto)
+- `-p, --project-dir <path>` — directorio raiz de un repo multi-servicio
 - `-v, --verbose` — progreso detallado
 
 Ambos comandos registran automaticamente el proyecto y guardan las rutas de almacenamiento en el registro.
@@ -61,7 +67,8 @@ Ambos comandos registran automaticamente el proyecto y guardan las rutas de alma
 ### Proposiciones doc-side C2 (opt-in)
 
 ```bash
-lacoco index_propositions <ruta-tsconfig>
+lacoco index_propositions <ruta-tsconfig-o-proyecto>
+lacoco index_propositions --project-dir <ruta-proyecto>
 ```
 
 Genera proposiciones mediante SLM local por nodo y las embebe en LanceDB en la
@@ -71,6 +78,7 @@ flujo minimo de indexacion.
 Opciones:
 - `--lancedb <path>` — directorio de LanceDB (defecto: `paths.data/lancedb` del proyecto)
 - `--ollama <url>` — endpoint de Ollama (defecto: `agent.endpoint`)
+- `-p, --project-dir <path>` — directorio raiz de un repo multi-servicio
 
 ### Project Semantic Profile
 

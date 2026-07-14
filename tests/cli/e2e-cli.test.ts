@@ -10,6 +10,38 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "src", "cli", "index.ts");
 
 describe("lacoco CLI E2E", () => {
+  it("indexa varios microservicios TypeScript desde --project-dir", (context) => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "lacoco-ms-e2e-"));
+    const stateHome = path.join(tempDir, "state-home");
+
+    try {
+      createServiceProject(path.join(tempDir, "api-gateway"), "GatewayService");
+      createServiceProject(path.join(tempDir, "tickets"), "TicketsService");
+
+      runCli(["index_graph", "--project-dir", tempDir], stateHome);
+
+      const expectedDbPath = path.join(tempDir, ".lacoco", "tensor.sqlite");
+      expect(fs.existsSync(expectedDbPath)).toBe(true);
+
+      const sqlite = new Database(expectedDbPath, { readonly: true });
+      try {
+        const names = sqlite
+          .prepare("SELECT name FROM nodes WHERE name IN ('GatewayService', 'TicketsService') ORDER BY name")
+          .all() as { name: string }[];
+        expect(names.map((row) => row.name)).toEqual(["GatewayService", "TicketsService"]);
+      } finally {
+        sqlite.close();
+      }
+    } catch (err) {
+      if (isSpawnPermissionError(err)) {
+        context.skip();
+      }
+      throw err;
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("indexa grafo y vectores en almacenamiento aislado por proyecto", async (context) => {
     const tempDir = mkdtempSync(path.join(tmpdir(), "lacoco-e2e-"));
     const projectDir = path.join(tempDir, "project-a");
@@ -116,6 +148,35 @@ function createFixtureProject(projectDir: string): void {
       "export class OrderService {",
       "  createOrder(dto: CreateOrderDto): number {",
       "    return dto.amount;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+}
+
+function createServiceProject(serviceDir: string, serviceName: string): void {
+  fs.mkdirSync(path.join(serviceDir, "src"), { recursive: true });
+  fs.writeFileSync(
+    path.join(serviceDir, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        strict: true,
+      },
+      include: ["src/**/*.ts"],
+    }, null, 2),
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(serviceDir, "src", "service.ts"),
+    [
+      `export class ${serviceName} {`,
+      "  health(): string {",
+      `    return "${serviceName}";`,
       "  }",
       "}",
       "",
