@@ -53,6 +53,14 @@ interface RetrievalSettings {
   requireGoldStatus?: string;
   continueOnTaskFailure: boolean;
   continueOnStrategyFailure: boolean;
+  /**
+   * Corridas de warm-up (sin cronometrar, descartadas) antes de las estrategias
+   * medidas de cada instancia. Ceban la caché de páginas del SO (pesos del modelo
+   * + LanceDB/sqlite de esa instancia) para que la Latency medida no dependa del
+   * orden (la 1ª estrategia dejaba de pagar ~4s de arranque en frío). Default 1;
+   * 0 lo desactiva.
+   */
+  warmupRepetitions: number;
 }
 
 type SanitizerVariant = "deterministic" | "baseline" | "grounded" | "oracle";
@@ -171,6 +179,9 @@ function readSettings(runManifest: Record<string, unknown>, requestedSplit?: str
       failure.continue_on_strategy_failure,
       "run.yaml.failure_policy.continue_on_strategy_failure",
     ),
+    warmupRepetitions: retrieval.warmup_repetitions === undefined
+      ? 1
+      : asNumber(retrieval.warmup_repetitions, "run.yaml.phases.retrieval.warmup_repetitions"),
   };
 }
 
@@ -323,8 +334,16 @@ async function freezeSlmQuery(
     } else {
       sanitizer = await intermediary.sanitize(task.prompt);
     }
+    // El benchmark de retrieval mide sobre tareas que SON de retrieval por
+    // construcción; el router del SLM (débil en modelos pequeños) a veces las
+    // enruta a LLM_DIRECT. En vez de descartar la tarea, forzamos RAG conservando
+    // la query reescrita del SLM (su aporte real). El resultado forzado se cachea
+    // abajo, así que no se reinvoca al SLM en corridas siguientes.
     if (sanitizer.route !== "RAG") {
-      throw new Error(`task ${task.id}: el sanitizer congelado produjo route=${sanitizer.route}; retrieval requiere RAG`);
+      console.warn(
+        `⚠ sanitizer ${task.id} x ${variant}: route=${sanitizer.route} → forzado a RAG (benchmark de retrieval)`,
+      );
+      sanitizer = { ...sanitizer, route: "RAG" };
     }
 
     const sanitizerDurationMs = Math.round(performance.now() - startedAt);
@@ -750,6 +769,33 @@ export async function runRetrieval(argv = process.argv.slice(2)): Promise<void> 
         if (!settings.continueOnTaskFailure) stop = true;
         if (stop) break;
         continue;
+      }
+
+      // Warm-up: ceba la caché del SO (modelo de embeddings + LanceDB/sqlite de
+      // ESTA instancia) con corridas descartadas, para que la 1ª estrategia medida
+      // no pague el arranque en frío (~4s) y la Latency sea comparable entre las 8.
+      // Reusa los paths de la 1ª estrategia (el run medido los sobreescribe).
+      if (!options.dryRun && settings.warmupRepetitions > 0 && strategies.length > 0) {
+        const warm = strategies[0]!;
+        const warmCommand = buildCommand(
+          locked.repoPath,
+          querySelection.query,
+          warm.lacoco_strategy,
+          querySelection.encodedSanitizer,
+        );
+        const warmPaths = artifactPaths(
+          layout.artifactsDirectory,
+          task.id,
+          warm.id,
+          querySelection.sanitizerVariant,
+        );
+        for (let w = 0; w < settings.warmupRepetitions; w += 1) {
+          try {
+            await executeRetrieval(warmCommand, settings.timeoutMs, warmPaths, warm.parameters);
+          } catch {
+            // Best-effort: un fallo de warm-up no aborta ni se registra.
+          }
+        }
       }
 
       for (const strategy of strategies) {

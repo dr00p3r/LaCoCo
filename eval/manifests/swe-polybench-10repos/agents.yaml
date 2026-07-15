@@ -166,27 +166,65 @@ agents:
       patch_file: "patch.diff"
 
   - id: claude-code
-    label: "Claude Code"
-    enabled: false
+    label: "Claude Code (sonnet/haiku, sin contexto/hook)"
+    enabled: true
     adapter_kind: "cli"
-    command: "claude"
+    command: "bash"
     availability_check:
       command: "claude --version"
     invocation:
       mode: "non_interactive_print"
       working_directory: "{repo_path}"
       args:
-        - "--print"
-        - "--model"
+        - "eval/scripts/run-claude-cell.sh"
+        - "{repo_path}"
         - "{model}"
-        - "{prompt_text}"
+        - "{prompt_file}"
     model:
       default: "sonnet"
       env: "LACOCO_EVAL_CLAUDE_MODEL"
     credentials:
       required: true
       notes:
-        - "Revisar flags de permisos de la version instalada antes de activar."
+        - "Usa las credenciales de ~/.claude (misma sesión que el CLI interactivo)."
+    safety:
+      allow_network: false
+      allow_shell: true
+      allow_edit: true
+    outputs:
+      stdout_log: "agent.stdout.log"
+      stderr_log: "agent.stderr.log"
+      patch_file: "patch.diff"
+
+  # Variante MCP de Claude Code: mismo wrapper + LaCoCo MCP bajo demanda. El env
+  # LACOCO_MCP_CONFIG referencia {mcp_config_file} → agentNeedsMcpConfig() da true
+  # (se escribe el opencode.mcp.json de la celda y se activa el hint mcp). El wrapper
+  # convierte ese config al formato de Claude Code y lo pasa con --mcp-config. El
+  # hint suave/fuerte se elige con LACOCO_EVAL_MCP_HINT.
+  - id: claude-code-mcp
+    label: "Claude Code + LaCoCo MCP (bajo demanda)"
+    enabled: true
+    adapter_kind: "cli"
+    command: "bash"
+    availability_check:
+      command: "claude --version"
+    invocation:
+      mode: "non_interactive_print"
+      working_directory: "{repo_path}"
+      env:
+        LACOCO_MCP_CONFIG: "{mcp_config_file}"
+      args:
+        - "eval/scripts/run-claude-cell.sh"
+        - "{repo_path}"
+        - "{model}"
+        - "{prompt_file}"
+    model:
+      default: "sonnet"
+      env: "LACOCO_EVAL_CLAUDE_MODEL"
+    credentials:
+      required: true
+      notes:
+        - "Requiere el proyecto indexado (lacoco index_graph + index_vectors) y npm run build."
     safety:
       allow_network: false
       allow_shell: true

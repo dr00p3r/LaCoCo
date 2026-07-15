@@ -20,8 +20,8 @@ paths:
   # resuelven contra el repoPath de su lock, no contra estos paths). Apuntar aquí al
   # árbol Jina hace que eval:index construya en indexes-jina/ y vuelve estricto el
   # assert de consistencia de embedding (Fase 2).
-  repos: "eval/workdir/repos-jina"
-  indexes: "eval/workdir/indexes-jina"
+  repos: "eval/workdir/repos-minilm"
+  indexes: "eval/workdir/indexes-minilm"
   runs: "eval/runs"
   artifacts: "eval/runs/{run_id}/artifacts"
   lock_file: "eval/runs/{run_id}/repos.lock.json"
@@ -39,9 +39,9 @@ inputs:
 # índice para verificar consistencia al recuperar. El operador ya NO exporta estas
 # variables a mano (antes se caían en silencio → query-MiniLM sobre índice-Jina).
 embedding:
-  model: "jinaai/jina-embeddings-v2-base-code"
-  dim: 768
-  quantized: false
+  model: "Xenova/all-MiniLM-L6-v2"
+  dim: 384
+  quantized: true
 
 # Grounding — construcción offline del Project Semantic Profile (Ollama).
 # `enrich_concurrency` = lotes de enriquecimiento en vuelo simultáneos; requiere
@@ -491,6 +491,32 @@ splits:
       - serverless-6366
       - serverless-6869
     task_ids: *paper_precheck_ids
+  paper_minilm_mh:
+    description: >-
+      Matriz del documento — eje MiniLM (variantes 1/2). Mismos 15 casos
+      multi-hop que paper_jina_mh. 4 estrategias baseline (sin consensus/
+      connector/repograph); 2 modos (determinista / SLM baseline). Requiere
+      indices MiniLM en indexes-minilm (embedding all-MiniLM-L6-v2/384).
+    strategies: [ hybrid, ictd, clcr, rpr ]
+    sanitizer_variants: [ deterministic, baseline ]
+    require_gold_status: ready
+    repo_ids: &paper_minilm_ids
+      - svelte-464
+      - svelte-477
+      - svelte-630
+      - svelte-1095
+      - svelte-1137
+      - material-ui-11987
+      - material-ui-12236
+      - material-ui-12303
+      - material-ui-13534
+      - material-ui-20356
+      - serverless-1910
+      - serverless-2434
+      - serverless-5640
+      - serverless-6366
+      - serverless-6869
+    task_ids: *paper_minilm_ids
   paper_jina_mh:
     description: >-
       Matriz del documento — eje Jina (variantes 3/4/5). 3 repos x 5 casos

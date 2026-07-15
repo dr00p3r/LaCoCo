@@ -4,6 +4,7 @@ import {
   bootstrapRate,
   buildCoverageItems,
   computeExecutionMetrics,
+  DEFAULT_SWEEP_CUTOFFS,
   editSiteHitAtK,
   externalNoiseRateAtK,
   groupByTask,
@@ -160,6 +161,47 @@ describe("patch-evidence retrieval metrics", () => {
     );
     expect(result.metrics.EditSiteHit.status).toBe("excluded_from_gold_metrics");
     expect(result.metrics.Latency).toEqual({ status: "computed", value: 10 });
+  });
+
+  it("excludes gold metrics when the edit-site gold is not in the graph", () => {
+    const result = computeExecutionMetrics(
+      record(),
+      gold({ editSiteSymbols: ["src/foo.ts#Foo"] }),
+      5,
+      DEFAULT_SWEEP_CUTOFFS,
+      "gold_not_in_graph",
+    );
+    expect(result.metrics.EditSiteHit.status).toBe("gold_not_in_graph");
+    expect(result.metrics.PatchEvidenceHit.status).toBe("gold_not_in_graph");
+    expect(result.metrics.MRR.status).toBe("gold_not_in_graph");
+    expect(result.metrics.EditSiteMRR.status).toBe("gold_not_in_graph");
+    expect(result.metrics.UsefulContextCoverage.status).toBe("gold_not_in_graph");
+    // ExternalNoiseRate y Latency no dependen del gold → siguen computadas.
+    expect(result.metrics.ExternalNoiseRate.status).toBe("computed");
+    expect(result.metrics.Latency).toMatchObject({ status: "computed", value: 10 });
+    // sin `details` (no se computaron las métricas de gold).
+    expect(result.details).toBeUndefined();
+  });
+
+  it("excludes gold metrics with index_unavailable when the graph is empty", () => {
+    const result = computeExecutionMetrics(
+      record(),
+      gold({ editSiteSymbols: ["src/foo.ts#Foo"] }),
+      5,
+      DEFAULT_SWEEP_CUTOFFS,
+      "index_unavailable",
+    );
+    expect(result.metrics.EditSiteHit.status).toBe("index_unavailable");
+    expect(result.metrics.Latency).toMatchObject({ status: "computed", value: 10 });
+  });
+
+  it("computes gold metrics normally when reachability is reachable (default)", () => {
+    const g = gold({ editSiteSymbols: ["src/foo.ts#Foo"] });
+    // El default (sin pasar reachability) equivale a "reachable".
+    expect(computeExecutionMetrics(record(), g, 5).metrics.EditSiteHit.status).toBe("computed");
+    expect(
+      computeExecutionMetrics(record(), g, 5, DEFAULT_SWEEP_CUTOFFS, "reachable").metrics.EditSiteHit.status,
+    ).toBe("computed");
   });
 
   it("marks every metric as failed for a failed execution", () => {

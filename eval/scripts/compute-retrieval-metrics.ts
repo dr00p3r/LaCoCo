@@ -1,12 +1,13 @@
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { writeFileSync } from "node:fs";
 import { isEntrypoint } from "./lib/cli.js";
-import { asNumber, asRecord } from "./lib/config.js";
+import { asNumber, asRecord, asString } from "./lib/config.js";
 import { readJsonl } from "./lib/jsonl.js";
 import { existsSync } from "node:fs";
 import { resolveEvalLayout } from "./lib/layout.js";
 import { loadManifests } from "./lib/load-manifests.js";
 import { readRepositoriesLock } from "./lib/repo-lock.js";
+import { findGraphDatabase, openGraphLookup, type GraphLookup } from "./lib/graph-reader.js";
 import {
   computeExecutionMetrics,
   DEFAULT_SWEEP_CUTOFFS,
@@ -15,6 +16,7 @@ import {
   parseRetrievalInput,
   summarizeTaskMetrics,
   type GoldInput,
+  type GoldReachability,
 } from "./lib/metrics.js";
 import { resolveNodeId } from "./lib/node-id.js";
 import type { PatchEvidenceGold, SymbolRef } from "./lib/types.js";
@@ -32,6 +34,7 @@ interface MetricsCliOptions {
   inputFile?: string;
   manifestsDir?: string;
   strict?: boolean;
+  sanitizerVariant?: string;
 }
 
 function parseOptions(argv: string[]): MetricsCliOptions {
@@ -39,6 +42,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   let runDir: string | undefined;
   let inputFile: string | undefined;
   let manifestsDir: string | undefined;
+  let sanitizerVariant: string | undefined;
   let strict = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -52,7 +56,8 @@ function parseOptions(argv: string[]): MetricsCliOptions {
       argument !== "--run-id" &&
       argument !== "--run-dir" &&
       argument !== "--input-file" &&
-      argument !== "--manifests-dir"
+      argument !== "--manifests-dir" &&
+      argument !== "--sanitizer-variant"
     ) {
       throw new Error(`unknown argument: ${String(argument)}`);
     }
@@ -63,6 +68,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
     if (argument === "--run-id") runId = value;
     else if (argument === "--run-dir") runDir = value;
     else if (argument === "--manifests-dir") manifestsDir = value;
+    else if (argument === "--sanitizer-variant") sanitizerVariant = value;
     else inputFile = value;
     index += 1;
   }
@@ -73,7 +79,10 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   // --input-file (default retrieval.jsonl) permite medir sobre una variante
   // normalizada (p. ej. retrieval.normalized.jsonl) sin mutar el JSONL crudo.
   const withInput = inputFile === undefined ? base : { ...base, inputFile };
-  return manifestsDir === undefined ? withInput : { ...withInput, manifestsDir };
+  const withManifests = manifestsDir === undefined ? withInput : { ...withInput, manifestsDir };
+  // --sanitizer-variant filtra el JSONL crudo a una sola arm (deterministic/baseline/…)
+  // y escribe salidas sufijadas, para un A/B limpio cuando el split produce varias.
+  return sanitizerVariant === undefined ? withManifests : { ...withManifests, sanitizerVariant };
 }
 
 function resolveRun(
@@ -216,13 +225,100 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
     }
   }
   const inputPath = join(run.runDirectory, options.inputFile ?? "retrieval.jsonl");
-  const metricsPath = join(run.runDirectory, "retrieval-metrics.json");
-  const csvPath = join(run.runDirectory, "summary.csv");
-  const markdownPath = join(run.runDirectory, "summary.md");
+  // Con --sanitizer-variant las salidas se sufijan (retrieval-metrics.<variant>.json,
+  // summary.<variant>.{csv,md}) para no pisar las de otra variante en un A/B.
+  const variantSuffix = options.sanitizerVariant === undefined ? "" : `.${options.sanitizerVariant}`;
+  const metricsPath = join(run.runDirectory, `retrieval-metrics${variantSuffix}.json`);
+  const csvPath = join(run.runDirectory, `summary${variantSuffix}.csv`);
+  const markdownPath = join(run.runDirectory, `summary${variantSuffix}.md`);
   const taskById = new Map(manifests.tasks.tasks.map((task) => [task.id, task]));
 
+  // --- Gate de alcanzabilidad del gold en el grafo indexado ------------------
+  // El gold edit-site puede existir en el manifest pero no en el grafo (extractor
+  // no lo indexó, p. ej. `.d.ts` ensombrece al `.js`) o el índice puede estar
+  // vacío/ausente (build matado por timeout). En ambos casos EditSiteHit es
+  // estructuralmente imposible: se marca la instancia y sus métricas de gold se
+  // excluyen del agregado en vez de contarse como ceros silenciosos.
+  const reposDefaults = asRecord(manifests.repos.defaults, "repos.yaml.defaults");
+  const indexDefaults = asRecord(reposDefaults.lacoco_index, "repos.yaml.defaults.lacoco_index");
+  const graphDbName = asString(
+    indexDefaults.graph_db_name,
+    "repos.yaml.defaults.lacoco_index.graph_db_name",
+  );
+  const graphByRepo = new Map<string, GraphLookup | null>();
+  const openGraphFor = (repoId: string): GraphLookup | null => {
+    if (graphByRepo.has(repoId)) return graphByRepo.get(repoId) ?? null;
+    const graphPath = findGraphDatabase(run.runDirectory, layout.indexesDirectory, repoId, graphDbName);
+    let lookup: GraphLookup | null = null;
+    if (graphPath !== null) {
+      try {
+        lookup = openGraphLookup(graphPath);
+      } catch {
+        lookup = null; // grafo stub sin tabla `nodes` → índice inválido
+      }
+    }
+    graphByRepo.set(repoId, lookup);
+    return lookup;
+  };
+  interface ValidityRow {
+    task_id: string;
+    repo_id: string;
+    verdict: "valid" | "invalid_anchor" | "invalid_index";
+    node_count: number;
+    edit_site_symbols_in_graph: number;
+    edit_site_symbols_total: number;
+    edit_site_file_in_graph: boolean;
+  }
+  const validityByTask = new Map<string, ValidityRow>();
+  const reachabilityFor = (taskId: string, repoId: string, gold: GoldInput): GoldReachability => {
+    const existing = validityByTask.get(taskId);
+    if (existing !== undefined) {
+      return existing.verdict === "valid"
+        ? "reachable"
+        : existing.verdict === "invalid_index"
+          ? "index_unavailable"
+          : "gold_not_in_graph";
+    }
+    // Sin edit-site en el manifest, `computeExecutionMetrics` ya excluye vía
+    // `invalid_gold`; no aplica el gate de grafo.
+    if (gold.editSiteSymbols.length === 0 && gold.editSiteFiles.length === 0) return "reachable";
+    const lookup = openGraphFor(repoId);
+    const nodeCount = lookup?.nodeCount() ?? 0;
+    let symbolsIn = 0;
+    let fileIn = false;
+    let verdict: GoldReachability;
+    if (lookup === null || nodeCount === 0) {
+      verdict = "index_unavailable";
+    } else {
+      symbolsIn = gold.editSiteSymbols.length - lookup.findMissingNodeIds(gold.editSiteSymbols).length;
+      fileIn = gold.editSiteFiles.some((file) => lookup.hasNodeInFile(file));
+      verdict = symbolsIn > 0 || fileIn ? "reachable" : "gold_not_in_graph";
+    }
+    validityByTask.set(taskId, {
+      task_id: taskId,
+      repo_id: repoId,
+      verdict: verdict === "reachable" ? "valid" : verdict === "index_unavailable" ? "invalid_index" : "invalid_anchor",
+      node_count: nodeCount,
+      edit_site_symbols_in_graph: symbolsIn,
+      edit_site_symbols_total: gold.editSiteSymbols.length,
+      edit_site_file_in_graph: fileIn,
+    });
+    return verdict;
+  };
+
   const retrievalAnalysis: RetrievalCellAnalysis[] = [];
-  const inputs = readJsonl(inputPath).map(({ line, value }) => {
+  const rawEntries = readJsonl(inputPath).filter(({ value }) =>
+    options.sanitizerVariant === undefined ||
+    (typeof value === "object" &&
+      value !== null &&
+      (value as Record<string, unknown>).sanitizer_variant === options.sanitizerVariant),
+  );
+  if (options.sanitizerVariant !== undefined && rawEntries.length === 0) {
+    throw new Error(
+      `no retrieval records with sanitizer_variant=${options.sanitizerVariant} in ${inputPath}`,
+    );
+  }
+  const inputs = rawEntries.map(({ line, value }) => {
     const record = parseRetrievalInput(value, `${inputPath}:${line}`);
     if (record.schemaVersion !== expectedSchemaVersion) {
       throw new Error(
@@ -243,9 +339,19 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
     }
     const repoPath = lockRepoPathById.get(task.repo_id) ?? join(reposDirectory, task.repo_id);
     const gold = buildPatchEvidenceGoldInput(task.gold.status, task.gold.patch_evidence, repoPath);
+    const reachability = reachabilityFor(task.id, task.repo_id, gold);
     retrievalAnalysis.push(analyzeRetrievalCell(record, value, gold));
-    return computeExecutionMetrics(record, gold, primaryCutoff, sweepCutoffs);
+    return computeExecutionMetrics(record, gold, primaryCutoff, sweepCutoffs, reachability);
   });
+  for (const lookup of graphByRepo.values()) lookup?.close();
+  const validityRows = [...validityByTask.values()].sort((a, b) => a.task_id.localeCompare(b.task_id));
+  const validity = {
+    graph_db_name: graphDbName,
+    valid: validityRows.filter((row) => row.verdict === "valid").length,
+    invalid_anchor: validityRows.filter((row) => row.verdict === "invalid_anchor").length,
+    invalid_index: validityRows.filter((row) => row.verdict === "invalid_index").length,
+    instances: validityRows,
+  };
 
   const taskResults = groupByTask(inputs);
   const summary = summarizeTaskMetrics(taskResults);
@@ -281,13 +387,21 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
       cells: retrievalAnalysis,
       by_strategy: summarizeRetrievalDiagnostics(retrievalAnalysis, inputs),
     },
+    validity,
     task_results: taskResults,
     summary,
   };
 
+  const validityFooter =
+    `\n> **Validez de instancias** (gate gold-en-grafo): ${validity.valid} válidas, ` +
+    `${validity.invalid_anchor} inválidas por anclaje (gold ausente del grafo), ` +
+    `${validity.invalid_index} inválidas por índice (grafo vacío/ausente). ` +
+    `Las inválidas se excluyen de las métricas de gold (EditSiteHit/PatchEvidenceHit/MRR/` +
+    `EditSiteMRR/UsefulContextCoverage).\n`;
+
   writeFileSync(metricsPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
   writeFileSync(csvPath, renderSummaryCsv(summary), "utf8");
-  writeFileSync(markdownPath, renderSummaryMarkdown(run.runId, summary), "utf8");
+  writeFileSync(markdownPath, `${renderSummaryMarkdown(run.runId, summary)}${validityFooter}`, "utf8");
   console.log(`Computed retrieval metrics for ${inputs.length} executions.`);
   console.log(`Metrics: ${metricsPath}`);
   console.log(`CSV: ${csvPath}`);

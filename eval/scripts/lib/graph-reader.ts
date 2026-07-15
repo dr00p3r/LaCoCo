@@ -7,6 +7,22 @@ export interface GraphLookup {
   findMissingNodeIds(nodeIds: readonly string[]): string[];
   hasNode(nodeId: string): boolean;
   /**
+   * `true` if the graph contains any node belonging to `absoluteFilePath` (a
+   * file-level node whose `id` equals the path, or any symbol node in that
+   * file). Mirrors the file-level match of `editSiteHitAtK` (`metrics.ts`),
+   * where an edit-site *file* is hit when any retrieved node lives in it.
+   */
+  hasNodeInFile(absoluteFilePath: string): boolean;
+  /**
+   * All `{id, filepath}` of nodes whose id ends with `#<symbol>` (exact symbol
+   * suffix, so `Class.method` matches too). Used to reconcile a gold symbol to
+   * the graph's actual node id when the gold file path/extension is stale
+   * (e.g. `.js`→`.tsx`). `symbol` must be a bare identifier (no LIKE wildcards).
+   */
+  nodeIdsBySymbolSuffix(symbol: string): { id: string; filepath: string }[];
+  /** Total number of nodes; 0 means an empty/stub graph (broken index). */
+  nodeCount(): number;
+  /**
    * Undirected BFS shortest-path distances (in edges) from `anchorId` to every
    * reachable node. The anchor itself maps to 0; unreachable nodes are absent.
    * Returns an empty map when the anchor node has no edges.
@@ -78,6 +94,32 @@ export function openGraphLookup(path: string): GraphLookup {
     },
     hasNode(nodeId) {
       return database.prepare("SELECT 1 FROM nodes WHERE id = ? LIMIT 1").get(nodeId) !== undefined;
+    },
+    hasNodeInFile(absoluteFilePath) {
+      return (
+        database
+          .prepare("SELECT 1 FROM nodes WHERE filepath = ? OR id = ? LIMIT 1")
+          .get(absoluteFilePath, absoluteFilePath) !== undefined
+      );
+    },
+    nodeIdsBySymbolSuffix(symbol) {
+      // `_` y `%` son comodines de LIKE y `_` es válido en identificadores JS →
+      // escapar para que el match del sufijo sea literal.
+      const escaped = symbol.replace(/[\\%_]/g, (char) => `\\${char}`);
+      const rows = database
+        .prepare("SELECT id, filepath FROM nodes WHERE id LIKE '%#' || ? ESCAPE '\\'")
+        .all(escaped);
+      return rows.flatMap((value) => {
+        if (typeof value !== "object" || value === null) return [];
+        const { id, filepath } = value as Record<string, unknown>;
+        return typeof id === "string" && typeof filepath === "string" ? [{ id, filepath }] : [];
+      });
+    },
+    nodeCount() {
+      const row = database.prepare("SELECT count(*) AS c FROM nodes").get();
+      return typeof row === "object" && row !== null && "c" in row && typeof row.c === "number"
+        ? row.c
+        : 0;
     },
     distancesFrom(anchorId) {
       const adj = buildAdjacency();

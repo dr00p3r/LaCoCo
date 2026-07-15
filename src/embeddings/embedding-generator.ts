@@ -5,9 +5,17 @@
  * Genera vectores de 384 dimensiones para indexación en LanceDB.
  */
 
-import { pipeline } from "@xenova/transformers";
+import { pipeline, env } from "@xenova/transformers";
 import { EMBEDDING_MODEL, EMBEDDING_DIM, EMBEDDING_QUANTIZED } from "./embedding-config.js";
 import { EmbeddingCache, isEmbeddingCacheEnabled } from "./embedding-cache.js";
+
+// Modo offline opt-in (entornos sandbox/CI donde huggingface.co responde 403 y la
+// revalidación remota de transformers.js cuelga). Con LACOCO_EMBEDDINGS_OFFLINE=1 se
+// deshabilita la carga remota: el modelo DEBE existir en env.localModelPath. No altera
+// el comportamiento por defecto (online) cuando la variable no está.
+if (process.env.LACOCO_EMBEDDINGS_OFFLINE === "1") {
+  env.allowRemoteModels = false;
+}
 
 // Re-exportado por compatibilidad con importadores actuales. La fuente de verdad
 // es embedding-config.

@@ -27,9 +27,21 @@ export type MetricStatus =
   | "computed"
   | "excluded_from_gold_metrics"
   | "invalid_gold"
+  | "gold_not_in_graph"
+  | "index_unavailable"
   | "not_applicable"
   | "failed_execution"
   | "missing_timing";
+
+/**
+ * Veredicto de alcanzabilidad del gold edit-site en el grafo indexado, resuelto
+ * por el caller (`compute-retrieval-metrics.ts`) abriendo `tensor.sqlite`. Si el
+ * gold no está en el grafo (o el índice está vacío/ausente), `EditSiteHit` es
+ * estructuralmente imposible: sus métricas de gold se excluyen del agregado en
+ * vez de contarse como ceros silenciosos. Por defecto `reachable` para no
+ * romper callers/tests que no pasan el veredicto.
+ */
+export type GoldReachability = "reachable" | "gold_not_in_graph" | "index_unavailable";
 
 export type EvidenceStratum = "edit_site" | "test" | "ref" | "definition";
 
@@ -362,6 +374,7 @@ export function computeExecutionMetrics(
   gold: GoldInput,
   primaryCutoff = DEFAULT_PRIMARY_CUTOFF,
   sweepCutoffs: number[] = DEFAULT_SWEEP_CUTOFFS,
+  reachability: GoldReachability = "reachable",
 ): ExecutionMetricResult {
   const base = {
     run_id: record.runId,
@@ -417,6 +430,26 @@ export function computeExecutionMetrics(
         MRR: invalid,
         EditSiteMRR: invalid,
         UsefulContextCoverage: invalid,
+        ExternalNoiseRate: externalNoiseRateAtK(record.rankedNodes, primaryCutoff),
+        Latency: latency,
+      },
+    };
+  }
+
+  // Gate de alcanzabilidad: el gold edit-site existe en el manifest pero no en el
+  // grafo indexado (o el índice está vacío/ausente) → el hit es imposible. Se
+  // excluyen las métricas dependientes de gold; ExternalNoiseRate/Latency (que no
+  // dependen del gold) se mantienen.
+  if (reachability !== "reachable") {
+    const excluded = unavailable(reachability);
+    return {
+      ...base,
+      metrics: {
+        EditSiteHit: excluded,
+        PatchEvidenceHit: excluded,
+        MRR: excluded,
+        EditSiteMRR: excluded,
+        UsefulContextCoverage: excluded,
         ExternalNoiseRate: externalNoiseRateAtK(record.rankedNodes, primaryCutoff),
         Latency: latency,
       },

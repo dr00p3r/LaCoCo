@@ -16,6 +16,7 @@
     "eval:import:swe-polybench": "node --import tsx eval/scripts/import-swe-polybench.ts",
     "eval:import:multi-swe-bench": "node --import tsx eval/scripts/import-multi-swe-bench.ts",
     "eval:enrich:gold-symbols": "node --import tsx eval/scripts/enrich-gold-symbols.ts",
+    "eval:reconcile:gold-symbols": "node --import tsx eval/scripts/reconcile-gold-symbols.ts",
     "eval:build:bench10-splits": "node --import tsx eval/scripts/build-bench10-splits.ts",
     "eval:prepare": "node --import tsx eval/scripts/prepare-repos.ts",
     "eval:index": "node --import tsx eval/scripts/index-repos.ts",

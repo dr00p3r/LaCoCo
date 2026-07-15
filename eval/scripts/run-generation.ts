@@ -1086,6 +1086,12 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
   let spentUsd = existingRecords.reduce((total, record) => total + (record.cost_usd ?? 0), 0);
   const failures: string[] = [];
   let stop = false;
+  // Circuit breaker de telemetría de coste: una celda sin coste reportado NO aborta la
+  // corrida (típico en timeout/error, o proveedores que no reportan coste). Solo si muchas
+  // celdas que COMPLETAN bien seguidas no reportan coste asumimos telemetría rota y paramos
+  // (evita gasto ilimitado sin medición bajo --max-budget-usd).
+  const NULL_COST_LIMIT = 8;
+  let consecutiveNullCost = 0;
   if (options.resume) {
     console.log(`Resume: ${completedCells.size} completed cells, reported spend $${spentUsd.toFixed(6)}`);
   }
@@ -1279,10 +1285,21 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
           : { cost_usd: null, tokens: null, tool_calls: null };
         const costUsd = telemetry.cost_usd;
         if (options.maxBudgetUsd !== undefined && costUsd === null) {
-          failures.push(`${cellId}: no provider-reported cost was found; budget enforcement cannot continue safely`);
-          stop = true;
+          // Sin coste reportado: NO abortamos la corrida entera; avisamos y omitimos el
+          // conteo de presupuesto de ESTA celda (en timeout/error el coste null es esperado).
+          console.warn(`⚠ ${cellId}: sin coste reportado; se omite el conteo de presupuesto de esta celda`);
+          if (!agentTimedOut && agentExitCode === 0) {
+            consecutiveNullCost += 1;
+            if (consecutiveNullCost >= NULL_COST_LIMIT) {
+              failures.push(`${cellId}: ${consecutiveNullCost} celdas exitosas seguidas sin coste reportado; telemetría de presupuesto rota, parando`);
+              stop = true;
+            }
+          }
         }
-        if (costUsd !== null) spentUsd += costUsd;
+        if (costUsd !== null) {
+          spentUsd += costUsd;
+          consecutiveNullCost = 0;
+        }
 
         const diff = await captureWorkingTreeDiff({ repoPath: locked.repoPath, timeoutMs: 60_000 });
         const patchApplied = diff.length > 0;

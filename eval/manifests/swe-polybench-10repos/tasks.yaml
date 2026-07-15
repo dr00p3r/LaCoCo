@@ -2384,10 +2384,10 @@ tasks:
           - packages/material-ui/src/Select/SelectInput.js
           - packages/material-ui/src/TablePagination/TablePagination.js
         edited_symbols:
-          - file: docs/src/pages/components/selects/SimpleSelect.js
+          - file: docs/src/pages/components/selects/SimpleSelect.tsx
             symbol: SimpleSelect
             kind: function
-          - file: docs/src/pages/components/selects/MultipleSelect.js
+          - file: docs/src/pages/components/selects/MultipleSelect.tsx
             symbol: MultipleSelect
             kind: function
         touched_tests:
@@ -2512,10 +2512,10 @@ tasks:
           - packages/material-ui-lab/src/LoadingButton/LoadingButton.d.ts
           - packages/material-ui-lab/src/LoadingButton/LoadingButton.js
         edited_symbols:
-          - file: docs/src/pages/components/buttons/LoadingButtonsTransition.js
+          - file: docs/src/pages/components/buttons/LoadingButtonsTransition.tsx
             symbol: LoadingButtonsTransition
             kind: function
-          - file: docs/src/pages/components/buttons/LoadingButtons.js
+          - file: docs/src/pages/components/buttons/LoadingButtons.tsx
             symbol: LoadingButtons
             kind: function
         touched_tests:
@@ -3404,10 +3404,10 @@ tasks:
           - packages/mui-material/src/FormControlLabel/FormControlLabel.js
           - packages/mui-material/src/FormControlLabel/formControlLabelClasses.ts
         edited_symbols:
-          - file: docs/data/material/components/switches/SwitchLabels.js
+          - file: docs/data/material/components/switches/SwitchLabels.tsx
             symbol: SwitchLabels
             kind: function
-          - file: docs/data/material/components/checkboxes/CheckboxLabels.js
+          - file: docs/data/material/components/checkboxes/CheckboxLabels.tsx
             symbol: CheckboxLabels
             kind: function
         touched_tests:
@@ -13113,13 +13113,16 @@ tasks:
         edited_files:
           - docs/providers/aws/events/apigateway.md
           - lib/plugins/aws/package/compile/events/apiGateway/lib/method/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: docs/providers/aws/events/apigateway.md
+            symbol: using
+            kind: function
         touched_tests:
           - lib/plugins/aws/package/compile/events/apiGateway/lib/method/index.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -18581,13 +18584,16 @@ tasks:
         source: patch
         edited_files:
           - src/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/index.js
+            symbol: wrapper
+            kind: variable
         touched_tests:
           - test/timezone.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -18727,13 +18733,16 @@ tasks:
         source: patch
         edited_files:
           - src/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/index.js
+            symbol: wrapper
+            kind: variable
         touched_tests:
           - test/timezone.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -18806,13 +18815,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/duration/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/duration/index.js
+            symbol: Duration.toISOString
+            kind: method
         touched_tests:
           - test/plugin/duration.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -18870,13 +18882,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/duration/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/duration/index.js
+            symbol: Duration.get
+            kind: method
         touched_tests:
           - test/plugin/duration.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -18944,13 +18959,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/duration/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/duration/index.js
+            symbol: Duration.toISOString
+            kind: method
         touched_tests:
           - test/plugin/duration.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19023,13 +19041,16 @@ tasks:
         source: patch
         edited_files:
           - src/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/index.js
+            symbol: Dayjs.format
+            kind: method
         touched_tests:
           - test/display.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19156,7 +19177,16 @@ tasks:
           - src/locale/ar-ly.js
           - src/locale/mr.js
           - src/locale/sl.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/ar-ly.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/mr.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/sl.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/ar-ly.test.js
           - test/locale/lv.test.js
@@ -19165,7 +19195,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19240,7 +19270,28 @@ tasks:
           - src/locale/ar-ma.js
           - src/locale/ar-sa.js
           - src/locale/ar-tn.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/ar-dz.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-iq.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-kw.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-ly.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-ma.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-sa.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/ar-tn.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/ar-dz.test.js
           - test/locale/ar-iq.test.js
@@ -19252,7 +19303,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19310,13 +19361,16 @@ tasks:
         source: patch
         edited_files:
           - src/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/index.js
+            symbol: Dayjs.format
+            kind: method
         touched_tests:
           - test/display.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19419,13 +19473,16 @@ tasks:
         source: patch
         edited_files:
           - src/locale/ku.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/ku.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/ku.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19489,13 +19546,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/duration/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/duration/index.js
+            symbol: Duration
+            kind: class
         touched_tests:
           - test/plugin/duration.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19553,13 +19613,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/customParseFormat/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/customParseFormat/index.js
+            symbol: parseFormattedInput
+            kind: variable
         touched_tests:
           - test/plugin/customParseFormat.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19608,13 +19671,16 @@ tasks:
         source: patch
         edited_files:
           - src/locale/bg.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/bg.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/bg.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19682,13 +19748,16 @@ tasks:
         source: patch
         edited_files:
           - src/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/index.js
+            symbol: Dayjs.format
+            kind: method
         touched_tests:
           - test/plugin/updateLocale.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19749,13 +19818,25 @@ tasks:
           - src/locale/es-pr.js
           - src/locale/es-us.js
           - src/locale/es.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/es-do.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/es-pr.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/es-us.js
+            symbol: locale
+            kind: variable
+          - file: src/locale/es.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19813,13 +19894,16 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/customParseFormat/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/customParseFormat/index.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/plugin/customParseFormat.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -19941,13 +20025,16 @@ tasks:
         source: patch
         edited_files:
           - src/constant.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/constant.js
+            symbol: REGEX_PARSE
+            kind: variable
         touched_tests:
           - test/parse.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20065,13 +20152,16 @@ tasks:
         source: patch
         edited_files:
           - src/constant.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/constant.js
+            symbol: REGEX_PARSE
+            kind: variable
         touched_tests:
           - test/parse.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20129,13 +20219,19 @@ tasks:
         source: patch
         edited_files:
           - src/plugin/customParseFormat/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/customParseFormat/index.js
+            symbol: matchOffset
+            kind: variable
+          - file: src/plugin/customParseFormat/index.js
+            symbol: offsetFromString
+            kind: function
         touched_tests:
           - test/plugin/customParseFormat.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20277,13 +20373,25 @@ tasks:
           - src/constant.js
           - src/plugin/duration/index.js
           - types/plugin/duration.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: src/constant.js
+            symbol: REGEX_FORMAT
+            kind: variable
+          - file: src/plugin/duration/index.js
+            symbol: Duration.toJSON
+            kind: method
+          - file: src/plugin/duration/index.js
+            symbol: Duration.as
+            kind: method
+          - file: types/plugin/duration.d.ts
+            symbol: Duration
+            kind: interface
         touched_tests:
           - test/plugin/duration.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20407,13 +20515,22 @@ tasks:
         edited_files:
           - src/plugin/timezone/index.js
           - types/plugin/timezone.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: src/plugin/timezone/index.js
+            symbol: typeToPos
+            kind: variable
+          - file: src/plugin/timezone/index.js
+            symbol: ms
+            kind: variable
+          - file: types/plugin/timezone.d.ts
+            symbol: Dayjs
+            kind: interface
         touched_tests:
           - test/plugin/timezone.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20473,13 +20590,16 @@ tasks:
         edited_files:
           - src/plugin/timezone/index.js
           - types/plugin/timezone.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: types/plugin/timezone.d.ts
+            symbol: DayjsTimezone
+            kind: interface
         touched_tests:
           - test/plugin/timezone.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20537,13 +20657,16 @@ tasks:
         source: patch
         edited_files:
           - src/locale/hu.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/hu.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/hu.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20605,13 +20728,16 @@ tasks:
           - build/index.js
           - src/locale/bi.js
           - src/locale/en.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/locale/bi.js
+            symbol: locale
+            kind: variable
         touched_tests:
           - test/locale/keys.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20669,13 +20795,16 @@ tasks:
         source: patch
         edited_files:
           - src/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/utils.js
+            symbol: monthDiff
+            kind: variable
         touched_tests:
           - test/plugin/badMutable.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20863,7 +20992,85 @@ tasks:
           - src/fetchers/stats-fetcher.js
           - src/fetchers/top-languages-fetcher.js
           - wrangler.toml
-        edited_symbols: []
+        edited_symbols:
+          - file: api/status/pat-info.js
+            symbol: RATE_LIMIT_SECONDS
+            kind: variable
+          - file: api/status/pat-info.js
+            symbol: uptimeFetcher
+            kind: variable
+          - file: api/status/pat-info.js
+            symbol: getAllPATs
+            kind: variable
+          - file: api/status/pat-info.js
+            symbol: getPATInfo
+            kind: variable
+          - file: api/status/up.js
+            symbol: uptimeFetcher
+            kind: variable
+          - file: readme.md
+            symbol: the
+            kind: variable
+          - file: src/cards/gist-card.js
+            symbol: require
+            kind: variable
+          - file: src/cards/gist-card.js
+            symbol: languageColors
+            kind: variable
+          - file: src/cards/wakatime-card.js
+            symbol: require
+            kind: variable
+          - file: src/cards/wakatime-card.js
+            symbol: languageColors
+            kind: variable
+          - file: src/common/Card.js
+            symbol: Card
+            kind: class
+          - file: src/common/retryer.js
+            symbol: PATs
+            kind: variable
+          - file: src/common/retryer.js
+            symbol: RETRIES
+            kind: variable
+          - file: src/common/retryer.js
+            symbol: retryer
+            kind: variable
+          - file: src/common/utils.js
+            symbol: TRY_AGAIN_LATER
+            kind: variable
+          - file: src/common/utils.js
+            symbol: request
+            kind: variable
+          - file: src/fetchers/gist-fetcher.js
+            symbol: fetcher
+            kind: variable
+          - file: src/fetchers/gist-fetcher.js
+            symbol: fetchGist
+            kind: variable
+          - file: src/fetchers/repo-fetcher.js
+            symbol: fetcher
+            kind: variable
+          - file: src/fetchers/repo-fetcher.js
+            symbol: fetchRepo
+            kind: variable
+          - file: src/fetchers/stats-fetcher.js
+            symbol: fetcher
+            kind: variable
+          - file: src/fetchers/stats-fetcher.js
+            symbol: statsFetcher
+            kind: variable
+          - file: src/fetchers/stats-fetcher.js
+            symbol: totalCommitsFetcher
+            kind: variable
+          - file: src/fetchers/stats-fetcher.js
+            symbol: fetchStats
+            kind: variable
+          - file: src/fetchers/top-languages-fetcher.js
+            symbol: fetcher
+            kind: variable
+          - file: src/fetchers/top-languages-fetcher.js
+            symbol: fetchTopLanguages
+            kind: variable
         touched_tests:
           - tests/fetchGist.test.js
           - tests/fetchRepo.test.js
@@ -20873,7 +21080,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -20929,13 +21136,19 @@ tasks:
           - readme.md
           - src/cards/stats-card.js
           - src/cards/types.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/stats-card.js
+            symbol: renderStatsCard
+            kind: variable
+          - file: src/cards/types.d.ts
+            symbol: StatCardOptions
+            kind: type
         touched_tests:
           - tests/renderStatsCard.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21026,13 +21239,25 @@ tasks:
           - readme.md
           - src/cards/top-languages-card.js
           - src/cards/types.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/top-languages-card.js
+            symbol: useLanguages
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: renderTopLanguages
+            kind: variable
+          - file: src/cards/types.d.ts
+            symbol: TopLangOptions
+            kind: type
+          - file: src/cards/types.d.ts
+            symbol: WakaTimeOptions
+            kind: type
         touched_tests:
           - tests/renderTopLanguages.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21093,14 +21318,17 @@ tasks:
         source: patch
         edited_files:
           - src/cards/wakatime-card.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/wakatime-card.js
+            symbol: renderWakatimeCard
+            kind: variable
         touched_tests:
           - tests/__snapshots__/renderWakatimeCard.test.js.snap
           - tests/renderWakatimeCard.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21192,13 +21420,28 @@ tasks:
           - readme.md
           - src/cards/top-languages-card.js
           - src/cards/types.d.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/top-languages-card.js
+            symbol: calculateCompactLayoutHeight
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: calculateNormalLayoutHeight
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: useLanguages
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: renderTopLanguages
+            kind: variable
+          - file: src/cards/types.d.ts
+            symbol: TopLangOptions
+            kind: type
         touched_tests:
           - tests/renderTopLanguages.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21304,7 +21547,19 @@ tasks:
           - src/cards/stats-card.js
           - src/common/utils.js
           - src/getStyles.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/stats-card.js
+            symbol: renderStatsCard
+            kind: variable
+          - file: src/common/utils.js
+            symbol: fallbackColor
+            kind: function
+          - file: src/common/utils.js
+            symbol: getCardColors
+            kind: function
+          - file: src/getStyles.js
+            symbol: getStyles
+            kind: variable
         touched_tests:
           - tests/__snapshots__/renderWakatimeCard.test.js.snap
           - tests/api.test.js
@@ -21313,7 +21568,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21376,13 +21631,28 @@ tasks:
           - src/fetchers/stats-fetcher.js
           - src/fetchers/top-languages-fetcher.js
           - src/fetchers/wakatime-fetcher.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/common/utils.js
+            symbol: CustomError
+            kind: class
+          - file: src/fetchers/repo-fetcher.js
+            symbol: fetchRepo
+            kind: function
+          - file: src/fetchers/stats-fetcher.js
+            symbol: fetchStats
+            kind: function
+          - file: src/fetchers/top-languages-fetcher.js
+            symbol: fetchTopLanguages
+            kind: function
+          - file: src/fetchers/wakatime-fetcher.js
+            symbol: fetchWakatimeStats
+            kind: variable
         touched_tests:
           - tests/fetchWakatime.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21559,7 +21829,13 @@ tasks:
         edited_files:
           - src/cards/repo-card.js
           - src/common/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/repo-card.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/common/utils.js
+            symbol: wrapTextMultiline
+            kind: function
         touched_tests:
           - .github/workflows/test.yml
           - tests/renderRepoCard.test.js
@@ -21567,7 +21843,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21743,14 +22019,20 @@ tasks:
         edited_files:
           - src/cards/repo-card.js
           - src/common/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/repo-card.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/common/utils.js
+            symbol: wrapTextMultiline
+            kind: function
         touched_tests:
           - tests/renderRepoCard.test.js
           - tests/utils.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21813,7 +22095,34 @@ tasks:
           - src/cards/repo-card.js
           - src/cards/top-languages-card.js
           - src/common/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/repo-card.js
+            symbol: I18n
+            kind: variable
+          - file: src/cards/repo-card.js
+            symbol: Card
+            kind: variable
+          - file: src/cards/repo-card.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: DEFAULT_CARD_WIDTH
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: createCompactLangNode
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: createLanguageTextNode
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: renderCompactLayout
+            kind: variable
+          - file: src/common/utils.js
+            symbol: flexLayout
+            kind: function
+          - file: src/common/utils.js
+            symbol: lowercaseTrim
+            kind: variable
         touched_tests:
           - tests/flexLayout.test.js
           - tests/renderRepoCard.test.js
@@ -21821,7 +22130,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -21935,13 +22244,19 @@ tasks:
         source: patch
         edited_files:
           - src/cards/wakatime-card.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/wakatime-card.js
+            symbol: createTextNode
+            kind: variable
+          - file: src/cards/wakatime-card.js
+            symbol: renderWakatimeCard
+            kind: variable
         touched_tests:
           - tests/__snapshots__/renderWakatimeCard.test.js.snap
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22002,13 +22317,19 @@ tasks:
           - readme.md
           - src/cards/stats-card.js
           - src/common/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/stats-card.js
+            symbol: renderStatsCard
+            kind: variable
+          - file: src/common/utils.js
+            symbol: CustomError
+            kind: class
         touched_tests:
           - tests/renderStatsCard.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22078,13 +22399,28 @@ tasks:
           - src/cards/top-languages-card.js
           - src/cards/wakatime-card.js
           - src/common/Card.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/cards/repo-card.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/cards/stats-card.js
+            symbol: renderStatsCard
+            kind: variable
+          - file: src/cards/top-languages-card.js
+            symbol: renderTopLanguages
+            kind: variable
+          - file: src/cards/wakatime-card.js
+            symbol: renderWakatimeCard
+            kind: variable
+          - file: src/common/Card.js
+            symbol: Card
+            kind: class
         touched_tests:
           - tests/card.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22195,14 +22531,17 @@ tasks:
           - api/index.js
           - readme.md
           - src/fetchStats.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/fetchStats.js
+            symbol: fetchStats
+            kind: function
         touched_tests:
           - tests/api.test.js
           - tests/fetchStats.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22264,13 +22603,22 @@ tasks:
           - api/pin.js
           - src/renderRepoCard.js
           - src/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/renderRepoCard.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/utils.js
+            symbol: fallbackColor
+            kind: function
+          - file: src/utils.js
+            symbol: getCardColors
+            kind: function
         touched_tests:
           - tests/api.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22338,7 +22686,19 @@ tasks:
           - src/renderStatsCard.js
           - src/utils.js
           - themes/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/renderRepoCard.js
+            symbol: renderRepoCard
+            kind: variable
+          - file: src/renderStatsCard.js
+            symbol: renderStatsCard
+            kind: variable
+          - file: src/utils.js
+            symbol: axios
+            kind: variable
+          - file: src/utils.js
+            symbol: renderError
+            kind: variable
         touched_tests:
           - tests/renderRepoCard.test.js
           - tests/renderStatsCard.test.js
@@ -22346,7 +22706,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22405,13 +22765,16 @@ tasks:
         edited_files:
           - src/fetchRepo.js
           - src/renderRepoCard.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/renderRepoCard.js
+            symbol: renderRepoCard
+            kind: variable
         touched_tests:
           - tests/renderRepoCard.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22472,13 +22835,16 @@ tasks:
           - api/index.js
           - readme.md
           - src/renderStatsCard.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/renderStatsCard.js
+            symbol: renderStatsCard
+            kind: variable
         touched_tests:
           - tests/renderStatsCard.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22587,14 +22953,23 @@ tasks:
           - src/fetchStats.js
           - src/retryer.js
           - src/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: src/fetchRepo.js
+            symbol: fetchRepo
+            kind: function
+          - file: src/fetchStats.js
+            symbol: fetchStats
+            kind: function
+          - file: src/utils.js
+            symbol: request
+            kind: function
         touched_tests:
           - tests/fetchStats.test.js
           - tests/retryer.test.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22660,13 +23035,16 @@ tasks:
         edited_files:
           - lib/adapters/adapters.js
           - lib/defaults/index.js
-        edited_symbols: []
+        edited_symbols:
+          - file: lib/defaults/index.js
+            symbol: defaults
+            kind: variable
         touched_tests:
           - test/unit/adapters/adapters.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22730,13 +23108,16 @@ tasks:
         source: patch
         edited_files:
           - lib/utils.js
-        edited_symbols: []
+        edited_symbols:
+          - file: lib/utils.js
+            symbol: isFormData
+            kind: variable
         touched_tests:
           - test/unit/utils/utils.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22836,6 +23217,8 @@ tasks:
 
 
 
+
+
          
         Suggested release: `1.3.0-alpha.1`
       intent: debug
@@ -22870,7 +23253,82 @@ tasks:
           - lib/helpers/toURLEncodedForm.js
           - lib/utils.js
           - package.json
-        edited_symbols: []
+        edited_symbols:
+          - file: index.d.cts
+            symbol: AxiosRequestConfig
+            kind: interface
+          - file: index.d.cts
+            symbol: AxiosStatic
+            kind: interface
+          - file: index.d.ts
+            symbol: AxiosRequestConfig
+            kind: interface
+          - file: index.d.ts
+            symbol: toFormData
+            kind: function
+          - file: lib/core/Axios.js
+            symbol: Axios.request
+            kind: method
+          - file: lib/defaults/index.js
+            symbol: defaults
+            kind: variable
+          - file: lib/helpers/AxiosURLSearchParams.js
+            symbol: encode
+            kind: function
+          - file: lib/helpers/AxiosURLSearchParams.js
+            symbol: AxiosURLSearchParams
+            kind: function
+          - file: lib/helpers/AxiosURLSearchParams.js
+            symbol: prototype
+            kind: variable
+          - file: lib/helpers/buildURL.js
+            symbol: encode
+            kind: function
+          - file: lib/helpers/buildURL.js
+            symbol: buildURL
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: isVisitable
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: removeBrackets
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: renderKey
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: isFlatArray
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: predicates
+            kind: variable
+          - file: lib/helpers/toFormData.js
+            symbol: toFormData
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: convertValue
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: defaultVisitor
+            kind: function
+          - file: lib/helpers/toFormData.js
+            symbol: build
+            kind: function
+          - file: lib/helpers/toURLEncodedForm.js
+            symbol: toURLEncodedForm
+            kind: function
+          - file: lib/utils.js
+            symbol: kindOf
+            kind: variable
+          - file: lib/utils.js
+            symbol: toArray
+            kind: variable
+          - file: lib/utils.js
+            symbol: isSpecCompliantForm
+            kind: function
+          - file: lib/utils.js
+            symbol: toJSONObject
+            kind: variable
         touched_tests:
           - test/module/typings/cjs/index.ts
           - test/module/typings/esm/index.ts
@@ -22881,7 +23339,7 @@ tasks:
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -22946,14 +23404,23 @@ tasks:
         edited_files:
           - index.d.ts
           - lib/core/AxiosHeaders.js
-        edited_symbols: []
+        edited_symbols:
+          - file: index.d.ts
+            symbol: AxiosHeaders.toJSON
+            kind: method
+          - file: lib/core/AxiosHeaders.js
+            symbol: normalizeValue
+            kind: function
+          - file: lib/core/AxiosHeaders.js
+            symbol: setHeader
+            kind: function
         touched_tests:
           - test/unit/core/AxiosHeaders.js
           - test/unit/regression/bugs.js
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
@@ -23374,13 +23841,16 @@ tasks:
         source: patch
         edited_files:
           - packages/insomnia/src/utils/importers/importers/openapi-3.ts
-        edited_symbols: []
+        edited_symbols:
+          - file: packages/insomnia/src/utils/importers/importers/openapi-3.ts
+            symbol: importRequest
+            kind: variable
         touched_tests:
           - packages/insomnia/src/utils/importers/importers/__snapshots__/index.test.ts.snap
         introduced_refs: []
         resolved_definitions: []
         resolution:
-          fell_back_to_file_level: true
+          fell_back_to_file_level: false
           unresolved_refs: []
       primary_anchor: null
       relevant_nodes: []
