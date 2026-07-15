@@ -29,9 +29,6 @@ importers:
       gpt-tokenizer:
         specifier: ^3.4.0
         version: 3.4.0
-      tensor-extractor:
-        specifier: 'link:'
-        version: 'link:'
       ts-morph:
         specifier: ^27.0.2
         version: 27.0.2

@@ -1,12 +1,22 @@
 {
-  "name": "tensor-extractor",
+  "name": "@joru/lacoco",
   "version": "1.0.0",
-  "description": "Herramienta CLI de análisis estático de código TypeScript con grafos en SQLite",
+  "description": "Recuperador local de contexto para grandes bases de código TypeScript/JavaScript",
   "type": "module",
   "main": "dist/cli/index.js",
   "bin": {
     "lacoco": "./dist/cli/index.js"
   },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "docs/cli.md",
+    "docs/mcp.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "ISC",
   "scripts": {
     "dev": "tsx src/cli/index.ts",
     "build": "tsc --project tsconfig.json && node scripts/copy-migrations.mjs",
@@ -54,7 +64,6 @@
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
     "gpt-tokenizer": "^3.4.0",
-    "tensor-extractor": "link:",
     "ts-morph": "^27.0.2",
     "zod": "^4.4.3"
   },

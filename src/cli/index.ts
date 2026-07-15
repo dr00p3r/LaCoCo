@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
-import { pathToFileURL } from "node:url";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { registerIndexingCommands } from "./commands/indexing-commands.js";
 import { registerRetrievalCommands } from "./commands/retrieval-commands.js";
 import { registerStateCommands } from "./commands/state-commands.js";
@@ -49,5 +50,12 @@ if (isMainModule()) {
 
 function isMainModule(): boolean {
   const entrypoint = process.argv[1];
-  return entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href;
+  if (entrypoint === undefined) return false;
+
+  try {
+    return fs.realpathSync(entrypoint) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
+
