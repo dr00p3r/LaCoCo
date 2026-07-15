@@ -1,6 +1,6 @@
 {
   "name": "@joru/lacoco",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Recuperador local de contexto para grandes bases de código TypeScript/JavaScript",
   "type": "module",
   "main": "dist/cli/index.js",
@@ -55,7 +55,6 @@
     "graph"
   ],
   "author": "",
-  "license": "ISC",
   "dependencies": {
     "@lancedb/lancedb": "^0.27.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
