@@ -36,7 +36,7 @@ defaults:
   install:
     timeout_ms: 2400000
   build:
-    timeout_ms: 900000
+    timeout_ms: 3600000
     optional: true
   test:
     timeout_ms: 900000

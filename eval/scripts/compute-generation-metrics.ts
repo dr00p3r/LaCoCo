@@ -498,7 +498,7 @@ export function buildCellMetrics(
 }
 
 export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
-  const options = parseEvalCliOptions(argv, ["--run-id", "--manifests-dir"]);
+  const options = parseEvalCliOptions(argv, ["--run-id", "--manifests-dir", "--agent-id", "--strategy-id"]);
   const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const layout = resolveEvalLayout(manifests.run, options.runId);
   mkdirSync(layout.runDirectory, { recursive: true });
@@ -508,9 +508,24 @@ export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
 
   const retrievalPath = join(layout.runDirectory, "retrieval.jsonl");
 
-  const genRecords = existsSync(generationPath)
+  // --agent-id / --strategy-id filtran generation.jsonl a un brazo antes de agregar,
+  // porque aggregateByStrategy agrupa solo por strategy_id (mezclaría plain-vs-mcp y
+  // los 2 modelos). El strategy_id del record puede llevar sufijo de variante
+  // (`connector@baseline`) → match tolerante. Las salidas se sufijan para no pisarse.
+  const matchesFilter = (g: GenerationRecord): boolean =>
+    (options.agentId === undefined || g.agent_id === options.agentId) &&
+    (options.strategyId === undefined ||
+      g.strategy_id === options.strategyId ||
+      g.strategy_id.startsWith(`${options.strategyId}@`));
+  const genRecords = (existsSync(generationPath)
     ? readJsonl<GenerationRecord>(generationPath)
-    : [];
+    : []
+  ).filter(matchesFilter);
+  if ((options.agentId !== undefined || options.strategyId !== undefined) && genRecords.length === 0) {
+    throw new Error(
+      `no generation records match agent=${options.agentId ?? "*"} strategy=${options.strategyId ?? "*"} in ${generationPath}`,
+    );
+  }
   const hallRecords = existsSync(hallucinationPath)
     ? readJsonl<HallucinationRecord>(hallucinationPath)
     : [];
@@ -574,9 +589,13 @@ export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
     cells,
   };
 
-  const metricsPath = join(layout.runDirectory, "generation-metrics.json");
-  const csvPath = join(layout.runDirectory, "generation-summary.csv");
-  const mdPath = join(layout.runDirectory, "generation-summary.md");
+  const filterSuffix = [options.agentId, options.strategyId]
+    .filter((value): value is string => value !== undefined)
+    .map((value) => `.${value}`)
+    .join("");
+  const metricsPath = join(layout.runDirectory, `generation-metrics${filterSuffix}.json`);
+  const csvPath = join(layout.runDirectory, `generation-summary${filterSuffix}.csv`);
+  const mdPath = join(layout.runDirectory, `generation-summary${filterSuffix}.md`);
   writeFileSync(metricsPath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
   writeFileSync(csvPath, renderCsv(byStrategy), "utf8");
   writeFileSync(mdPath, renderMarkdown(layout.runId, byStrategy, byRepo), "utf8");

@@ -34,6 +34,7 @@ interface MetricsCliOptions {
   inputFile?: string;
   manifestsDir?: string;
   strict?: boolean;
+  sanitizerVariant?: string;
 }
 
 function parseOptions(argv: string[]): MetricsCliOptions {
@@ -41,6 +42,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   let runDir: string | undefined;
   let inputFile: string | undefined;
   let manifestsDir: string | undefined;
+  let sanitizerVariant: string | undefined;
   let strict = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -54,7 +56,8 @@ function parseOptions(argv: string[]): MetricsCliOptions {
       argument !== "--run-id" &&
       argument !== "--run-dir" &&
       argument !== "--input-file" &&
-      argument !== "--manifests-dir"
+      argument !== "--manifests-dir" &&
+      argument !== "--sanitizer-variant"
     ) {
       throw new Error(`unknown argument: ${String(argument)}`);
     }
@@ -65,6 +68,7 @@ function parseOptions(argv: string[]): MetricsCliOptions {
     if (argument === "--run-id") runId = value;
     else if (argument === "--run-dir") runDir = value;
     else if (argument === "--manifests-dir") manifestsDir = value;
+    else if (argument === "--sanitizer-variant") sanitizerVariant = value;
     else inputFile = value;
     index += 1;
   }
@@ -75,7 +79,10 @@ function parseOptions(argv: string[]): MetricsCliOptions {
   // --input-file (default retrieval.jsonl) permite medir sobre una variante
   // normalizada (p. ej. retrieval.normalized.jsonl) sin mutar el JSONL crudo.
   const withInput = inputFile === undefined ? base : { ...base, inputFile };
-  return manifestsDir === undefined ? withInput : { ...withInput, manifestsDir };
+  const withManifests = manifestsDir === undefined ? withInput : { ...withInput, manifestsDir };
+  // --sanitizer-variant filtra el JSONL crudo a una sola arm (deterministic/baseline/…)
+  // y escribe salidas sufijadas, para un A/B limpio cuando el split produce varias.
+  return sanitizerVariant === undefined ? withManifests : { ...withManifests, sanitizerVariant };
 }
 
 function resolveRun(
@@ -218,9 +225,12 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
     }
   }
   const inputPath = join(run.runDirectory, options.inputFile ?? "retrieval.jsonl");
-  const metricsPath = join(run.runDirectory, "retrieval-metrics.json");
-  const csvPath = join(run.runDirectory, "summary.csv");
-  const markdownPath = join(run.runDirectory, "summary.md");
+  // Con --sanitizer-variant las salidas se sufijan (retrieval-metrics.<variant>.json,
+  // summary.<variant>.{csv,md}) para no pisar las de otra variante en un A/B.
+  const variantSuffix = options.sanitizerVariant === undefined ? "" : `.${options.sanitizerVariant}`;
+  const metricsPath = join(run.runDirectory, `retrieval-metrics${variantSuffix}.json`);
+  const csvPath = join(run.runDirectory, `summary${variantSuffix}.csv`);
+  const markdownPath = join(run.runDirectory, `summary${variantSuffix}.md`);
   const taskById = new Map(manifests.tasks.tasks.map((task) => [task.id, task]));
 
   // --- Gate de alcanzabilidad del gold en el grafo indexado ------------------
@@ -297,7 +307,18 @@ export function computeRetrievalMetrics(argv = process.argv.slice(2)): void {
   };
 
   const retrievalAnalysis: RetrievalCellAnalysis[] = [];
-  const inputs = readJsonl(inputPath).map(({ line, value }) => {
+  const rawEntries = readJsonl(inputPath).filter(({ value }) =>
+    options.sanitizerVariant === undefined ||
+    (typeof value === "object" &&
+      value !== null &&
+      (value as Record<string, unknown>).sanitizer_variant === options.sanitizerVariant),
+  );
+  if (options.sanitizerVariant !== undefined && rawEntries.length === 0) {
+    throw new Error(
+      `no retrieval records with sanitizer_variant=${options.sanitizerVariant} in ${inputPath}`,
+    );
+  }
+  const inputs = rawEntries.map(({ line, value }) => {
     const record = parseRetrievalInput(value, `${inputPath}:${line}`);
     if (record.schemaVersion !== expectedSchemaVersion) {
       throw new Error(

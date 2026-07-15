@@ -334,8 +334,16 @@ async function freezeSlmQuery(
     } else {
       sanitizer = await intermediary.sanitize(task.prompt);
     }
+    // El benchmark de retrieval mide sobre tareas que SON de retrieval por
+    // construcción; el router del SLM (débil en modelos pequeños) a veces las
+    // enruta a LLM_DIRECT. En vez de descartar la tarea, forzamos RAG conservando
+    // la query reescrita del SLM (su aporte real). El resultado forzado se cachea
+    // abajo, así que no se reinvoca al SLM en corridas siguientes.
     if (sanitizer.route !== "RAG") {
-      throw new Error(`task ${task.id}: el sanitizer congelado produjo route=${sanitizer.route}; retrieval requiere RAG`);
+      console.warn(
+        `⚠ sanitizer ${task.id} x ${variant}: route=${sanitizer.route} → forzado a RAG (benchmark de retrieval)`,
+      );
+      sanitizer = { ...sanitizer, route: "RAG" };
     }
 
     const sanitizerDurationMs = Math.round(performance.now() - startedAt);
