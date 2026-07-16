@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { computeRetrievalMetrics, detectAllZeroRetrieval } from "./compute-retrieval-metrics.js";
 import { resolveEvalLayout } from "./lib/layout.js";
@@ -29,6 +30,29 @@ function writeLock(runDirectory: string, runId: string, repoId: string, repoPath
     ],
   };
   writeFileSync(join(runDirectory, basename(layout.lockFile)), `${JSON.stringify(lock)}\n`, "utf8");
+}
+
+// Escribe un grafo stub en `<runDir>/indexes/<repoId>/tensor.sqlite` con los nodos
+// indicados. `findGraphDatabase` prioriza el índice del run dir sobre el compartido
+// (`paths.indexes`), así que esto HERMETIZA el gate de validez: sin él, el gate
+// resolvería contra cualquier índice real de `<repoId>` que exista en disco
+// (p. ej. `eval/workdir/indexes/zod/`), cuyos paths no coinciden con el temp repoPath
+// del test → `gold_not_in_graph` en vez del `computed` que la regresión clava.
+function writeStubGraph(
+  runDirectory: string,
+  repoId: string,
+  nodes: readonly { id: string; filepath: string }[],
+): void {
+  const graphPath = join(runDirectory, "indexes", repoId, "tensor.sqlite");
+  mkdirSync(dirname(graphPath), { recursive: true });
+  const database = new Database(graphPath);
+  try {
+    database.exec("CREATE TABLE nodes (id TEXT PRIMARY KEY, filepath TEXT)");
+    const insert = database.prepare("INSERT INTO nodes (id, filepath) VALUES (?, ?)");
+    for (const node of nodes) insert.run(node.id, node.filepath);
+  } finally {
+    database.close();
+  }
 }
 
 describe("computeRetrievalMetrics", () => {
@@ -82,6 +106,10 @@ describe("computeRetrievalMetrics", () => {
     const relPath = "packages/zod/src/v3/types.ts";
     const symbol = "ZodString";
     const absoluteNodeId = `${join(repoPath, relPath)}#${symbol}`;
+    // El gate de validez exige que el gold sea alcanzable en el grafo. Sembramos un
+    // grafo stub hermético con el edit-site symbol para que el verdict sea `reachable`
+    // y EditSiteHit llegue a computarse (si no, `gold_not_in_graph` corta antes).
+    writeStubGraph(runDirectory, "zod", [{ id: absoluteNodeId, filepath: join(repoPath, relPath) }]);
     const record = {
       schema_version: 1,
       run_id: runId,
