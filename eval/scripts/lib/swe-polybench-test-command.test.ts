@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   detectBespokeRunner,
+  f2pGrepAlternatives,
+  jestNeedsEsm,
   parseF2pTestId,
   parseTestCommand,
   resolveConcreteRunner,
@@ -221,6 +223,33 @@ describe("synthesizeF2pTestRun", () => {
     expect(synth.testInvocation).toBeNull();
     expect(synth.reason).toBe("no F2P titles");
   });
+
+  it("mocha serverless: título con '()' → grep preserva parens y tolera espacios (matchea fullTitle real)", () => {
+    const parsed = { ...parseTestCommand(CMD.mochaMui), testTargets: [] as string[] };
+    const title = "Variables #getValueStrToBool() regex for empty input";
+    const synth = synthesizeF2pTestRun(parsed, [title], { concreteRunner: "mocha", mochaOpts: null });
+    // Debe contener el título ORIGINAL con `()` escapados y espacios tolerantes
+    // (escapeRegex NO escapa espacios ni `#`, solo metacaracteres regex).
+    expect(synth.testInvocation!).toContain("Variables\\s+#getValueStrToBool\\(\\)\\s+regex\\s+for\\s+empty\\s+input");
+    // NO debe degradar a `#getValueStrToBool ` (sin parens) como ÚNICA alternativa.
+    expect(synth.grepPattern).toContain("\\(\\)");
+  });
+});
+
+describe("f2pGrepAlternatives (fix grep serverless/mui)", () => {
+  it("fixture hifenado (svelte) → SOLO el slug, byte-idéntico (cero regresión)", () => {
+    expect(f2pGrepAlternatives("runtime each-block-dynamic-else-static (with hydration)")).toEqual([
+      "each-block-dynamic-else-static",
+    ]);
+  });
+
+  it("título con '()' (serverless) → aditivo: slug histórico + título original tolerante", () => {
+    const alts = f2pGrepAlternatives("Variables #getValueStrToBool() regex for empty input");
+    // El slug histórico (con `()` borrado por f2pFixtureSlug) sigue presente (no regresión)…
+    expect(alts.some((a) => a.includes("getValueStrToBool") && !a.includes("\\(\\)"))).toBe(true);
+    // …y se añade el título original con parens + espacios tolerantes.
+    expect(alts.some((a) => a.includes("\\(\\)") && a.includes("\\s+"))).toBe(true);
+  });
 });
 
 describe("parseTestCommand — default npm test (Multi-SWE-bench)", () => {
@@ -273,6 +302,31 @@ describe("synthesizeFileScopedTestRun (Multi-SWE-bench, sin títulos F2P)", () =
   it("runner no soportado (vitest/null) → null con motivo", () => {
     expect(synthesizeFileScopedTestRun("vitest", ["a.test.js"]).testInvocation).toBeNull();
     expect(synthesizeFileScopedTestRun(null, ["a.test.js"]).testInvocation).toBeNull();
+  });
+
+  it("jest ESM (esm:true) → node --experimental-vm-modules + entrada real (no el shim)", () => {
+    const synth = synthesizeFileScopedTestRun("jest", ["tests/renderStatsCard.test.js"], { esm: true });
+    expect(synth.testInvocation).toBe(
+      "node --experimental-vm-modules node_modules/jest/bin/jest.js 'tests/renderStatsCard.test.js' --ci --runInBand --colors=false",
+    );
+    expect(synth.testInvocation).not.toContain(".bin/jest");
+  });
+
+  it("jest no-ESM (esm ausente) queda byte-idéntico al shim", () => {
+    expect(synthesizeFileScopedTestRun("jest", ["test/x.test.js"]).testInvocation).toBe(
+      "./node_modules/.bin/jest 'test/x.test.js' --ci --runInBand --colors=false",
+    );
+  });
+});
+
+describe("jestNeedsEsm", () => {
+  it("detecta --experimental-vm-modules en el cuerpo de scripts.test (github-readme-stats)", () => {
+    expect(jestNeedsEsm("node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage")).toBe(true);
+  });
+
+  it("false para jest CJS y para scriptBody null", () => {
+    expect(jestNeedsEsm("jest --coverage")).toBe(false);
+    expect(jestNeedsEsm(null)).toBe(false);
   });
 });
 

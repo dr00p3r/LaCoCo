@@ -28,6 +28,7 @@ import { loadManifests } from "./lib/load-manifests.js";
 import { filesInDiff } from "./lib/patch-evidence-gold.js";
 import {
   detectBespokeRunner,
+  jestNeedsEsm,
   parseTestCommand,
   resolveConcreteRunner,
   synthesizeF2pTestRun,
@@ -623,7 +624,7 @@ async function runTargetTests(
   }
 }
 
-interface SwePolyTestOutcome {
+export interface SwePolyTestOutcome {
   /** Exit del runner, o `null` si la MEDICIÓN es inválida (no un fallo del agente). */
   testExitCode: number | null;
   timedOut: boolean;
@@ -640,7 +641,7 @@ interface SwePolyTestOutcome {
  * `npm run test`/`yarn test` corre mocha, jest o vitest. Devuelve `null` si no
  * hay script que resolver o el `package.json` no se puede leer/parsear.
  */
-function resolveDelegatedScriptBody(repoPath: string, scriptName: string | null): string | null {
+export function resolveDelegatedScriptBody(repoPath: string, scriptName: string | null): string | null {
   if (scriptName === null) return null;
   try {
     const pkg = JSON.parse(readFileSync(join(repoPath, "package.json"), "utf8")) as {
@@ -658,7 +659,7 @@ function resolveDelegatedScriptBody(repoPath: string, scriptName: string | null)
  * (mui v5, solo registra @babel/register) → `null` (repo sin fichero de opts).
  * synthesizeF2pTestRun es pura (sin fs); esta resolución vive aquí, con repoPath.
  */
-function resolveMochaOptsPath(repoPath: string): string | null {
+export function resolveMochaOptsPath(repoPath: string): string | null {
   if (existsSync(join(repoPath, "mocha.opts"))) return "mocha.opts";
   if (existsSync(join(repoPath, "test", "mocha.opts"))) return "test/mocha.opts";
   return null;
@@ -688,8 +689,7 @@ export function legacyNodeFlags(major: number): string[] {
   return flags;
 }
 
-function legacyNodeTestEnv(): NodeJS.ProcessEnv {
-  const major = Number(process.versions.node.split(".")[0]);
+export function legacyNodeTestEnv(major = Number(process.versions.node.split(".")[0])): NodeJS.ProcessEnv {
   const flags = legacyNodeFlags(major);
   if (flags.length === 0) return {};
   const existing = process.env.NODE_OPTIONS ?? "";
@@ -713,13 +713,20 @@ function legacyNodeTestEnv(): NodeJS.ProcessEnv {
  * El `test_patch` y los artefactos de build se limpian con el `resetRepoClean`
  * que el llamador ya ejecuta al cerrar la celda.
  */
-async function runSwePolybenchTests(
+/**
+ * @param nodeOverride Opcional. Cuando se provee (p.ej. desde el re-grade), fuerza
+ *   los subprocesos de build/test a correr bajo un Node concreto: prepende
+ *   `binDir` al PATH y calcula los `legacyNodeFlags` para `major` (no para el node
+ *   ambiente). Sin esto, usa el node ambiente (comportamiento de la generación).
+ */
+export async function runSwePolybenchTests(
   repoPath: string,
   testPatchPath: string,
   testInvocation: string,
   expectedF2pCount: number,
   timeoutMs: number,
   logPath: string,
+  nodeOverride?: { binDir: string; major: number },
 ): Promise<SwePolyTestOutcome> {
   // 0. El gold de tests (test_patch) es autoritativo: el agente solo debe tocar
   //    `src/`. Si el agente escribió/editó los archivos que el test_patch va a
@@ -764,12 +771,18 @@ async function runSwePolybenchTests(
     return { testExitCode: null, timedOut: false, durationMs: 0, invalidReason: "test_patch_apply_failed", passed: 0, failed: 0 };
   }
 
+  // Env de los subprocesos build/test. Con nodeOverride: PATH con el node destino
+  // primero + flags legacy calculados para ESE node (no el ambiente). Sin él: node ambiente.
+  const testEnv: NodeJS.ProcessEnv = nodeOverride !== undefined
+    ? { ...legacyNodeTestEnv(nodeOverride.major), PATH: `${nodeOverride.binDir}:${process.env.PATH ?? ""}` }
+    : legacyNodeTestEnv();
+
   // Ejecuta un comando devolviendo el resultado incluso si sale no-cero (no lanza).
   const runCapturing = async (
     command: string,
   ): Promise<{ exitCode: number | null; timedOut: boolean; durationMs: number; stdout: string; stderr: string }> => {
     try {
-      const r = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath, env: legacyNodeTestEnv() });
+      const r = await executeCommand({ command, cwd: repoPath, timeoutMs, logPath, env: testEnv });
       return { exitCode: r.exitCode, timedOut: false, durationMs: r.durationMs, stdout: r.stdout, stderr: r.stderr };
     } catch (error) {
       if (error instanceof CommandExecutionError) {
@@ -1359,6 +1372,7 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
             : isMswe
               ? synthesizeFileScopedTestRun(concreteRunner, task.target_tests, {
                   mochaOpts: resolveMochaOptsPath(locked.repoPath),
+                  esm: jestNeedsEsm(scriptBody),
                 })
               : synthesizeF2pTestRun(parsedTestCmd, task.target_tests, {
                   concreteRunner,

@@ -329,6 +329,31 @@ export function f2pFixtureSlug(title: string): string {
   return hyphenated[0] ?? cleaned;
 }
 
+/**
+ * Alternativas `--grep` (regex mocha) para un título F2P. ADITIVO: siempre incluye
+ * el slug de {@link f2pFixtureSlug} (comportamiento histórico, cero regresión), y
+ * cuando NO hay fixture hifenado (rama fallback) añade también el **título original**
+ * con parens preservados y espacios tolerantes (`\s+`).
+ *
+ * Por qué: para repos sin token hifenado (serverless, algunos mui), el slug fallback
+ * es el título CON `(...)` borrado por `f2pFixtureSlug` → p.ej. el test_patch define
+ * `describe('#getValueStrToBool()')` pero el slug queda `#getValueStrToBool` + doble
+ * espacio, que NUNCA matchea el `fullTitle` real de mocha (`… #getValueStrToBool() …`).
+ * El dato crudo de `target_tests` SÍ trae los `()` y espacios simples, así que grepear
+ * el título original los recupera. La rama hifenada (svelte `(with hydration)`) NO se
+ * toca. Ambas formas van en la alternación → jamás matchea menos que antes.
+ */
+export function f2pGrepAlternatives(title: string): string[] {
+  const slug = f2pFixtureSlug(title);
+  const alts = new Set<string>();
+  if (slug !== "") alts.add(escapeRegex(slug));
+  if (!slug.includes("-")) {
+    const original = title.trim();
+    if (original !== "") alts.add(escapeRegex(original).replace(/\s+/g, "\\s+"));
+  }
+  return [...alts];
+}
+
 /** Comando de test local sintetizado a partir del `test_command` + los F2P. */
 export interface SynthesizedF2pRun {
   /** Invocación del runner (mocha) filtrada a los F2P, o `null` si no sintetizable. */
@@ -430,7 +455,9 @@ export function synthesizeF2pTestRun(
           : null);
 
   if (runner === "mocha") {
-    const grepPattern = fixtures.map(escapeRegex).join("|");
+    // ADITIVO: slug histórico (cero regresión) + título original para el fallback
+    // sin fixture hifenado (recupera serverless/mui donde `()` y espacios se perdían).
+    const grepPattern = [...new Set(f2pTitles.flatMap(f2pGrepAlternatives))].join("|");
     // Reporter `dot`: compacto y parseable por parseTestRunnerOutput; NO usar
     // `json`, que el volcado de código-generado-en-fallo de svelte corrompe.
     // Construido por partes para: (a) omitir --opts cuando el repo no tiene
@@ -504,6 +531,30 @@ export interface FileScopedOptions {
   readonly mochaOpts?: string | null;
   /** Ruta al binario de jest (def. `./node_modules/.bin/jest`). */
   readonly jestBin?: string;
+  /**
+   * El repo es ESM (`type:"module"`) y jest necesita `--experimental-vm-modules`.
+   * Cuando es `true`, la invocación jest se emite como
+   * `node --experimental-vm-modules node_modules/jest/bin/jest.js …` en vez del
+   * shim `./node_modules/.bin/jest`, que NO habilita el loader de módulos ESM y
+   * hace fallar los specs con `Cannot use import statement outside a module`
+   * (→ 0 tests → `zero_tests_matched`). Resolver con {@link jestNeedsEsm}.
+   */
+  readonly esm?: boolean;
+}
+
+/** Entrada real de jest (el shim `.bin/jest` re-exporta este archivo). */
+const JEST_ESM_ENTRY = "node_modules/jest/bin/jest.js";
+
+/**
+ * Decide si el runner jest del repo necesita el modo ESM. Señal precisa: el
+ * cuerpo de `scripts.test` (resuelto por el caller vía
+ * {@link resolveConcreteRunner}/lectura de package.json) invoca jest con
+ * `--experimental-vm-modules` — patrón canónico de los repos `type:"module"`
+ * (p.ej. github-readme-stats: `node --experimental-vm-modules
+ * node_modules/jest/bin/jest.js --coverage`). Puro: no toca el filesystem.
+ */
+export function jestNeedsEsm(scriptBody: string | null): boolean {
+  return scriptBody !== null && scriptBody.includes("--experimental-vm-modules");
 }
 
 /**
@@ -550,7 +601,11 @@ export function synthesizeFileScopedTestRun(
     const specTargets = jestScopeTargets(files);
     const scoped = specTargets.length > 0 ? specTargets : files;
     const quoted = scoped.map(singleQuote).join(" ");
-    const testInvocation = `${jestBin} ${quoted} --ci --runInBand --colors=false`;
+    // ESM (`type:"module"`): el shim `.bin/jest` NO carga módulos ESM → los specs
+    // fallan con `Cannot use import statement`. Se corre la entrada real bajo
+    // `node --experimental-vm-modules`, igual que el `scripts.test` del repo.
+    const runnerCmd = opts.esm === true ? `node --experimental-vm-modules ${JEST_ESM_ENTRY}` : jestBin;
+    const testInvocation = `${runnerCmd} ${quoted} --ci --runInBand --colors=false`;
     return { testInvocation, grepPattern: null, expectedFixtures: scoped };
   }
 
