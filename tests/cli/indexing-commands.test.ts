@@ -17,6 +17,23 @@ const h = vi.hoisted(() => ({
   propsInstances: [] as Array<{ lanceDbPath: string; tsconfigs: string[]; concurrency: number }>,
   ollamaAbort: vi.fn(),
   ollamaArgs: [] as unknown[][],
+  hudStart: vi.fn(),
+  hudStop: vi.fn(),
+  hudEnabledArgs: [] as boolean[],
+}));
+
+// El HUD toca stderr/cursor; lo sustituimos por un doble que registra sus llamadas.
+vi.mock("../../src/cli/banner/indexing-hud.js", () => ({
+  createIndexingHud: vi.fn(() => ({
+    start: h.hudStart,
+    update: vi.fn(),
+    log: vi.fn(),
+    stop: h.hudStop,
+  })),
+  resolveHudEnabled: vi.fn((flagNoAnimation: boolean) => {
+    h.hudEnabledArgs.push(flagNoAnimation);
+    return false;
+  }),
 }));
 
 // Los indexadores reales corren el compilador de TS y escriben SQLite/LanceDB;
@@ -91,6 +108,7 @@ beforeEach(() => {
   h.vectorsInstances.length = 0;
   h.propsInstances.length = 0;
   h.ollamaArgs.length = 0;
+  h.hudEnabledArgs.length = 0;
   h.graphIndexError = null;
   h.vectorsIndexError = null;
   vi.clearAllMocks();
@@ -233,5 +251,42 @@ describe("index_propositions", () => {
 
     await expect(run("index_propositions", tsconfig)).rejects.toThrow("boom-props");
     expect(h.ollamaAbort).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------- HUD de indexación ----------
+describe("HUD de indexación", () => {
+  it("arranca y para el HUD en index_graph (éxito)", async () => {
+    const { tsconfig } = createProject("hud-graph-ok");
+    await run("index_graph", tsconfig);
+    expect(h.hudStart).toHaveBeenCalledTimes(1);
+    expect(h.hudStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("para el HUD aunque index_graph falle (finally)", async () => {
+    const { tsconfig } = createProject("hud-graph-err");
+    h.graphIndexError = new Error("boom");
+    await expect(run("index_graph", tsconfig)).rejects.toThrow("boom");
+    expect(h.hudStart).toHaveBeenCalledTimes(1);
+    expect(h.hudStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("arranca y para el HUD en index_vectors", async () => {
+    const { tsconfig } = createProject("hud-vec-ok");
+    await run("index_vectors", tsconfig);
+    expect(h.hudStart).toHaveBeenCalledTimes(1);
+    expect(h.hudStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("--no-animation propaga la desactivación a resolveHudEnabled", async () => {
+    const { tsconfig } = createProject("hud-noanim");
+    await run("index_graph", tsconfig, "--no-animation");
+    expect(h.hudEnabledArgs).toContain(true);
+  });
+
+  it("sin la bandera, resolveHudEnabled recibe false", async () => {
+    const { tsconfig } = createProject("hud-anim");
+    await run("index_vectors", tsconfig);
+    expect(h.hudEnabledArgs).toContain(false);
   });
 });

@@ -9,6 +9,7 @@ export interface EvalCliOptions {
   taskId?: string | undefined;
   strategyId?: string | undefined;
   agentId?: string | undefined;
+  modelId?: string | undefined;
   split?: string | undefined;
   sanitizerVariant?: string | undefined;
   manifestsDir?: string | undefined;
@@ -29,6 +30,7 @@ export type EvalCliFlag =
   | "--task-id"
   | "--strategy-id"
   | "--agent-id"
+  | "--model-id"
   | "--split"
   | "--sanitizer-variant"
   | "--manifests-dir"
@@ -47,6 +49,7 @@ const VALUE_FLAGS = {
   "--task-id": "taskId",
   "--strategy-id": "strategyId",
   "--agent-id": "agentId",
+  "--model-id": "modelId",
   "--split": "split",
   "--sanitizer-variant": "sanitizerVariant",
   "--manifests-dir": "manifestsDir",

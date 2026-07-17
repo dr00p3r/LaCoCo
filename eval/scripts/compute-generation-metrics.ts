@@ -38,6 +38,26 @@ type Ci = { ci_low: number | null; ci_high: number | null; iterations: number };
 
 /** Agregado por estrategia (M1/M2 + panel de tiempo/costo del agente). */
 interface StrategyAggregate {
+  // --- Pass@1 JUSTO (titular) ---
+  // pass_at_1_graded = pass / celdas gradadas (denominador = mediciones validas).
+  // Excluye SIEMPRE las inválidas de harness Y las de culpa del agente (que se
+  // reportan aparte en el panel de cobertura). Es el número conservador que no
+  // atribuye NADA no-gradado al agente. `m1_pass_rate` (legacy, pass/n) se
+  // conserva abajo por continuidad pero NO es el titular.
+  pass_at_1_graded: number | null;
+  pass_at_1_graded_ci: Ci | null;
+  // pass_at_1_attributable = pass / (gradadas + culpa-agente). Excluye SOLO el
+  // harness roto; cuenta timeout/no_patch del agente como fallo. Número más
+  // estricto (secundario), para leer la sensibilidad al criterio.
+  pass_at_1_attributable: number | null;
+  pass_at_1_attributable_ci: Ci | null;
+  // Panel de cobertura: cuántas celdas cayeron en cada clase de medibilidad y
+  // por qué (histograma de subtipos). Da transparencia total sobre el denominador.
+  graded_count: number;
+  harness_invalid_count: number;
+  agent_fault_count: number;
+  harness_invalid_reasons: Record<string, number>;
+  agent_fault_reasons: Record<string, number>;
   m1_pass_rate: number;
   m1_pass_rate_ci: Ci;
   m1_regression_pass_rate: number | null;
@@ -111,6 +131,17 @@ interface GenerationCellMetrics {
   m1_agent_exit_code: number | null;
   m1_timeout: boolean;
   m1_runner_error: "unknown_runner" | null;
+  // Clasificacion de MEDIBILIDAD para un Pass@1 justo. Separa la celda en:
+  //  - "graded": el harness produjo un veredicto de test (test_exit_code !== null).
+  //  - "harness_invalid": no hubo veredicto por ROTURA del benchmark/harness
+  //    (build_failed, zero_tests_matched, test_patch_apply_failed, bespoke_runner,
+  //    unknown_runner, o parche producido pero test nunca corrio). NO atribuible al
+  //    agente → se EXCLUYE del denominador de Pass@1.
+  //  - "agent_fault": no hubo veredicto porque el AGENTE no entrego (agent_timeout,
+  //    no_patch, crash, patch_limit_exceeded). Cuenta como fallo real del agente.
+  // `measurement_reason` es el subtipo legible para el panel de cobertura.
+  measurement_class: "graded" | "harness_invalid" | "agent_fault";
+  measurement_reason: string | null;
   baseline_failing_tests: string[];
   post_failing_tests: string[];
   grading_tests_passed: string[];
@@ -155,6 +186,31 @@ function isPass(rec: GenerationRecord): { pass: boolean; reason: string } {
   return { pass: false, reason: `tests_failed_exit_${String(rec.test_exit_code)}` };
 }
 
+/**
+ * Clasifica la MEDIBILIDAD de una celda para un Pass@1 justo (ver
+ * GenerationCellMetrics.measurement_class). El orden de las guardas importa: la
+ * senal explicita del harness (`invalid_reason`, `runner_error`) gana sobre la
+ * inferida por campos, y el caso "parche producido pero test nunca corrio"
+ * (mui-25874: patch_applied, sin timeout/error/invalid_reason) es un muro de
+ * build del harness, no del agente → harness_invalid.
+ */
+export function classifyMeasurement(
+  rec: GenerationRecord,
+): { class: "graded" | "harness_invalid" | "agent_fault"; reason: string | null } {
+  if (rec.test_exit_code !== null) return { class: "graded", reason: null };
+  // Sin veredicto de test: distinguir rotura del harness de fallo del agente.
+  if (rec.invalid_reason) return { class: "harness_invalid", reason: rec.invalid_reason };
+  if (rec.runner_error === "unknown_runner") return { class: "harness_invalid", reason: "unknown_runner" };
+  if (rec.patch_applied && !rec.timeout && !rec.error) {
+    return { class: "harness_invalid", reason: "test_not_run" };
+  }
+  // El resto es atribuible al agente: no entrego una solucion medible.
+  if (rec.timeout) return { class: "agent_fault", reason: rec.error?.type ?? "agent_timeout" };
+  if (!rec.patch_applied) return { class: "agent_fault", reason: "no_patch" };
+  if (rec.error) return { class: "agent_fault", reason: rec.error.type };
+  return { class: "agent_fault", reason: "unknown" };
+}
+
 export function computeRegressionMetrics(rec: GenerationRecord): {
   regressionPass: boolean | null;
   gradingPass: boolean | null;
@@ -189,6 +245,7 @@ function buildCellMetricsInternal(
   retrievalOverheadMs = 0,
 ): GenerationCellMetrics {
   const pass = isPass(rec);
+  const measurement = classifyMeasurement(rec);
   const regression = computeRegressionMetrics(rec);
   const total = (hall?.invalid_calls ?? 0) + (hall?.analyzable_calls ?? 0);
   const unknownRatio = hall ? hall.unknown_calls / Math.max(1, hall.invalid_calls + hall.analyzable_calls + hall.unknown_calls) : null;
@@ -210,6 +267,8 @@ function buildCellMetricsInternal(
     m1_agent_exit_code: rec.agent_exit_code,
     m1_timeout: rec.timeout,
     m1_runner_error: rec.runner_error ?? null,
+    measurement_class: measurement.class,
+    measurement_reason: measurement.reason,
     baseline_failing_tests: rec.baseline_failing_tests,
     post_failing_tests: rec.post_failing_tests,
     grading_tests_passed: rec.grading_tests_passed,
@@ -241,6 +300,27 @@ export function aggregateByStrategy(cells: GenerationCellMetrics[]): Record<stri
     const total = list.length;
     const passCount = list.filter((c) => c.m1_pass === true).length;
     const targetPassCount = list.filter((c) => c.m1_target_pass === true).length;
+
+    // --- Pass@1 justo + panel de cobertura ---
+    // gradedCount = celdas con veredicto de test (denominador titular).
+    // passCount ⊆ graded (un pass exige test_exit_code===0, que implica gradada).
+    const gradedCount = list.filter((c) => c.measurement_class === "graded").length;
+    const harnessInvalidCount = list.filter((c) => c.measurement_class === "harness_invalid").length;
+    const agentFaultCount = list.filter((c) => c.measurement_class === "agent_fault").length;
+    const attributableDen = gradedCount + agentFaultCount;
+    const passAtGraded = gradedCount > 0 ? passCount / gradedCount : null;
+    const passAtAttributable = attributableDen > 0 ? passCount / attributableDen : null;
+    const passAtGradedCi = gradedCount > 0 ? bootstrapRate(passCount, gradedCount) : null;
+    const passAtAttributableCi = attributableDen > 0 ? bootstrapRate(passCount, attributableDen) : null;
+    const tally = (cls: "harness_invalid" | "agent_fault"): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const c of list) {
+        if (c.measurement_class !== cls) continue;
+        const reason = c.measurement_reason ?? "unknown";
+        out[reason] = (out[reason] ?? 0) + 1;
+      }
+      return out;
+    };
     const regCells = list.filter((c) => c.m1_regression_pass !== null);
     const regPass = regCells.filter((c) => c.m1_regression_pass === true).length;
     const gradingCells = list.filter((c) => c.m1_grading_pass !== null);
@@ -292,6 +372,15 @@ export function aggregateByStrategy(cells: GenerationCellMetrics[]): Record<stri
     }
 
     out[strategy] = {
+      pass_at_1_graded: passAtGraded,
+      pass_at_1_graded_ci: passAtGradedCi,
+      pass_at_1_attributable: passAtAttributable,
+      pass_at_1_attributable_ci: passAtAttributableCi,
+      graded_count: gradedCount,
+      harness_invalid_count: harnessInvalidCount,
+      agent_fault_count: agentFaultCount,
+      harness_invalid_reasons: tally("harness_invalid"),
+      agent_fault_reasons: tally("agent_fault"),
       m1_pass_rate: total > 0 ? passCount / total : 0,
       m1_pass_rate_ci: m1PassCi,
       m1_regression_pass_rate: regCells.length > 0 ? regPass / regCells.length : null,
@@ -367,6 +456,12 @@ function renderCsv(byStrategy: Record<string, StrategyAggregate>): string {
     rows.push([scope, id, metric, value ?? "", ci?.ci_low ?? "", ci?.ci_high ?? "", ci?.iterations ?? "", n]);
   };
   for (const [strategy, agg] of Object.entries(byStrategy)) {
+    // Pass@1 justo (titular) + secundario + cobertura, antes del M1 legacy.
+    pushCi("strategy", strategy, "PassAt1_graded", agg.pass_at_1_graded, agg.graded_count, agg.pass_at_1_graded_ci);
+    pushCi("strategy", strategy, "PassAt1_attributable", agg.pass_at_1_attributable, agg.graded_count + agg.agent_fault_count, agg.pass_at_1_attributable_ci);
+    pushCi("strategy", strategy, "Coverage_graded", agg.graded_count, agg.m1_total, null);
+    pushCi("strategy", strategy, "Coverage_harness_invalid", agg.harness_invalid_count, agg.m1_total, null);
+    pushCi("strategy", strategy, "Coverage_agent_fault", agg.agent_fault_count, agg.m1_total, null);
     pushCi("strategy", strategy, "M1", agg.m1_pass_rate, agg.m1_total, agg.m1_pass_rate_ci);
     pushCi("strategy", strategy, "M1_target_pass", agg.m1_target_pass_rate, agg.m1_total, null);
     if (agg.m1_regression_total > 0) {
@@ -413,9 +508,47 @@ function renderMarkdown(
   const lines: string[] = [];
   lines.push(`# Generation metrics: ${runId}`);
   lines.push("");
-  lines.push("**M1 medible:** `M1_pass_rate` (legacy, `test_exit_code === 0 && patch_applied && !timeout`). Para `M1_regression_pass@1` citable se requiere metadata `regression:` en `tasks.yaml` (no emitido por swe-polybench). `M1_regression_introduced` es diagnostico (cuantos tests nuevos rompio el agente). IC 95% via bootstrap (1000 iter, seed=42).");
+  lines.push("**Pass@1 justo (titular):** `PassAt1_graded` = pass / celdas GRADADAS (con veredicto de test). El denominador EXCLUYE las celdas sin veredicto, separadas en dos causas (ver panel de cobertura): `harness_invalid` (rotura del benchmark: build_failed, zero_tests_matched, test_patch_apply_failed, bespoke_runner, unknown_runner, parche-sin-test-corrido — NO atribuible al agente) y `agent_fault` (el agente no entregó: agent_timeout, no_patch, crash). `PassAt1_attributable` = pass / (gradadas + agent_fault) cuenta la culpa del agente como fallo (número más estricto). El `M1_pass_rate` legacy (pass / TODAS las celdas) se conserva abajo por continuidad pero deflacta el resultado al meter las inválidas de harness como fallo. IC 95% bootstrap (1000 iter, seed=42) sobre el denominador correcto.");
   lines.push("");
-  lines.push("## M1 y M2 por estrategia");
+  lines.push("## Pass@1 justo por estrategia (titular)");
+  lines.push("");
+  lines.push("| strategy | n_total | graded | Pass@1 graded [95% CI] | Pass@1 attributable [CI] | M2 hallucination [CI] |");
+  lines.push("|---|---:|---:|---:|---:|---:|");
+  for (const [strategy, agg] of Object.entries(byStrategy)) {
+    const g = agg.pass_at_1_graded === null ? "N/A" : agg.pass_at_1_graded.toFixed(3);
+    const gCi = agg.pass_at_1_graded_ci
+      ? `[${agg.pass_at_1_graded_ci.ci_low?.toFixed(3) ?? "?"}, ${agg.pass_at_1_graded_ci.ci_high?.toFixed(3) ?? "?"}]`
+      : "N/A";
+    const a = agg.pass_at_1_attributable === null ? "N/A" : agg.pass_at_1_attributable.toFixed(3);
+    const aCi = agg.pass_at_1_attributable_ci
+      ? `[${agg.pass_at_1_attributable_ci.ci_low?.toFixed(3) ?? "?"}, ${agg.pass_at_1_attributable_ci.ci_high?.toFixed(3) ?? "?"}]`
+      : "N/A";
+    const m2 = agg.m2_hallucination_rate === null ? "N/A" : agg.m2_hallucination_rate.toFixed(3);
+    const m2Ci = agg.m2_hallucination_rate_ci
+      ? `[${agg.m2_hallucination_rate_ci.ci_low?.toFixed(3) ?? "?"}, ${agg.m2_hallucination_rate_ci.ci_high?.toFixed(3) ?? "?"}]`
+      : "N/A";
+    lines.push(`| ${strategy} | ${agg.m1_total} | ${agg.graded_count} | ${g} ${gCi} | ${a} ${aCi} | ${m2} ${m2Ci} |`);
+  }
+  lines.push("");
+  lines.push("## Cobertura de medición por estrategia (denominador transparente)");
+  lines.push("");
+  lines.push("Cada celda cae en UNA clase. `graded` = tiene veredicto (entra al Pass@1). `harness_invalid` = el benchmark se rompió igual para todos los agentes (excluida). `agent_fault` = el agente no entregó solución medible (excluida del titular; contada como fallo en `attributable`). Las columnas de razones son los subtipos dominantes.");
+  lines.push("");
+  lines.push("| strategy | graded | harness_invalid | agent_fault | harness reasons (top) | agent_fault reasons |");
+  lines.push("|---|---:|---:|---:|---|---|");
+  const topReasons = (r: Record<string, number>, n: number): string => {
+    const entries = Object.entries(r).sort((a, b) => b[1] - a[1]).slice(0, n);
+    return entries.length > 0 ? entries.map(([k, v]) => `${k}:${v}`).join(", ") : "—";
+  };
+  for (const [strategy, agg] of Object.entries(byStrategy)) {
+    lines.push(
+      `| ${strategy} | ${agg.graded_count} | ${agg.harness_invalid_count} | ${agg.agent_fault_count} | ${topReasons(agg.harness_invalid_reasons, 3)} | ${topReasons(agg.agent_fault_reasons, 3)} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## M1 legacy y M2 por estrategia");
+  lines.push("");
+  lines.push("> `M1_pass_rate` (legacy) usa denominador = TODAS las celdas → deflactado. Preferir `Pass@1 graded` arriba. Se mantiene por continuidad con corridas previas.");
   lines.push("");
   lines.push("| strategy | n_cells | M1_pass_rate [95% CI] | M1_target_pass | M1_regression_pass [CI] | M1_regression_introduced [CI] | M1_unknown_runner | M2 hallucination_rate [CI] |");
   lines.push("|---|---:|---:|---:|---:|---:|---:|---:|");
@@ -498,7 +631,7 @@ export function buildCellMetrics(
 }
 
 export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
-  const options = parseEvalCliOptions(argv, ["--run-id", "--manifests-dir", "--agent-id", "--strategy-id"]);
+  const options = parseEvalCliOptions(argv, ["--run-id", "--manifests-dir", "--agent-id", "--strategy-id", "--model-id"]);
   const manifests = loadManifests(resolveManifestsDir(options.manifestsDir));
   const layout = resolveEvalLayout(manifests.run, options.runId);
   mkdirSync(layout.runDirectory, { recursive: true });
@@ -508,12 +641,14 @@ export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
 
   const retrievalPath = join(layout.runDirectory, "retrieval.jsonl");
 
-  // --agent-id / --strategy-id filtran generation.jsonl a un brazo antes de agregar,
-  // porque aggregateByStrategy agrupa solo por strategy_id (mezclaría plain-vs-mcp y
-  // los 2 modelos). El strategy_id del record puede llevar sufijo de variante
-  // (`connector@baseline`) → match tolerante. Las salidas se sufijan para no pisarse.
+  // --agent-id / --strategy-id / --model-id filtran generation.jsonl a un brazo antes
+  // de agregar, porque aggregateByStrategy agrupa solo por strategy_id (mezclaría
+  // plain-vs-mcp y los distintos modelos: p. ej. haiku y sonnet bajo `claude-code`).
+  // El strategy_id del record puede llevar sufijo de variante (`connector@baseline`)
+  // → match tolerante. Las salidas se sufijan para no pisarse.
   const matchesFilter = (g: GenerationRecord): boolean =>
     (options.agentId === undefined || g.agent_id === options.agentId) &&
+    (options.modelId === undefined || g.model_id === options.modelId) &&
     (options.strategyId === undefined ||
       g.strategy_id === options.strategyId ||
       g.strategy_id.startsWith(`${options.strategyId}@`));
@@ -521,9 +656,9 @@ export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
     ? readJsonl<GenerationRecord>(generationPath)
     : []
   ).filter(matchesFilter);
-  if ((options.agentId !== undefined || options.strategyId !== undefined) && genRecords.length === 0) {
+  if ((options.agentId !== undefined || options.strategyId !== undefined || options.modelId !== undefined) && genRecords.length === 0) {
     throw new Error(
-      `no generation records match agent=${options.agentId ?? "*"} strategy=${options.strategyId ?? "*"} in ${generationPath}`,
+      `no generation records match agent=${options.agentId ?? "*"} strategy=${options.strategyId ?? "*"} model=${options.modelId ?? "*"} in ${generationPath}`,
     );
   }
   const hallRecords = existsSync(hallucinationPath)
@@ -589,9 +724,11 @@ export function computeGenerationMetrics(argv = process.argv.slice(2)): void {
     cells,
   };
 
-  const filterSuffix = [options.agentId, options.strategyId]
+  const filterSuffix = [options.agentId, options.modelId, options.strategyId]
     .filter((value): value is string => value !== undefined)
-    .map((value) => `.${value}`)
+    // model_id puede llevar `/` (p. ej. `opencode/deepseek-v4-pro`) → saneamos
+    // los caracteres no aptos para nombre de archivo antes de sufijar la salida.
+    .map((value) => `.${value.replace(/[/\\:]+/g, "-")}`)
     .join("");
   const metricsPath = join(layout.runDirectory, `generation-metrics${filterSuffix}.json`);
   const csvPath = join(layout.runDirectory, `generation-summary${filterSuffix}.csv`);

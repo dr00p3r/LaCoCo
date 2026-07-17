@@ -11,12 +11,16 @@ import {
 } from "../state/project-registry.js";
 import { resolveDbPath, resolveLanceDbPath } from "../storage-paths.js";
 import { resolveNumberConfig, resolveStringConfig } from "../config.js";
+import { createIndexingHud, resolveHudEnabled, type IndexingHud } from "../banner/indexing-hud.js";
+import type { IndexProgress } from "../../indexer/progress.js";
 
 interface IndexCliOptions {
   db?: string;
   lancedb?: string;
   projectDir?: string;
   verbose: boolean;
+  /** commander mapea `--no-animation` a `animation: false` (por defecto true). */
+  animation?: boolean;
 }
 
 interface PropositionsCliOptions {
@@ -32,7 +36,8 @@ export function registerIndexingCommands(program: Command): void {
     .option("-d, --db <path>", "Ruta al archivo SQLite de salida; por defecto paths.data/tensor.sqlite del proyecto")
     .option("-p, --project-dir <path>", "Directorio raiz del proyecto multi-servicio a indexar")
     .option("-v, --verbose", "Imprime progreso detallado", false)
-    .action((inputPath: string | undefined, options: IndexCliOptions) => {
+    .option("--no-animation", "Desactiva la animación del banner de indexación")
+    .action(async (inputPath: string | undefined, options: IndexCliOptions) => {
       console.log("\n[CLI] Extrayendo grafo estructural...\n");
       const target = resolveCliIndexTarget(inputPath, options.projectDir);
       printTarget(target);
@@ -43,7 +48,9 @@ export function registerIndexingCommands(program: Command): void {
       configureProjectStorage(projectPath, { dbPath });
 
       try {
-        new GraphIndexer(dbPath, target.tsconfigPaths).index();
+        await withHud(options.animation === false, "Extrayendo grafo estructural…", (onProgress) => {
+          new GraphIndexer(dbPath, target.tsconfigPaths, onProgress).index();
+        });
         markProjectIndexStatus(projectPath, "completed");
       } catch (error) {
         markProjectIndexStatus(projectPath, "error");
@@ -57,6 +64,7 @@ export function registerIndexingCommands(program: Command): void {
     .option("--lancedb <path>", "Ruta al directorio de LanceDB; por defecto paths.data/lancedb del proyecto")
     .option("-p, --project-dir <path>", "Directorio raiz del proyecto multi-servicio a indexar")
     .option("-v, --verbose", "Imprime progreso detallado", false)
+    .option("--no-animation", "Desactiva la animación del banner de indexación")
     .action(async (inputPath: string | undefined, options: IndexCliOptions) => {
       console.log("\n[CLI] Indexando vectores semánticos...\n");
       const target = resolveCliIndexTarget(inputPath, options.projectDir);
@@ -68,7 +76,9 @@ export function registerIndexingCommands(program: Command): void {
       configureProjectStorage(projectPath, { lanceDbPath });
 
       try {
-        await new VectorsIndexer(lanceDbPath, target.tsconfigPaths).index();
+        await withHud(options.animation === false, "Indexando vectores semánticos…", (onProgress) =>
+          new VectorsIndexer(lanceDbPath, target.tsconfigPaths, undefined, onProgress).index(),
+        );
         markProjectIndexStatus(projectPath, "completed");
       } catch (error) {
         markProjectIndexStatus(projectPath, "error");
@@ -105,6 +115,28 @@ export function registerIndexingCommands(program: Command): void {
         ollama.abort();
       }
     });
+}
+
+/**
+ * Envuelve una fase de indexación con el HUD animado (perrito + "LaCoCo" +
+ * barra de progreso). En salida no interactiva el HUD queda inerte y no emite
+ * escapes. `hud.stop()` en el `finally` garantiza restaurar el cursor incluso
+ * si la indexación lanza. El `onProgress` que recibe `run` alimenta la barra.
+ */
+async function withHud(
+  noAnimation: boolean,
+  phase: string,
+  run: (onProgress: IndexProgress) => void | Promise<void>,
+): Promise<void> {
+  const hud: IndexingHud = createIndexingHud({
+    enabled: resolveHudEnabled(noAnimation, process.stderr),
+  });
+  hud.start({ phase });
+  try {
+    await run((event) => hud.update(event));
+  } finally {
+    hud.stop();
+  }
 }
 
 function resolveCliIndexTarget(inputPath: string | undefined, projectDir: string | undefined): IndexTarget {

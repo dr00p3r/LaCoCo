@@ -4,20 +4,24 @@ import { VectorCallbacks } from "../extractor/vector-callbacks.js";
 import { LaCoCoLanceDb } from "../persistence/lacoco-vectors-manager/lacoco-lancedb-service.js";
 import { EmbeddingGenerator } from "../embeddings/embedding-generator.js";
 import { EMBEDDING_BATCH_SIZE } from "../embeddings/embedding-config.js";
+import { NOOP_PROGRESS, type IndexProgress } from "./progress.js";
 
 type VectorStore = Pick<LaCoCoLanceDb, "buildIndex" | "clear" | "close" | "connect" | "replaceBatch">;
 
 export class VectorsIndexer {
   private readonly lanceDb: VectorStore;
   private readonly tsConfigPaths: string[];
+  private readonly onProgress: IndexProgress;
 
   constructor(
     lanceDbPath: string,
     tsConfigPath: string | string[],
     createLanceDb: (lanceDbPath: string) => VectorStore = (path) => new LaCoCoLanceDb(path),
+    onProgress: IndexProgress = NOOP_PROGRESS,
   ) {
     this.lanceDb = createLanceDb(lanceDbPath);
     this.tsConfigPaths = Array.isArray(tsConfigPath) ? tsConfigPath : [tsConfigPath];
+    this.onProgress = onProgress;
   }
 
   async index(): Promise<void> {
@@ -51,6 +55,7 @@ export class VectorsIndexer {
   ): Promise<void> {
     let processedFiles = 0;
     let failedProjects = 0;
+    let totalFiles = 0;
     const seenFiles = new Set<string>();
 
     console.time("[VectorsIndexer] Extracción + Embeddings");
@@ -68,6 +73,7 @@ export class VectorsIndexer {
         continue;
       }
 
+      totalFiles += sourceFiles.length;
       console.log(`[VectorsIndexer] ${tsconfigPath} → ${sourceFiles.length} archivos`);
       for (const file of sourceFiles) {
         const filePath = file.getFilePath();
@@ -76,6 +82,11 @@ export class VectorsIndexer {
         try {
           codeExtractor.processFile(file);
           processedFiles++;
+          this.onProgress({
+            current: processedFiles,
+            total: totalFiles,
+            nodes: callbacks.nodesWritten,
+          });
         } catch (err) {
           console.error(
             `  ⚠  Error analizando ${filePath}:`,

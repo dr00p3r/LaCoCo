@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GENERATION_RECORD_SCHEMA_VERSION, type GenerationRecord } from "./lib/generation-record.js";
-import { aggregateByStrategy, buildCellMetrics, computeRegressionMetrics } from "./compute-generation-metrics.js";
+import { aggregateByStrategy, buildCellMetrics, classifyMeasurement, computeRegressionMetrics } from "./compute-generation-metrics.js";
 
 function rec(overrides: Partial<GenerationRecord>): GenerationRecord {
   return {
@@ -119,6 +119,89 @@ describe("M1 silent-pass-on-unknown-runner guard", () => {
     const cell = buildCellMetrics(record, undefined);
     expect(cell.m1_runner_error).toBeNull();
     expect(cell.m1_pass).toBe(true);
+  });
+});
+
+describe("Pass@1 justo: clasificacion de medibilidad", () => {
+  it("graded cuando hay veredicto de test (exit code no-null)", () => {
+    expect(classifyMeasurement(rec({ test_exit_code: 0 })).class).toBe("graded");
+    expect(classifyMeasurement(rec({ test_exit_code: 1 })).class).toBe("graded");
+  });
+
+  it("harness_invalid cuando invalid_reason esta puesto (build/zero_tests/etc)", () => {
+    const out = classifyMeasurement(rec({ test_exit_code: null, invalid_reason: "build_failed" }));
+    expect(out.class).toBe("harness_invalid");
+    expect(out.reason).toBe("build_failed");
+  });
+
+  it("harness_invalid para unknown_runner (parser no reconocio el runner)", () => {
+    expect(classifyMeasurement(rec({ test_exit_code: null, runner_error: "unknown_runner" })).class).toBe("harness_invalid");
+  });
+
+  it("harness_invalid cuando el agente produjo parche pero el test nunca corrio (muro de build)", () => {
+    // mui-25874: patch_applied, sin timeout/error/invalid_reason, test_exit_code null.
+    const out = classifyMeasurement(rec({ test_exit_code: null, patch_applied: true, timeout: false, error: null }));
+    expect(out.class).toBe("harness_invalid");
+    expect(out.reason).toBe("test_not_run");
+  });
+
+  it("agent_fault para agent_timeout (el agente corrio el timeout completo)", () => {
+    const out = classifyMeasurement(rec({ test_exit_code: null, timeout: true, patch_applied: false, error: { type: "agent_timeout", message: "timed out after 900000 ms" } }));
+    expect(out.class).toBe("agent_fault");
+    expect(out.reason).toBe("agent_timeout");
+  });
+
+  it("agent_fault para no_patch (agente termino sin cambiar archivos)", () => {
+    const out = classifyMeasurement(rec({ test_exit_code: null, patch_applied: false, timeout: false, error: null }));
+    expect(out.class).toBe("agent_fault");
+    expect(out.reason).toBe("no_patch");
+  });
+
+  it("invalid_reason gana sobre timeout (senal explicita del harness tiene prioridad)", () => {
+    const out = classifyMeasurement(rec({ test_exit_code: null, timeout: true, invalid_reason: "zero_tests_matched" }));
+    expect(out.class).toBe("harness_invalid");
+    expect(out.reason).toBe("zero_tests_matched");
+  });
+});
+
+describe("Pass@1 justo: denominadores y cobertura", () => {
+  it("graded excluye harness_invalid Y agent_fault; attributable incluye agent_fault", () => {
+    const cells = [
+      // 2 graded pass, 1 graded fail
+      buildCellMetrics(rec({ strategy_id: "connector", task_id: "t1", test_exit_code: 0 }), undefined),
+      buildCellMetrics(rec({ strategy_id: "connector", task_id: "t2", test_exit_code: 0 }), undefined),
+      buildCellMetrics(rec({ strategy_id: "connector", task_id: "t3", test_exit_code: 1 }), undefined),
+      // 1 harness_invalid (excluida de AMBOS denominadores)
+      buildCellMetrics(rec({ strategy_id: "connector", task_id: "t4", test_exit_code: null, invalid_reason: "build_failed" }), undefined),
+      // 1 agent_fault (excluida de graded, contada como fallo en attributable)
+      buildCellMetrics(rec({ strategy_id: "connector", task_id: "t5", test_exit_code: null, patch_applied: false, error: null }), undefined),
+    ];
+    const agg = aggregateByStrategy(cells).connector!;
+
+    expect(agg.m1_total).toBe(5);
+    expect(agg.graded_count).toBe(3);
+    expect(agg.harness_invalid_count).toBe(1);
+    expect(agg.agent_fault_count).toBe(1);
+
+    // graded = 2 pass / 3 gradadas
+    expect(agg.pass_at_1_graded).toBeCloseTo(2 / 3, 6);
+    // attributable = 2 pass / (3 gradadas + 1 agent_fault)
+    expect(agg.pass_at_1_attributable).toBeCloseTo(2 / 4, 6);
+    // legacy = 2 pass / 5 totales (deflactado por meter la harness_invalid)
+    expect(agg.m1_pass_rate).toBeCloseTo(2 / 5, 6);
+
+    // Panel de cobertura: subtipos.
+    expect(agg.harness_invalid_reasons.build_failed).toBe(1);
+    expect(agg.agent_fault_reasons.no_patch).toBe(1);
+  });
+
+  it("sin celdas gradadas → pass_at_1_graded null (no divide por cero)", () => {
+    const agg = aggregateByStrategy([
+      buildCellMetrics(rec({ strategy_id: "x", test_exit_code: null, invalid_reason: "zero_tests_matched" }), undefined),
+    ]).x!;
+    expect(agg.graded_count).toBe(0);
+    expect(agg.pass_at_1_graded).toBeNull();
+    expect(agg.pass_at_1_graded_ci).toBeNull();
   });
 });
 

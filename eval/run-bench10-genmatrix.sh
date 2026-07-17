@@ -37,7 +37,9 @@ CLAUDE_TIMEOUT_MS="${CLAUDE_TIMEOUT_MS:-900000}"
 RUNDIR="eval/runs/$RID"
 
 export LACOCO_EVAL_OPENCODE_MODEL="opencode-go/deepseek-v4-pro"
-export LACOCO_EVAL_CLAUDE_MODEL="sonnet"
+# Modelo de los brazos Claude: override por env (LACOCO_EVAL_CLAUDE_MODEL=haiku para el
+# brazo haiku). model_id forma parte de la clave de celda → --resume no mezcla con sonnet.
+export LACOCO_EVAL_CLAUDE_MODEL="${LACOCO_EVAL_CLAUDE_MODEL:-sonnet}"
 
 # --- Brazos Claude sobre API keys aero (proxy Anthropic) --------------------------
 # Las keys van SOLO por env al subproceso claude (run-claude-cell.sh rota entre ellas

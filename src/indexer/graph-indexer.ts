@@ -2,15 +2,18 @@ import { LaCoCoDatabase } from "../persistence/lacoco-graph-manager/lacoco-sqlit
 import { Project, type SourceFile } from "ts-morph";
 import { CodeExtractor } from "../extractor/code-extractor.js";
 import { SqliteCallbacks } from "../extractor/sqlite-callbacks.js";
+import { NOOP_PROGRESS, type IndexProgress } from "./progress.js";
 
 export class GraphIndexer {
 
     private readonly db: LaCoCoDatabase;
     private readonly tsConfigPaths: string[];
+    private readonly onProgress: IndexProgress;
 
-    constructor(dbPath : string, tsConfigPath : string | string[]) {
+    constructor(dbPath : string, tsConfigPath : string | string[], onProgress: IndexProgress = NOOP_PROGRESS) {
         this.db = new LaCoCoDatabase(dbPath);
         this.tsConfigPaths = Array.isArray(tsConfigPath) ? tsConfigPath : [tsConfigPath];
+        this.onProgress = onProgress;
     }
 
     index() {
@@ -32,8 +35,9 @@ export class GraphIndexer {
     ) {
         let processedFiles = 0;
         let failedProjects = 0;
+        let totalFiles = 0;
         const seenFiles = new Set<string>();
-        
+
         console.time("[CLI]/[GraphIndexer] Extracción");
         this.db.transaction(() => {
             this.db.clearGraph();
@@ -51,6 +55,7 @@ export class GraphIndexer {
                     continue;
                 }
 
+                totalFiles += sourceFiles.length;
                 console.log(`[CLI]/[GraphIndexer] ${tsconfigPath} → ${sourceFiles.length} archivos`);
                 for (const file of sourceFiles) {
                     const filePath = file.getFilePath();
@@ -59,6 +64,12 @@ export class GraphIndexer {
                     try {
                         codeExtractor.processFile(file);
                         processedFiles++;
+                        this.onProgress({
+                            current: processedFiles,
+                            total: totalFiles,
+                            nodes: callbacks.nodesWritten,
+                            edges: callbacks.edgesWritten,
+                        });
                     } catch (err) {
                         console.error(
                             `  ⚠  Error analizando ${filePath}:`,

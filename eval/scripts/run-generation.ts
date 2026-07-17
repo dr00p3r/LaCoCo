@@ -363,6 +363,20 @@ export function mcpHintVariant(): "soft" | "hard" {
   return raw === "soft" ? "soft" : "hard";
 }
 
+/**
+ * Modo "MCP puro" (`LACOCO_EVAL_MCP_PURE`, default off). Cuando está activo, el brazo
+ * MCP mide recuperación PURAMENTE bajo demanda: (a) el prompt NO pre-inyecta el contexto
+ * de la estrategia (solo el hint + la tool), y (b) el servidor MCP se levanta con
+ * `--strategy <estrategia_de_la_celda> --no-grounding`, de modo que `lacoco_retrieve`
+ * usa esa estrategia (y no la default `hybrid`). Off = comportamiento previo (hybrid:
+ * contexto pre-inyectado + tool con estrategia default), que preserva la reproducibilidad
+ * de las tablas MCP ya generadas.
+ */
+export function mcpPureMode(): boolean {
+  const raw = (process.env.LACOCO_EVAL_MCP_PURE ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 /** Hint MCP suave (mínimo): mide la UTILIDAD de la tool, no su descubribilidad. */
 export const MCP_HINT_SOFT = [
   "# Herramienta de contexto disponible",
@@ -423,7 +437,21 @@ export function buildPrompt(
     ].join("\n"),
   );
 
-  if (strategy.id === "no_context") {
+  if (options?.mcpHint === true && mcpPureMode()) {
+    // Modo MCP puro: NO se pre-inyecta contexto. El agente localiza el código
+    // exclusivamente bajo demanda con `lacoco_retrieve` (el hint ya se empujó arriba).
+    // El servidor MCP de la celda se levanta con la estrategia de la celda, así que
+    // el retrieve on-demand usa esa estrategia (no `hybrid`). Mide retrieval on-demand
+    // sin contaminación de contexto pegado.
+    sections.push(
+      [
+        "# Contexto recuperado por LaCoCo",
+        "",
+        "El contexto se obtiene BAJO DEMANDA con la tool `lacoco_retrieve` (ver arriba).",
+        "No hay contexto pre-inyectado en este prompt.",
+      ].join("\n"),
+    );
+  } else if (strategy.id === "no_context") {
     sections.push(
       [
         "# Contexto recuperado por LaCoCo",
@@ -555,15 +583,30 @@ function writeMcpConfigForCell(
   cellDir: string,
   repoPath: string,
   serverEnv: Record<string, string>,
+  serverStrategy: string | null,
+  pure: boolean,
 ): string {
   const configPath = join(cellDir, "opencode.mcp.json");
+  // Pinnear el binario de Node al que corre el arnés (`process.execPath`, garantizado
+  // moderno porque run-generation necesita `--import`). Con `"node"` a secas, opencode
+  // lanza el server con cwd=repo y fnm cambia al Node pinneado del repo (.nvmrc → v14),
+  // que crashea el dist con `ERR_UNKNOWN_BUILTIN_MODULE: node:util/types` → el server MCP
+  // muere y `lacoco_retrieve` nunca queda disponible (el agente vuela a ciegas).
+  const command = [process.execPath, join(PROJECT_ROOT, "dist/cli/index.js"), "mcp", repoPath];
+  // Modo MCP puro: el servidor usa la estrategia de la celda (no la default `hybrid`)
+  // y sin grounding (retrieve determinista, igual que el eval). Sin `pure`, el comando
+  // queda igual que antes (el server cae a `strategy.default`). El brazo Claude añade
+  // `--no-grounding` de forma idempotente en run-claude-cell.sh, así que aquí es inocuo.
+  if (pure && serverStrategy !== null) {
+    command.push("--strategy", serverStrategy, "--no-grounding");
+  }
   const config = {
     $schema: "https://opencode.ai/config.json",
     mcp: {
       lacoco: {
         type: "local",
         enabled: true,
-        command: ["node", join(PROJECT_ROOT, "dist/cli/index.js"), "mcp", repoPath],
+        command,
         // El servidor MCP debe embeber la query con el MISMO modelo del índice.
         environment: serverEnv,
       },
@@ -1249,7 +1292,13 @@ export async function runGeneration(argv = process.argv.slice(2)): Promise<void>
         }
 
         const mcpConfigFile = needsMcp
-          ? writeMcpConfigForCell(cellDir, locked.repoPath, embeddingEnv(embeddingProfile))
+          ? writeMcpConfigForCell(
+              cellDir,
+              locked.repoPath,
+              embeddingEnv(embeddingProfile),
+              strategy.lacoco_strategy,
+              mcpPureMode(),
+            )
           : undefined;
         const { command, env: agentEnv } = buildAgentCommand(
           agent, locked.repoPath, paths.prompt, model, agentProfile, mcpConfigFile,

@@ -497,7 +497,7 @@ splits:
       multi-hop = 15, fijados por el pre-check de validez (5 PRs validos mas
       bajos por repo; mui descarta 13789/18683/26098 = gold_not_in_graph). 7
       estrategias; 3 modos (determinista / SLM baseline / SLM+grounded).
-    strategies: [ hybrid, ictd, clcr, rpr, consensus, connector, repograph ]
+    strategies: [ hybrid, ictd, clcr, rpr, consensus, connector, repograph, ppr ]
     sanitizer_variants: [ deterministic, baseline, grounded ]
     require_gold_status: ready
     repo_ids: &paper_mh_ids

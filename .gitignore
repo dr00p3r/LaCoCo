@@ -42,6 +42,7 @@ lancedb/
 
 # Cache local de LaCoCo (regenerable, puede ser muy grande)
 .lacoco/cache/
+.lacoco/*.sqlite
 
 # Reportes de cobertura generados (vitest v8)
 coverage/
